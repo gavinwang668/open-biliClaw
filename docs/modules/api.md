@@ -6,6 +6,23 @@
 
 ## 推荐通知测试生命周期
 
+### 默认关闭的导演屏协议
+
+启用 `[director]` 后，`GET /api/recommendations?stream_ref=default` 仅恢复精确屏，不 top-up、不请求模型；空屏返回 `director.requires_generation=true`。关闭时不增加空 director/batch 字段，保持旧响应形状。
+
+| 端点 | 合同 |
+|---|---|
+| `GET /api/recommendations/director/status` | enabled / mode / strategy，无模型请求 |
+| `POST /api/recommendations/director/generate` | request_id、stream_ref、intent=NEXT/STAY、limit=1..20、source_platform、explicit_intent、excluded_bvids；稳定 ID 幂等，返回精确屏及 post-commit 库存 |
+| `GET /api/recommendations/director/restore` | stream_ref 对应最新屏，纯恢复 |
+| `POST /api/recommendations/director/present` | batch_ref、ack_id、item_keys，只 ACK 实际可见子集；重试去重，错批次／卡片 409 |
+| 既有 `append` / `reshuffle` | 启用时 NEXT / STAY，接受稳定 request_id / stream_ref / explicit_intent；首次无根 STAY 返回 409，由客户端显式 NEXT |
+| 既有 `feedback` / `recommendation-click` | 可选 batch_ref；先核对 exact recommendation ID，canonical ingress 后投影同一事件，不重复写学习事件 |
+
+状态改变、候选失效、计划 CAS 或配置换代冲突返回 409，不能部分提交。三端共用 `shared/director-client.js`，区分恢复、生成、可见 ACK；隐藏页和预加载不是曝光。新前缀仍走既有推荐进程代理和鉴权。配置使用 TOML，未增加图形设置／付费探测。详见 [导演](director.md)。
+
+### 通知回归约定
+
 `POST /api/recommendations/append` 会在响应关键路径外安排推荐池状态通知。验证该通知的测试使用 `httpx.AsyncClient` + `ASGITransport`，让请求和有界异步等待共享 pytest 的事件循环；不得在请求级同步 `TestClient` portal 已关闭后用阻塞等待验证后台任务。追加推荐回归覆盖无延迟及 50ms 状态读取延迟，并保持完整响应与通知内容断言。生产接口、通知调度及应用启动流程不变。
 
 ## B 站评论展示字段

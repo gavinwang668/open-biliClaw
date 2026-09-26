@@ -50,7 +50,9 @@ extension_access_keys = []
 extension_token_ttl_hours = 24
 
 # 独立的 typed decision provider，不复用聊天或 embedding 凭据。
-# 当前仅提供 client 基础；enabled 不会自动启用导演、过滤或产生网络请求。
+# enabled 仅允许创建 client；实际请求由下面的导演/过滤独立路由控制。
+# 这三段只通过 TOML 配置；修改后完整重启后端（API/推荐/发现子进程）生效。
+# Key 必须由后端启动环境继承；Docker 须显式映射环境变量并重建容器。
 [decision.providers.jev]
 enabled = false
 model = "jev-1.13.0"
@@ -59,6 +61,32 @@ api_key_env = "TYPESAFE_API_KEY"
 # 初始传输预算，并非实测 SLA。有限正秒数；max_attempts 包含首次请求。
 timeout_seconds = 2.0
 max_attempts = 2
+
+[director]
+# 三种编排共用 off/shadow/enforce 灰度。shadow 记录导演提案、返回同 shortlist
+# 的确定性基线；不是旧 MMR 严格不干预，旧路径请用 off。
+mode = "off"
+strategy = "agent_jev" # jev_recurrent | agent_jev | agent_only
+decision_provider = "jev"
+planning_horizon_screens = 3
+plan_ttl_seconds = 300
+planning_budget_seconds = 20.0
+decision_budget_seconds = 8.0
+max_decision_calls = 10
+max_candidates = 40
+
+[discovery.semantic_filter]
+# 与导演独立。仅针对明确稳定避雷，探索候选保留；失败/证据不足 fail open。
+mode = "off"
+provider = "jev"
+# 初始 shadow 观察值，非校准结论。enforce 需要人工记录真实校准标签与固定模型。
+refusal_threshold = 1.0
+calibration_tag = ""
+calibration_model = ""
+max_candidates_per_cycle = 30
+max_calls_per_cycle = 1
+decision_budget_seconds = 2.0
+# embedding/Jev 不可同时 enforce。任一 shadow/learned 对照队列绕过双方拒绝。
 
 [llm]
 # v2：每个实例都是完整可调用端点（类型 + Base URL + 凭据 + 模型）。

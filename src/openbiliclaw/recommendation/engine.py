@@ -442,6 +442,16 @@ class ServeResult:
     timings: ServeTimings = field(default_factory=ServeTimings)
 
 
+@dataclass(frozen=True)
+class DirectorCandidateSnapshot:
+    """Read-only serving input; no history, shown or presentation changes."""
+
+    items: tuple[DiscoveredContent, ...]
+    source_rows: tuple[dict[str, Any], ...]
+    scores: dict[str, float]
+    pool_counts: dict[str, int]
+
+
 @dataclass
 class PersonalTopic:
     """A deeply personalized recommendation topic.
@@ -699,6 +709,78 @@ class RecommendationEngine:
             source_platform=source_platform,
         )
         return result.items
+
+    async def load_director_candidates(
+        self,
+        profile: SoulProfile,
+        *,
+        limit: int = 40,
+        source_platform: str = "",
+        excluded_keys: frozenset[str] = frozenset(),
+    ) -> DirectorCandidateSnapshot:
+        """Prepare a bounded, topic-stratified shortlist without consuming it.
+
+        The Director store performs the final eligibility check and atomic
+        commit. This reader deliberately does not call serve(), whose legacy
+        persistence contract can retain a partial batch.
+        """
+        if not 1 <= limit <= 40:
+            raise ValueError("director shortlist limit must be between 1 and 40")
+        scope = normalize_source_platform(source_platform)
+        snapshot = await self._database.load_pool_serve_snapshot_async(
+            limit=limit * 3,
+            source_platform=scope,
+            xhs_self_nickname=self._xhs_self_nickname(),
+            curator_history_limit=max(1, int(getattr(self._curator, "_history_window", 30))),
+        )
+        rows = [dict(row) for row in snapshot.candidate_rows]
+        candidates = self._enforce_platform_scope(self._rows_to_discovered(rows), scope)
+        candidates = [
+            card
+            for card in candidates
+            if card.item_key not in excluded_keys
+            and card.bvid not in excluded_keys
+            and card.bvid not in snapshot.seen_bvids
+        ]
+        # Unlike the legacy fuzzy fallback, Director admission never re-adds a
+        # candidate excluded by the supplied dislike view just to fill a screen.
+        candidates = self._exclude_disliked_topic_candidates(candidates, profile)
+        candidates = self._filter_candidates_for_publication_serving(candidates)
+        candidates = self._exclude_temporally_stale_candidates_for_serve(candidates)
+        score_override, _ = await asyncio.to_thread(
+            self._score_candidates_with_curator,
+            candidates,
+            (list(snapshot.curator_signals), list(snapshot.feedback_signals)),
+        )
+        score_override = score_override or {}
+        candidates.sort(
+            key=lambda card: (
+                -score_override.get(card.scoring_key, card.relevance_score),
+                card.item_key,
+            )
+        )
+        # Round-robin topic representatives keep lower-ranked directions in
+        # the bounded menu. The 3x read and 40-card cap are engineering limits,
+        # not calibrated relevance/diversity thresholds.
+        groups: dict[str, list[DiscoveredContent]] = {}
+        for card in candidates:
+            groups.setdefault(card.topic_group or "unknown", []).append(card)
+        selected: list[DiscoveredContent] = []
+        while len(selected) < limit and any(groups.values()):
+            for group in groups.values():
+                if group and len(selected) < limit:
+                    selected.append(group.pop(0))
+        selected_keys = {card.item_key for card in selected}
+        raw_rows = tuple(row for row in rows if str(row.get("item_key", "")) in selected_keys)
+        return DirectorCandidateSnapshot(
+            items=tuple(selected),
+            source_rows=raw_rows,
+            scores={
+                card.item_key: score_override.get(card.scoring_key, card.relevance_score)
+                for card in selected
+            },
+            pool_counts=dict(snapshot.readiness),
+        )
 
     async def serve_with_result(
         self,

@@ -2,6 +2,14 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## 开发中：推荐导演三策略与完整屏协议（2026-09-26）
+
+- **三种策略接线**：Jev 每次选两卡逐对组成一屏；Agent 提前编排具体多屏，Jev 可替换中间单卡／整对并重验后缀；纯 Agent 模式不调用 Jev。策略与 off/shadow/enforce 分离，默认关闭。
+- **完整屏与反馈底座**：幂等 request、stream / epoch / generation fencing、TTL / plan CAS、最新库存／内容指纹／避雷复查后整屏原子提交；NEXT 推进、STAY 保留方向，历史屏不可原地修改。提交与曝光分开，真实可见 ACK、click 和明确反馈引用原事件去重。
+- **独立过滤与治理**：与导演正交的 Jev semantic filter，只处理明确稳定避雷、保留探索、完整 cohort 真实标签审计；拒绝延期一轮后强制 LLM 复审。运行时共用有界准入／熔断／deadline，CLI transport 不跨 loop。
+- **入口与文档**：插件、桌面、移动共用屏协议；CLI 与 OpenClaw 接同一运行时，宿主明确 ACK 展示；更新配置、模块、架构、README 与接入规范。TOML 更改需完整重启后端，未增加安装依赖，未启用用户配置或调用付费服务。
+- **验收边界**：真实 SQLite/API/CLI/宿主、原生 MockTransport、共享 JS 与 Chromium 回归覆盖实现。shadow 是同 shortlist 确定性 pair baseline，不是旧 MMR 无干预对照；真实中文效果、误拒、费用／时延待授权实测。最终命令结果见[实施进度](plans/2026-09-26-director-implementation-progress.md)。
+
 ## 开发中：独立 Jev 决策 Provider 与离线导演内核（2026-09-26）
 
 - **离线逐对编排内核**：新增 `recommendation.director.PairComposer.prepare_next()`，在最多 40 张的 caller-owned shortlist 中每次追加两张、最多准备 20 张；每步最多 16 个合法 pair 与 `none_suitable`，精确校验 topic minimum / maximum、canonical 去重和排除，保留递推前缀 / 真实反馈分离及逐步归因。Provider 缺席或失败走可诊断的确定性回退；短缺、不可满足和奇数尾部明确处理。所有输出仍为 tentative，不写数据库，不接生产 shadow / serve / 过滤，不实现 Agent 草稿及局部修补；新上限是工程预算而非质量标定，四表面、配置与安装依赖均不变。

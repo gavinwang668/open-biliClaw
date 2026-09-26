@@ -360,6 +360,7 @@ _INTERACTIVE_CALLERS = {
     # be parked behind the empty-pool refill reservation.
     "agent.chat",
     "agent.task",
+    "recommendation.director.plan",
 }
 _EXPRESSION_CALLERS = {
     "recommendation.expression",
@@ -382,6 +383,7 @@ _SUPPLY_PREFIXES = (
     "yt_search.generate_queries",
 )
 _KNOWN_MAINTENANCE_PREFIXES = (
+    "recommendation.director.preplan",
     "discovery.",
     "eval.",
     "pool_purge.",

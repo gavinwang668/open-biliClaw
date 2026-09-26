@@ -46,6 +46,7 @@ from openbiliclaw.discovery.prefilter_audit import (
     is_explicit_strong_interest_context,
     sanitize_prefilter_platform,
 )
+from openbiliclaw.discovery.semantic_filter import JevSemanticFilter, SemanticFilterBatch
 from openbiliclaw.discovery.strategies._utils import (
     _CONTENT_PROMPT_DOMAIN_CAP,
     _CONTENT_PROMPT_INTEREST_CAP,
@@ -806,6 +807,9 @@ class DiscoveredContent:
     discovery_lane: str = ""
     relevance_score: float = 0.0  # 0.0 - 1.0 (based on user soul)
     relevance_reason: str = ""  # Why this is relevant to the user
+    # Per-wave soft refusal only. Never serialized into content_cache or profile.
+    semantic_filter_deferred: bool = False
+    semantic_filter_review: bool = False
     temporal_class: str = "unknown"  # Why this content's value may expire
     temporal_confidence: float = 0.0  # Evaluator confidence in temporal_class
     temporal_reason: str = ""  # Short diagnostic for the temporal classification
@@ -1227,6 +1231,7 @@ class ContentDiscoveryEngine:
         eval_prefilter_mode: str = _EMBEDDING_PREFILTER_DEFAULT_MODE,
         eval_scorer: str = _EVAL_SCORER_DEFAULT,
         learned_scorer: LearnedRelevanceScorer | None = None,
+        semantic_filter: JevSemanticFilter | None = None,
         compact_evaluation_json: bool = False,
         evaluation_candidate_transport: str = _DEFAULT_EVALUATION_CANDIDATE_TRANSPORT,
     ) -> None:
@@ -1251,6 +1256,13 @@ class ContentDiscoveryEngine:
         if self._eval_scorer != "llm" and learned_scorer is None:
             learned_scorer = LearnedRelevanceScorer(embedding_service=embedding_service)
         self._learned_scorer = learned_scorer
+        self._semantic_filter = semantic_filter
+        if (
+            semantic_filter is not None
+            and semantic_filter.mode == "enforce"
+            and self.eval_prefilter_mode == "enforce"
+        ):
+            raise ValueError("Embedding and Jev filters cannot both enforce")
         # Replay-only unless and until the real provider quality/token gate
         # approves compact deterministic evaluator JSON.
         self.compact_evaluation_json = bool(compact_evaluation_json)
@@ -2261,7 +2273,8 @@ class ContentDiscoveryEngine:
         eval_scorer = self._normalize_eval_scorer(
             getattr(self, "_eval_scorer", _EVAL_SCORER_DEFAULT)
         )
-        if eval_scorer != "llm":
+        semantic_filter = getattr(self, "_semantic_filter", None)
+        if eval_scorer != "llm" or (semantic_filter is not None and semantic_filter.mode != "off"):
             scores = await self.evaluate_content_batch(
                 [content],
                 profile,
@@ -2523,15 +2536,22 @@ class ContentDiscoveryEngine:
 
         eval_indices = [index for index, _content in eval_pairs]
         eval_contents = [content for _index, content in eval_pairs]
+        semantic_filter = getattr(self, "_semantic_filter", None)
+        semantic_active = semantic_filter is not None and semantic_filter.mode != "off"
+        # Objects may be retried after a previous temporary rejection. Only this
+        # wave's evidence may defer them; no stale boolean survives reevaluation.
+        for content in eval_contents:
+            content.semantic_filter_deferred = False
         eval_scorer = self._normalize_eval_scorer(
             getattr(self, "_eval_scorer", _EVAL_SCORER_DEFAULT)
         )
         # Calibration modes need one complete learned-vs-LLM pair per candidate.
         # Do not let an old per-item LLM cache hit suppress either side of that
         # comparison; the default ``llm`` mode keeps the existing cache behavior.
-        normal_cache_enabled = eval_scorer == "llm" and self._batch_normal_cache_eligible(
-            eval_contents,
-            source_context=source_context,
+        normal_cache_enabled = (
+            eval_scorer == "llm"
+            and not semantic_active
+            and self._batch_normal_cache_eligible(eval_contents, source_context=source_context)
         )
 
         def finalize_scores(*, effective_batch_size: int, apply_cached_caps: bool) -> list[float]:
@@ -2615,7 +2635,23 @@ class ContentDiscoveryEngine:
         prefilter_mode = self._normalize_eval_prefilter_mode(
             getattr(self, "eval_prefilter_mode", _EMBEDDING_PREFILTER_DEFAULT_MODE)
         )
-        if eval_scorer != "llm" and prefilter_mode == "enforce":
+        semantic_batch = SemanticFilterBatch()
+        calibration = (
+            eval_scorer != "llm"
+            or prefilter_mode == "shadow"
+            or any(content.semantic_filter_review for content in eval_contents)
+        )
+        if semantic_active and semantic_filter is not None:
+            calibration = calibration or semantic_filter.mode == "shadow"
+            # Freeze BEFORE either model rejection. Every labeled cohort member
+            # bypasses both model refusals while deterministic hard gates remain.
+            semantic_batch = await semantic_filter.evaluate(
+                eval_contents,
+                profile,
+                source_context=source_context,
+                calibration=calibration,
+            )
+        if (eval_scorer != "llm" or calibration) and prefilter_mode == "enforce":
             logger.info("eval prefilter enforce treated as shadow during learned calibration")
             prefilter_mode = "shadow"
         filtered_local_indices: set[int] = set()
@@ -2736,6 +2772,17 @@ class ContentDiscoveryEngine:
                         effective_batch_size=effective_batch_size,
                         apply_cached_caps=cache_hit_count > 0,
                     )
+
+        if semantic_batch.suppressed_indices:
+            for index in semantic_batch.suppressed_indices:
+                eval_contents[index].semantic_filter_deferred = True
+            uncached_indices = [
+                index
+                for index in uncached_indices
+                if index not in semantic_batch.suppressed_indices
+            ]
+            if not uncached_indices:
+                return finalize_scores(effective_batch_size=batch_size, apply_cached_caps=False)
 
         batch_size = self._effective_eval_batch_size(
             [eval_contents[i] for i in uncached_indices],
@@ -2988,6 +3035,15 @@ class ContentDiscoveryEngine:
             shadow_raw_scores,
             persisted=shadow_persisted,
         )
+        if semantic_filter is not None:
+            semantic_filter.complete(
+                semantic_batch,
+                llm_scores=raw_model_scores,
+                admission_thresholds={
+                    index: self._admission_threshold_for_item(content)
+                    for index, content in enumerate(eval_contents)
+                },
+            )
         return final_scores
 
     def _recent_viewed_content_keys(self) -> set[str]:
@@ -4937,6 +4993,15 @@ class ContentDiscoveryEngine:
         round_franchise_counts: dict[str, int] = {}
         viewed_content_keys = self._recent_viewed_content_keys()
         for item in results:
+            if item.semantic_filter_deferred:
+                outcomes.append(
+                    CacheEvaluatedItemOutcome(
+                        bvid=item.bvid,
+                        admitted=False,
+                        newly_cached=False,
+                    )
+                )
+                continue
             temporal = evaluate_temporal_eligibility(
                 temporal_class=item.temporal_class,
                 temporal_confidence=item.temporal_confidence,

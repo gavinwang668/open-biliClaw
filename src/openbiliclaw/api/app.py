@@ -2339,6 +2339,11 @@ def create_app(
 
         ctx.llm_concurrency_gate = LLMConcurrencyGate(llm_concurrency_from_config(config))
 
+    ctx.configure_director(config)
+    from openbiliclaw.api.director import register_director_routes
+
+    register_director_routes(app, ctx)
+
     # Fan freshly recorded LLM/embedding anomaly alerts out to the live
     # runtime stream so the 异常报警 feed updates without a poll round-trip.
     with suppress(Exception):
@@ -3048,15 +3053,24 @@ def create_app(
                     value = f"http://{same_origin_host}"
                 headers[key] = value
             body = await request.body()
+            director_config = getattr(getattr(ctx, "config", None) or config, "director", None)
+            proxy_timeout = 30.0
+            if director_config is not None and getattr(director_config, "mode", "off") != "off":
+                proxy_timeout = max(
+                    proxy_timeout,
+                    float(director_config.planning_budget_seconds)
+                    + float(director_config.decision_budget_seconds)
+                    + 30.0,
+                )
             recommendation_port = os.environ.get(RECOMMENDATION_PORT_ENV, "").strip()
             if recommendation_port:
                 target_url = f"http://127.0.0.1:{recommendation_port}{request.url.path}"
-                client_kwargs: dict[str, Any] = {"timeout": 30.0, "trust_env": False}
+                client_kwargs: dict[str, Any] = {"timeout": proxy_timeout, "trust_env": False}
             else:
                 target_url = f"http://localhost{request.url.path}"
                 client_kwargs = {
                     "transport": _httpx.AsyncHTTPTransport(uds=os.environ[RECOMMENDATION_SOCK_ENV]),
-                    "timeout": 30.0,
+                    "timeout": proxy_timeout,
                     "trust_env": False,
                 }
             if request.url.query:
@@ -8637,6 +8651,8 @@ def create_app(
 
     @app.on_event("shutdown")
     async def shutdown_refresh_loop() -> None:
+        if ctx.director_runtime is not None:
+            await ctx.director_runtime.aclose()
         inventory_watch = getattr(app.state, "pool_inventory_watch_task", None)
         if inventory_watch is not None:
             inventory_watch.cancel()
@@ -9352,7 +9368,9 @@ def create_app(
         ), snapshot_expires_at
 
     @app.get("/api/recommendations", response_model=RecommendationListResponse)
-    async def recommendations() -> RecommendationListResponse:
+    async def recommendations(
+        stream_ref: str = Query("default", min_length=1, max_length=128),
+    ) -> RecommendationListResponse:
         """Return one coalesced recommendation snapshot.
 
         Restored browser sessions can contain dozens of stale dashboard tabs.
@@ -9364,6 +9382,11 @@ def create_app(
         nonlocal recommendation_snapshot_cache, recommendation_snapshot_cached_at
         nonlocal recommendation_snapshot_expires_at
         nonlocal recommendation_snapshot_dislike_digest
+
+        if ctx.director_runtime is not None and ctx.director_runtime.enabled:
+            from openbiliclaw.api.director import restore_screen
+
+            return await restore_screen(ctx, stream_ref)
 
         now = time.monotonic()
         disliked_topics, dislike_digest = _effective_recommendation_dislikes()
@@ -10327,6 +10350,8 @@ def create_app(
         _fire_and_forget_tasks.add(task)
         task.add_done_callback(_fire_and_forget_tasks.discard)
 
+    ctx.director_replenish_callback = _trigger_replenishment_if_needed
+
     def _platform_scope_kwargs(source_platform: str) -> dict[str, str]:
         """Forward the platform scope only when the client actually sent one.
 
@@ -10392,6 +10417,14 @@ def create_app(
     async def reshuffle_recommendations(
         payload: Annotated[RecommendationReshuffleIn | None, Body()] = None,
     ) -> RecommendationReshuffleResponse:
+        if ctx.director_runtime is not None and ctx.director_runtime.enabled:
+            from openbiliclaw.api.director import generate_screen
+            from openbiliclaw.api.models import DirectorGenerateIn
+
+            source = payload or RecommendationReshuffleIn()
+            values = source.model_dump()
+            values["request_id"] = source.request_id or uuid.uuid4().hex
+            return await generate_screen(ctx, DirectorGenerateIn(**values, intent="STAY"))
         _invalidate_recommendation_snapshot()
         request_started = time.perf_counter()
         precheck_ms = 0.0
@@ -10501,6 +10534,13 @@ def create_app(
     async def append_recommendations(
         payload: RecommendationAppendIn,
     ) -> RecommendationReshuffleResponse:
+        if ctx.director_runtime is not None and ctx.director_runtime.enabled:
+            from openbiliclaw.api.director import generate_screen
+            from openbiliclaw.api.models import DirectorGenerateIn
+
+            values = payload.model_dump()
+            values["request_id"] = payload.request_id or uuid.uuid4().hex
+            return await generate_screen(ctx, DirectorGenerateIn(**values, intent="NEXT"))
         _invalidate_recommendation_snapshot()
         request_started = time.perf_counter()
         precheck_ms = 0.0
@@ -14506,7 +14546,11 @@ def create_app(
             raise HTTPException(status_code=422, detail="Comment feedback requires note.")
 
         recommendation = ctx.database.get_recommendation_by_id(payload.recommendation_id)
-        if recommendation is None and (payload.bvid.strip() or payload.item_key.strip()):
+        if (
+            recommendation is None
+            and not payload.batch_ref
+            and (payload.bvid.strip() or payload.item_key.strip())
+        ):
             # Mobile can hold a stale history row id after backend restarts /
             # migrations; fall back to the stable content identity so feedback
             # on a currently listed card still lands on the newest row.
@@ -14523,6 +14567,20 @@ def create_app(
             )
             raise HTTPException(status_code=404, detail="Recommendation not found.")
         resolved_recommendation_id = int(recommendation.get("id") or 0)
+
+        if payload.batch_ref:
+            from openbiliclaw.api.director import validate_feedback_binding
+            from openbiliclaw.recommendation.director.store import StoreConflict
+
+            try:
+                await asyncio.to_thread(
+                    validate_feedback_binding,
+                    ctx.database,
+                    resolved_recommendation_id,
+                    payload.batch_ref,
+                )
+            except StoreConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.reason_code) from None
 
         from openbiliclaw.sources.event_format import (
             SOURCE_BILIBILI,
@@ -14591,6 +14649,22 @@ def create_app(
             feedback_type=stored_feedback_type,
             feedback_note=stored_note,
         )
+        from openbiliclaw.api.director import project_feedback
+        from openbiliclaw.recommendation.director.store import StoreConflict
+
+        try:
+            await asyncio.to_thread(
+                project_feedback,
+                ctx.database,
+                stored_recommendation_id,
+                payload.request_id,
+                stored_feedback_type,
+                stored_note,
+                batch_ref=payload.batch_ref,
+                existing_event_id=item_receipt.event_id,
+            )
+        except StoreConflict as exc:
+            raise HTTPException(status_code=409, detail=exc.reason_code) from None
         _invalidate_recommendation_snapshot()
         buffer_domain, buffer_specifics = _recommendation_buffer_domain(recommendation)
         if item_receipt.inserted and feedback_type == "like":
@@ -14648,6 +14722,17 @@ def create_app(
             recommendation = ctx.database.get_recommendation_by_id(
                 payload.recommendation_id,
             )
+
+        if payload.batch_ref:
+            from openbiliclaw.api.director import validate_feedback_binding
+            from openbiliclaw.recommendation.director.store import StoreConflict
+
+            try:
+                validate_feedback_binding(
+                    ctx.database, payload.recommendation_id or 0, payload.batch_ref
+                )
+            except StoreConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.reason_code) from None
 
         bvid = (payload.bvid or "").strip()
         content_id = (payload.content_id or "").strip()
@@ -14779,6 +14864,22 @@ def create_app(
                 detail="request_id was already used for a different recommendation click",
             )
         stored_bvid = str(stored_metadata.get("bvid") or stored_content_id).strip()
+        if stored_recommendation_id is not None:
+            from openbiliclaw.api.director import project_feedback
+            from openbiliclaw.recommendation.director.store import StoreConflict
+
+            try:
+                await asyncio.to_thread(
+                    project_feedback,
+                    ctx.database,
+                    stored_recommendation_id,
+                    payload.request_id,
+                    "click",
+                    batch_ref=payload.batch_ref,
+                    existing_event_id=item_receipt.event_id,
+                )
+            except StoreConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.reason_code) from None
         if item_receipt.inserted:
             buffer_domain, buffer_specifics = _recommendation_buffer_domain(
                 {
@@ -23178,6 +23279,7 @@ def create_app(
                 ("assets/js/chat-agent-core.js", _desktop_dir),
                 ("dialogue-confirmation.js", _shared_web_dir),
                 ("source-status.js", _shared_web_dir),
+                ("director-client.js", _shared_web_dir),
             ):
                 path = root / relative
                 if not path.is_file():
@@ -23216,6 +23318,10 @@ def create_app(
             html = html.replace(
                 'src="/shared/source-status.js"',
                 f'src="/shared/source-status.js?v={version}"',
+            )
+            html = html.replace(
+                'src="/shared/director-client.js"',
+                f'src="/shared/director-client.js?v={version}"',
             )
             return Response(
                 html,

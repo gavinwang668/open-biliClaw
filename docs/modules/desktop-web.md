@@ -9,6 +9,39 @@
 [聊一聊 Agent Loop 设计](../plans/2026-09-23-chat-agent-loop-design.md)，
 后端协议见 [agent 模块](agent.md) 与 [api 模块](api.md)）。
 
+## 推荐导演批次协议（桌面 / 移动 Web）
+
+桌面 `/web` 与移动 `/m/` 推荐页复用
+`web/shared/director-client.js`，与插件 side panel 使用同一份生成幂等、
+批次归因和可见曝光策略。现有布局不变；编排策略由后端配置决定，前端不
+把 `jev_recurrent`、`agent_jev`、`agent_only` 实现成三套请求逻辑。
+
+- **读取与生成分开**：`GET /api/recommendations` 在导演启用时只恢复已提交
+  批次。响应 `director.requires_generation=true` 且页面可见、没有现有卡片时，
+  前端显式 `POST /api/recommendations/director/generate`，意图为 `NEXT`。
+  加载更多仍调用 append（`NEXT`）；换一批仍调用 reshuffle（`STAY`）。
+  只有后端明确返回 `409 stay_without_batch`，首次换一批才转成新的 `NEXT`
+  请求；其余 STAY 不会被静默改成推进。
+- **失败不重复消费**：生成请求 ID 按动作和来源保存在 localStorage，网络失败、
+  页面重载后重试沿用同一 ID；请求在途禁用相应按钮。换批失败保留旧卡片，
+  不因空响应或异常提前清空。平台 scope 由后端追加到基础 `stream_ref`，
+  客户端不会把已经带平台的返回 stream 再追加一次。
+- **真实可见才曝光**：卡片保留 `batch_ref`、`stream_ref`、`item_key` 与原始
+  recommendation `id`，并绑定相同含义的 DOM data 属性。共享模块使用
+  `IntersectionObserver`，只在卡片已挂载、与视口相交且 `document.hidden=false`
+  时发送 `/api/recommendations/director/present`。获取数据、预加载、后台标签页
+  和未滚到的卡片不算曝光；缺少观察器时也不伪造曝光。
+- **归因和有限重试**：可见 ACK 使用稳定的 batch/推荐行 ID，失败最多重试
+  两次；点赞、点踩、评论和推荐点击都携带原始推荐行 ID 与 `batch_ref`。
+  恢复历史批次不重新生成推荐行。旧后端、缺少 director 元信息或 mode=off
+  时保留原 API body 与推荐行为。
+
+协议单测为 `tests/js/director-client.test.mjs`，Python 包装入口为
+`tests/test_director_frontend_protocol.py`；
+`tests/test_director_frontend_e2e.py` 使用真实浏览器和本地合成接口覆盖桌面、
+移动首屏生成、屏外/后台不曝光、恢复不生成及反馈批次归因。插件打包通过既有
+shared 资源复制流程分发同一文件。
+
 ## 已实现功能
 
 | 任务 | 状态 | 说明 |

@@ -163,7 +163,8 @@ def test_config_show_reports_jev_settings_without_resolving_key(
 
     assert result.exit_code == 0, result.output
     assert "Jev decision client" in result.output
-    assert "未接入业务路由" in result.output
+    assert "推荐导演" in result.output
+    assert "Jev 独立语义过滤" in result.output
     assert "jev-1.13.0" in result.output
     assert "TYPESAFE_API_KEY" in result.output
     assert "do-not-show-key-value" not in result.output

@@ -123,6 +123,7 @@ import {
   fetchProfileSummary,
   fetchProjectStats,
   fetchRecommendations,
+  observeRecommendationPresentation,
   fetchContentHistory,
   fetchDiagnosticsAlerts,
   fetchRuntimeStatus,
@@ -8008,6 +8009,7 @@ function renderRecommendations(items, { append = false } = {}) {
 
     card.append(preview, actions, composer.wrapper, feedbackStatus);
     elements.list.append(card);
+    observeRecommendationPresentation(card, item);
   }
 }
 

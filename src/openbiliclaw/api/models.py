@@ -5,18 +5,20 @@ from __future__ import annotations
 import ipaddress
 import re
 import unicodedata
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    SerializerFunctionWrapHandler,
     StrictBool,
     StrictStr,
     StringConstraints,
     ValidationInfo,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -240,12 +242,29 @@ class InitStatusOut(BaseModel):
     progress_sequence: int = 0
 
 
-class RecommendationOut(BaseModel):
+class _DirectorOptionalResponse(BaseModel):
+    """Keep the disabled route's wire shape unchanged for older clients."""
+
+    @model_serializer(mode="wrap")
+    def _without_inactive_director_fields(
+        self,
+        handler: SerializerFunctionWrapHandler,
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = handler(self)
+        for key in ("director", "batch_ref", "stream_ref"):
+            if not result.get(key):
+                result.pop(key, None)
+        return result
+
+
+class RecommendationOut(_DirectorOptionalResponse):
     """Recommendation payload exposed to the popup."""
 
     id: int
     bvid: str
     item_key: str = ""
+    batch_ref: str = ""
+    stream_ref: str = ""
     title: str = ""
     up_name: str = ""
     cover_url: str = ""
@@ -284,10 +303,21 @@ class RecommendationOut(BaseModel):
     up_mid: int = 0
 
 
-class RecommendationListResponse(BaseModel):
+class DirectorScreenInfo(BaseModel):
+    """Screen identity and opt-in route metadata, never an exposure acknowledgement."""
+
+    mode: str
+    strategy: str
+    stream_ref: str
+    batch_ref: str = ""
+    requires_generation: bool = False
+
+
+class RecommendationListResponse(_DirectorOptionalResponse):
     """Wrapper response for recommendation lists."""
 
     items: list[RecommendationOut]
+    director: DirectorScreenInfo | None = None
 
 
 ContentHistoryCategory = Literal["clicked", "shown", "removed"]
@@ -340,11 +370,12 @@ class RecommendationPoolStatus(BaseModel):
     pool_status_version: int = Field(ge=0)
 
 
-class RecommendationReshuffleResponse(BaseModel):
+class RecommendationReshuffleResponse(_DirectorOptionalResponse):
     """Immediate recommendation reshuffle result."""
 
     items: list[RecommendationOut]
     pool_status: RecommendationPoolStatus | None = None
+    director: DirectorScreenInfo | None = None
 
 
 class RecommendationAppendResponse(RecommendationReshuffleResponse):
@@ -367,6 +398,9 @@ class _PlatformScopedRecommendationIn(BaseModel):
 
     excluded_bvids: list[str] = Field(default_factory=list)
     source_platform: str = ""
+    request_id: str = Field(default="", max_length=128)
+    stream_ref: str = Field(default="default", min_length=1, max_length=128, pattern=r"\S")
+    explicit_intent: str = Field(default="", max_length=500)
 
     @field_validator("source_platform", mode="before")
     @classmethod
@@ -387,6 +421,20 @@ class RecommendationReshuffleIn(_PlatformScopedRecommendationIn):
 
 class RecommendationAppendIn(_PlatformScopedRecommendationIn):
     """Request payload for appending another recommendation page."""
+
+
+class DirectorGenerateIn(_PlatformScopedRecommendationIn):
+    """Explicit generation, separate from restore and actual presentation."""
+
+    request_id: str = Field(min_length=1, max_length=128, pattern=r"\S")
+    intent: Literal["NEXT", "STAY"] = "NEXT"
+    limit: int = Field(default=10, ge=1, le=20)
+
+
+class DirectorPresentIn(BaseModel):
+    batch_ref: str = Field(min_length=1, max_length=256)
+    ack_id: str = Field(min_length=1, max_length=128)
+    item_keys: list[str] = Field(min_length=1, max_length=20)
 
 
 class PlatformAvailabilityResponse(BaseModel):
@@ -1540,6 +1588,7 @@ class FeedbackIn(BaseModel):
     request_id: IdempotencyKey
     bvid: str = ""
     item_key: str = ""
+    batch_ref: str = ""
 
 
 class FeedbackResponse(BaseModel):
@@ -1949,6 +1998,7 @@ class RecommendationClickIn(BaseModel):
     """Payload for a recommendation click-through from the extension popup."""
 
     recommendation_id: int | None = None
+    batch_ref: str = Field(default="", max_length=256)
     bvid: str = ""
     content_id: str = ""
     content_url: str = ""

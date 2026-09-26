@@ -415,6 +415,10 @@ export function normalizeRecommendation(item) {
     topic_label: normalizeText(item?.topic_label),
     presented: Boolean(item?.presented),
     item_key: normalizeText(item?.item_key),
+    ...(normalizeText(item?.batch_ref) ? {
+      batch_ref: normalizeText(item.batch_ref),
+      stream_ref: normalizeText(item?.stream_ref),
+    } : {}),
     content_id: contentId,
     content_url: normalizeText(item?.content_url) || "",
     source_platform: sourcePlatform,

@@ -17,6 +17,18 @@ const FEEDBACK_SUBMIT_TIMEOUT_MS = 30_000;
 const CSRF_HEADER = "X-OBC-Auth";
 const PENDING_REQUEST_IDS_KEY = "openbiliclaw.pending_request_ids";
 const pendingRequestIds = new Map();
+let directorClient = null;
+
+function recommendationDirector() {
+  if (!directorClient && globalThis.OpenBiliClawDirectorClient) {
+    directorClient = globalThis.OpenBiliClawDirectorClient.createClient({ request: requestJson, namespace: "mobile-director" });
+  }
+  return directorClient;
+}
+
+export function observeRecommendationPresentation(element, item) {
+  recommendationDirector()?.bindCard(element, item);
+}
 
 function newRequestId() {
   if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
@@ -187,7 +199,9 @@ export async function updateConfig(data, timeoutMs = CONFIG_WRITE_TIMEOUT_MS) {
 
 // ── Recommendations ─────────────────────────────────────────
 export async function fetchRecommendations() {
-  const data = await requestJson("/recommendations", { timeoutMs: DEFAULT_READ_TIMEOUT_MS });
+  let data = await requestJson("/recommendations", { timeoutMs: DEFAULT_READ_TIMEOUT_MS });
+  const director = recommendationDirector();
+  if (director) data = await director.ensureInitial(data);
   return Array.isArray(data.items) ? data.items : [];
 }
 
@@ -222,7 +236,8 @@ export async function fetchContentHistory(category, limit = 12, cursorOrOffset =
 }
 
 export async function reshuffleRecommendations(excludedBvids = []) {
-  const data = await requestJson(
+  const director = recommendationDirector();
+  const data = director ? await director.generate("/recommendations/reshuffle", { excluded_bvids: excludedBvids }) : await requestJson(
     "/recommendations/reshuffle",
     { ...json({ excluded_bvids: excludedBvids }), timeoutMs: DEFAULT_READ_TIMEOUT_MS },
   );
@@ -230,7 +245,8 @@ export async function reshuffleRecommendations(excludedBvids = []) {
 }
 
 export async function appendRecommendations(excludedBvids = []) {
-  const data = await requestJson(
+  const director = recommendationDirector();
+  const data = director ? await director.generate("/recommendations/append", { excluded_bvids: excludedBvids }) : await requestJson(
     "/recommendations/append",
     { ...json({ excluded_bvids: excludedBvids }), timeoutMs: DEFAULT_READ_TIMEOUT_MS },
   );
@@ -238,6 +254,7 @@ export async function appendRecommendations(excludedBvids = []) {
 }
 
 export async function reportClick(payload) {
+  payload = recommendationDirector()?.feedback(payload) || payload;
   const stableRecommendationId = payload?.recommendation_id ?? null;
   const stableContentId = String(payload?.content_id || payload?.bvid || "").trim();
   let fallbackUrl = "";
@@ -645,6 +662,7 @@ export async function cancelAgentTask(taskId) {
 
 // ── Feedback ───────────────────────────────────────────────
 export async function submitFeedback(payload) {
+  payload = recommendationDirector()?.feedback(payload) || payload;
   const identity = JSON.stringify([
     payload?.recommendation_id ?? null,
     payload?.feedback_type || "",

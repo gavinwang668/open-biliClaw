@@ -89,13 +89,14 @@ class RealFeedback(_FrozenModel):
     """Caller-supplied actual event, never synthesized from a tentative pair.
 
     Offline callers must supply genuine persisted event/batch refs in real
-    replays (synthetic fixtures are labelled as such). This is attribution,
-    not proof of exposure; production ingestion is intentionally not wired.
+    replays (synthetic fixtures are labelled as such). Production ingestion
+    projects canonical events and explicit visible-subset acknowledgements;
+    tentative plans and tool delivery never create exposure evidence.
     """
 
     event_ref: _Key
     batch_ref: _Key
-    kind: Literal["presented", "like", "dislike", "skip", "explicit_request"]
+    kind: Literal["presented", "click", "like", "dislike", "skip", "explicit_request"]
     description: str = Field(max_length=256)
 
 

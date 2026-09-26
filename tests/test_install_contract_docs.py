@@ -8,6 +8,16 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def test_installers_link_optional_director_without_enabling_or_probing_it() -> None:
+    for path in ("scripts/install.sh", "scripts/install.ps1"):
+        source = _read(path)
+        assert "Optional recommendation director / Jev filter (disabled by default):" in source
+        assert "Configure TOML only after opting in; fully restart the backend." in source
+        assert "Jev routes need the configured key environment variable in the backend." in source
+        assert "config.md#director" in source
+    assert "TOML-only" in _read("docs/agent-install.md")
+
+
 def test_shell_installers_recommend_same_default_llm_provider() -> None:
     install_sh = _read("scripts/install.sh")
     install_ps1 = _read("scripts/install.ps1")

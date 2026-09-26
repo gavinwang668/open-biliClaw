@@ -16,7 +16,7 @@ import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import click
 import typer
@@ -1007,9 +1007,7 @@ def _build_recommendation_engine() -> Any:
         ),
         danmaku_max_chars=int(getattr(getattr(cfg, "discovery", None), "danmaku_max_chars", 500)),
         bilibili_client=_build_bilibili_client() if _danmaku_on else None,
-        serve_snapshot_store=ServeSnapshotStore(
-            cfg.data_path / "runtime" / "serve_snapshot.json"
-        ),
+        serve_snapshot_store=ServeSnapshotStore(cfg.data_path / "runtime" / "serve_snapshot.json"),
         serve_outbox=ServeOutbox(cfg.data_path / "runtime" / "serve_outbox.jsonl"),
         reply_style=str(getattr(cfg.soul, "reply_style", "")),
     )
@@ -1154,9 +1152,7 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
         # running; the child worker gets the same flag through the inherited
         # environment below.
         os.environ["OPENBILICLAW_FULL_WORKER"] = "1"
-        recommendation_transport = ensure_recommendation_transport_env(
-            load_config().data_path
-        )
+        recommendation_transport = ensure_recommendation_transport_env(load_config().data_path)
 
     api_app = create_app()
     state = getattr(api_app, "state", None)
@@ -1204,8 +1200,6 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
                 f"已启动独立 full worker pid={worker_process.pid}（OPENBILICLAW_WORKER=1）",
             )
 
-
-
             # Dedicated discovery runtime worker: runs the same
             # ContinuousRefreshController as the API used to, but in a separate
             # process so HTTP endpoints never compete with discovery/eval.
@@ -1230,7 +1224,6 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
                 "Discovery Worker 进程",
                 f"已启动独立 discovery worker pid={discovery_worker_process.pid}",
             )
-
 
             # Dedicated recommendation API process on a Unix socket. The main
             # API proxies /api/recommendations/* here so full recommendation
@@ -1277,12 +1270,8 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
             f"已启动独立 image-proxy pid={image_service_process.pid}（端口 8421）",
         )
         # Main API forwards image requests to this local service.
-        image_service_port = os.environ.get(
-            "OPENBILICLAW_IMAGE_SERVICE_PORT", "8421"
-        )
-        os.environ["OPENBILICLAW_IMAGE_SERVICE_URL"] = (
-            f"http://127.0.0.1:{image_service_port}"
-        )
+        image_service_port = os.environ.get("OPENBILICLAW_IMAGE_SERVICE_PORT", "8421")
+        os.environ["OPENBILICLAW_IMAGE_SERVICE_URL"] = f"http://127.0.0.1:{image_service_port}"
 
         listeners = create_wildcard_listener_sockets(host, port)
         if listeners is None:
@@ -1419,12 +1408,14 @@ def _build_discovery_engine() -> Any:
 
     embedding_service = build_embedding_service(cfg, registry)
     discovery_cfg = getattr(cfg, "discovery", None)
+    from openbiliclaw.discovery.semantic_filter import build_cli_semantic_filter
 
     engine = ContentDiscoveryEngine(
         llm_service=llm_service,
         database=database,
         concurrency=concurrency,
         embedding_service=embedding_service,
+        semantic_filter=build_cli_semantic_filter(cfg, database),
         multimodal_evaluation_enabled=bool(
             getattr(discovery_cfg, "multimodal_evaluation_enabled", False)
         ),
@@ -13706,13 +13697,105 @@ def import_youtube(
 
 
 @app.command()
-def recommend() -> None:
+def recommend(
+    request_id: Annotated[str, typer.Option(help="导演幂等请求 ID；重试复用相同值")] = "",
+    stream_ref: Annotated[str, typer.Option(help="导演会话流标识")] = "cli",
+    intent: Annotated[str, typer.Option(help="NEXT 推进一屏；STAY 保持当前方向")] = "NEXT",
+    restore: Annotated[bool, typer.Option(help="只恢复已提交屏，不生成新屏")] = False,
+    limit: Annotated[int, typer.Option(min=1, max=20, help="每屏卡片数")] = 5,
+    direction: Annotated[str, typer.Option(help="本次明确的编排意图")] = "",
+) -> None:
     """查看推荐内容."""
     from openbiliclaw.soul.engine import SoulProfileNotInitializedError
 
     _require_runtime_config()
     soul_engine = _build_soul_engine()
     recommendation_engine = _build_recommendation_engine()
+
+    from openbiliclaw.config import load_config
+
+    config = load_config()
+    if config.director.mode != "off":
+        from openbiliclaw.recommendation.director.runtime import build_director_runtime
+        from openbiliclaw.recommendation.director.store import StoreConflict
+        from openbiliclaw.recommendation.engine import Recommendation
+
+        normalized_intent = intent.strip().upper()
+        if (
+            normalized_intent not in {"NEXT", "STAY"}
+            or not stream_ref.strip()
+            or len(stream_ref) > 128
+        ):
+            raise typer.BadParameter("intent 仅支持 NEXT/STAY，stream-ref 长度为 1–128")
+        if len(request_id) > 128 or len(direction) > 500:
+            raise typer.BadParameter("request-id 最长 128，direction 最长 500")
+        stable_id = request_id.strip() or uuid.uuid4().hex
+        console.print(f"[dim]导演请求 ID：{stable_id}[/dim]")
+
+        async def _direct() -> None:
+            runtime = build_director_runtime(
+                config,
+                _get_runtime_database(),
+                recommendation_engine,
+                recommendation_engine._llm,
+            )
+            assert runtime is not None
+            try:
+                batch = (
+                    await runtime.restore(
+                        stream_ref,
+                        latest_disliked_topics=getattr(
+                            soul_engine, "get_effective_disliked_topics", None
+                        ),
+                    )
+                    if restore
+                    else await runtime.generate(
+                        await soul_engine.get_profile(),
+                        stream_ref=stream_ref,
+                        request_id=stable_id,
+                        intent=cast("Any", normalized_intent),
+                        limit=limit,
+                        explicit_intent=direction,
+                        latest_disliked_topics=getattr(
+                            soul_engine, "get_effective_disliked_topics", None
+                        ),
+                    )
+                )
+                _print_page_title("本轮推荐", "导演编排 · " + config.director.strategy)
+                if batch is None:
+                    _print_status_panel(
+                        "info", "暂无可推荐内容", "请先执行 `openbiliclaw discover`。"
+                    )
+                    return
+                rows = [dict(row) for row in batch.items]
+                content_by_key = {
+                    card.item_key: card for card in recommendation_engine._rows_to_discovered(rows)
+                }
+                for index, row in enumerate(rows, 1):
+                    item = Recommendation(
+                        content=content_by_key[str(row["item_key"])],
+                        recommendation_id=int(str(row["recommendation_id"])),
+                        expression=str(row.get("expression") or ""),
+                        topic_label=str(row.get("topic") or ""),
+                    )
+                    _print_recommendation_card(item, index)
+                console.print(f"[dim]屏：{batch.batch_ref} · 方向：{batch.direction}[/dim]")
+                # Successful terminal rendering is this surface's presentation.
+                await asyncio.to_thread(
+                    runtime.store.present,
+                    batch.batch_ref,
+                    "cli_" + batch.batch_ref,
+                    [str(row["item_key"]) for row in rows],
+                )
+            finally:
+                await runtime.aclose()
+
+        try:
+            asyncio.run(_direct())
+        except (SoulProfileNotInitializedError, StoreConflict, ValueError) as exc:
+            _print_status_panel("warning", "导演请求未完成", str(exc))
+            raise typer.Exit(code=1) from exc
+        return
 
     try:
         profile_data = asyncio.run(soul_engine.get_profile())
@@ -13725,7 +13808,7 @@ def recommend() -> None:
         recommendation_engine.generate_recommendations(
             discovered=None,
             profile=profile_data,
-            limit=5,
+            limit=limit,
         )
     )
 
@@ -13841,6 +13924,17 @@ def feedback(
             stored_recommendation_id,
             feedback_type=stored_feedback_type,
             note=stored_note,
+        )
+        from openbiliclaw.api.director import project_feedback
+
+        await asyncio.to_thread(
+            project_feedback,
+            _get_runtime_database(),
+            stored_recommendation_id,
+            normalized_request_id,
+            stored_feedback_type,
+            stored_note,
+            existing_event_id=item_receipt.event_id,
         )
 
         # The command is durably successful at this boundary. Cognition and
@@ -16400,12 +16494,16 @@ def config_show() -> None:
         ("LLM 并发", str(cfg.llm.concurrency)),
         (
             "Jev decision client",
-            "开启（未接入业务路由）" if cfg.decision.providers.jev.enabled else "关闭",
+            "开启" if cfg.decision.providers.jev.enabled else "关闭",
         ),
         ("Jev 模型", cfg.decision.providers.jev.model),
         ("Jev 凭据变量名", cfg.decision.providers.jev.api_key_env),
         ("Jev 超时（秒）", str(cfg.decision.providers.jev.timeout_seconds)),
         ("Jev 最大尝试次数", str(cfg.decision.providers.jev.max_attempts)),
+        ("推荐导演", cfg.director.mode),
+        ("导演策略", cfg.director.strategy),
+        ("提前编排屏数", str(cfg.director.planning_horizon_screens)),
+        ("Jev 独立语义过滤", cfg.discovery.semantic_filter.mode),
         ("B站认证", cfg.bilibili.auth_method),
         (
             "B站发布日期范围",

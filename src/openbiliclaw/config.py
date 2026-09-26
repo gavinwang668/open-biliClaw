@@ -473,6 +473,40 @@ class DecisionConfig:
 
 
 @dataclass
+class DirectorConfig:
+    """Recommendation rollout and orchestration policy, independent of filtering."""
+
+    mode: str = "off"
+    strategy: str = "agent_jev"
+    decision_provider: str = "jev"
+    planning_horizon_screens: int = 3
+    plan_ttl_seconds: int = 300
+    planning_budget_seconds: float = 20.0
+    decision_budget_seconds: float = 8.0
+    max_decision_calls: int = 10
+    max_candidates: int = 40
+
+
+@dataclass
+class SemanticFilterConfig:
+    """Opt-in discovery rejection evidence; enforcement needs versioned calibration.
+
+    The threshold is a conservative shadow starting point, NOT a calibrated
+    quality claim. Enforce requires an operator's calibration tag bound to the
+    exact pinned provider model; provider swaps must reopen calibration.
+    """
+
+    mode: str = "off"
+    provider: str = "jev"
+    refusal_threshold: float = 1.0
+    calibration_tag: str = ""
+    calibration_model: str = ""
+    max_candidates_per_cycle: int = 30
+    max_calls_per_cycle: int = 1
+    decision_budget_seconds: float = 2.0
+
+
+@dataclass
 class EmbeddingConfig:
     """Embedding model configuration.
 
@@ -1181,6 +1215,7 @@ class DiscoveryConfig:
     # Evaluator relevance backend: "llm" (default), "shadow" (LLM authoritative
     # with learned-vs-LLM audit), or "learned" (learned relevance with LLM metadata).
     eval_scorer: str = "llm"
+    semantic_filter: SemanticFilterConfig = field(default_factory=SemanticFilterConfig)
     # Optional cover-image evaluation. Kept off by default because it changes
     # LLM cost/latency and requires a vision-capable evaluation model.
     multimodal_evaluation_enabled: bool = False
@@ -1825,6 +1860,7 @@ class Config:
     api: ApiConfig = field(default_factory=ApiConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     decision: DecisionConfig = field(default_factory=DecisionConfig)
+    director: DirectorConfig = field(default_factory=DirectorConfig)
     bilibili: BilibiliConfig = field(default_factory=BilibiliConfig)
     # Overseas-outbound proxy (LLM SDKs / YouTube / Bangumi / updater).
     # CN-direct clients never use it — see NetworkConfig docstring.
@@ -2732,7 +2768,7 @@ def _build_config(
 
     api_auth = _build_api_auth(api_raw, consult_environment=consult_environment)
 
-    return Config(
+    config = Config(
         language=general.get("language", "zh"),
         data_dir=general.get("data_dir", "data"),
         api=ApiConfig(
@@ -2742,6 +2778,7 @@ def _build_config(
         ),
         llm=llm,
         decision=_build_decision_config(raw.get("decision", {})),
+        director=_build_director_config(raw.get("director", {})),
         bilibili=bilibili,
         network=_build_network_config(raw),
         sources=sources,
@@ -2988,6 +3025,8 @@ def _build_config(
         tls_proxy=_build_tls_proxy(raw, consult_environment=consult_environment),
         tailnet=_build_tailnet(raw, consult_environment=consult_environment),
     )
+    validate_director_routes(config)
+    return config
 
 
 def _jev_decision_config_issues(config: JevDecisionConfig) -> list[ConfigIssue]:
@@ -3067,6 +3106,101 @@ def _build_decision_config(raw: object) -> DecisionConfig:
     return DecisionConfig(providers=DecisionProvidersConfig(jev=jev))
 
 
+def _strict_route_table(raw: object, cls: type[Any], section: str) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ConfigError(f"[{section}] 必须是 TOML table。")
+    unknown = set(raw) - {item.name for item in fields(cls)}
+    if unknown:
+        raise ConfigError(f"{section}: 不支持的配置字段 {', '.join(sorted(unknown))}。")
+    return raw
+
+
+def _build_director_config(raw: object) -> DirectorConfig:
+    return DirectorConfig(**_strict_route_table(raw, DirectorConfig, "director"))
+
+
+def _build_semantic_filter_config(raw: object) -> SemanticFilterConfig:
+    return SemanticFilterConfig(
+        **_strict_route_table(raw, SemanticFilterConfig, "discovery.semantic_filter")
+    )
+
+
+def decision_routes_enabled(config: Config) -> bool:
+    """Whether runtime must construct the independent decision provider."""
+    return config.discovery.semantic_filter.mode != "off" or (
+        config.director.mode != "off" and config.director.strategy != "agent_only"
+    )
+
+
+def _director_route_issues(config: Config) -> list[ConfigIssue]:
+    issues: list[ConfigIssue] = []
+
+    def add(path: str, message: str) -> None:
+        issues.append(ConfigIssue(field=path, message=message, severity="blocking"))
+
+    def enum(path: str, value: object, allowed: set[str]) -> None:
+        if not isinstance(value, str) or value not in allowed:
+            add(path, f"必须为 {' / '.join(sorted(allowed))}。")
+
+    def integer(path: str, value: object, low: int, high: int) -> None:
+        if type(value) is not int or not low <= value <= high:
+            add(path, f"必须为 {low}..{high} 的整数。")
+
+    def number(path: str, value: object, low: float, high: float) -> None:
+        if (
+            type(value) not in (int, float)
+            or not low <= value <= high  # type: ignore[operator]
+            or not math.isfinite(value)  # type: ignore[arg-type]
+        ):
+            add(path, f"必须为 {low:g}..{high:g} 的有限数值。")
+
+    director = config.director
+    filtering = config.discovery.semantic_filter
+    enum("director.mode", director.mode, {"off", "shadow", "enforce"})
+    enum("director.strategy", director.strategy, {"jev_recurrent", "agent_jev", "agent_only"})
+    enum("director.decision_provider", director.decision_provider, {"jev"})
+    integer("director.planning_horizon_screens", director.planning_horizon_screens, 1, 3)
+    integer("director.plan_ttl_seconds", director.plan_ttl_seconds, 1, 3600)
+    number("director.planning_budget_seconds", director.planning_budget_seconds, 0.01, 60)
+    number("director.decision_budget_seconds", director.decision_budget_seconds, 0.01, 60)
+    integer("director.max_decision_calls", director.max_decision_calls, 1, 10)
+    integer("director.max_candidates", director.max_candidates, 2, 40)
+    prefix = "discovery.semantic_filter"
+    enum(f"{prefix}.mode", filtering.mode, {"off", "shadow", "enforce"})
+    enum(f"{prefix}.provider", filtering.provider, {"jev"})
+    number(f"{prefix}.refusal_threshold", filtering.refusal_threshold, 0.5, 1.0)
+    integer(f"{prefix}.max_candidates_per_cycle", filtering.max_candidates_per_cycle, 1, 90)
+    integer(f"{prefix}.max_calls_per_cycle", filtering.max_calls_per_cycle, 1, 3)
+    number(f"{prefix}.decision_budget_seconds", filtering.decision_budget_seconds, 0.01, 30)
+    for name in ("calibration_tag", "calibration_model"):
+        value = getattr(filtering, name)
+        if not isinstance(value, str) or len(value) > 200 or value != value.strip():
+            add(f"{prefix}.{name}", "必须为至多 200 字符的文本，且不能含首尾空白。")
+    if filtering.mode == "enforce":
+        if not filtering.calibration_tag:
+            add(f"{prefix}.calibration_tag", "enforce 需要显式领域校准记录标识；标识不是质量证明。")
+        model = config.decision.providers.jev.model
+        if (
+            filtering.calibration_model != model
+            or not isinstance(model, str)
+            or model in {"jev-latest", "jev-preview"}
+        ):
+            add(f"{prefix}.calibration_model", "enforce 校准模型必须与当前固定 Jev 模型完全一致。")
+        if config.discovery.eval_prefilter_mode == "enforce":
+            add(f"{prefix}.mode", "Jev 与 embedding 预过滤不能同时 enforce。")
+    if decision_routes_enabled(config) and not config.decision.providers.jev.enabled:
+        add("decision.providers.jev.enabled", "启用 Jev 编排或过滤路由时必须显式启用 provider。")
+    return issues
+
+
+def validate_director_routes(config: Config) -> None:
+    """Validate routes without resolving environment credentials or making I/O."""
+    issues = _director_route_issues(config)
+    if issues:
+        issue = issues[0]
+        raise ConfigError(f"{issue.field}: {issue.message}")
+
+
 def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
     """Assemble ``DiscoveryConfig`` from the raw ``[discovery]`` table.
 
@@ -3077,6 +3211,7 @@ def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
     (``OPENBILICLAW_DISCOVERY_*``) normalize identically to TOML values.
     """
     return DiscoveryConfig(
+        semantic_filter=_build_semantic_filter_config(discovery_raw.get("semantic_filter", {})),
         unified_keyword_planner_enabled=_coerce_bool(
             discovery_raw.get("unified_keyword_planner_enabled"),
             default=_DEFAULT_UNIFIED_KEYWORD_PLANNER_ENABLED,
@@ -4471,6 +4606,7 @@ def _source_date_preference_issues(config: Config) -> list[ConfigIssue]:
 def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     """Collect non-fatal config issues to display as guidance."""
     issues: list[ConfigIssue] = _jev_decision_config_issues(config.decision.providers.jev)
+    issues.extend(_director_route_issues(config))
 
     try:
         normalize_tailnet_hostname(config.tailnet.hostname)
@@ -5719,6 +5855,7 @@ def save_config(
     )
 
     validate_jev_decision_config(config.decision.providers.jev)
+    validate_director_routes(config)
     date_preference_issues = _source_date_preference_issues(config)
     if date_preference_issues:
         first_issue = date_preference_issues[0]
@@ -5840,6 +5977,7 @@ def _render_config_toml(
     """Render a Config dataclass into TOML."""
     jev = config.decision.providers.jev
     validate_jev_decision_config(jev)
+    validate_director_routes(config)
     api_auth_lines = (
         _api_auth_lines(
             config,
@@ -5851,6 +5989,27 @@ def _render_config_toml(
         else []
     )
     lines = [
+        "[director]",
+        f"mode = {_toml_string(config.director.mode)}",
+        f"strategy = {_toml_string(config.director.strategy)}",
+        f"decision_provider = {_toml_string(config.director.decision_provider)}",
+        f"planning_horizon_screens = {config.director.planning_horizon_screens}",
+        f"plan_ttl_seconds = {config.director.plan_ttl_seconds}",
+        f"planning_budget_seconds = {config.director.planning_budget_seconds}",
+        f"decision_budget_seconds = {config.director.decision_budget_seconds}",
+        f"max_decision_calls = {config.director.max_decision_calls}",
+        f"max_candidates = {config.director.max_candidates}",
+        "",
+        "[discovery.semantic_filter]",
+        f"mode = {_toml_string(config.discovery.semantic_filter.mode)}",
+        f"provider = {_toml_string(config.discovery.semantic_filter.provider)}",
+        f"refusal_threshold = {config.discovery.semantic_filter.refusal_threshold}",
+        f"calibration_tag = {_toml_string(config.discovery.semantic_filter.calibration_tag)}",
+        f"calibration_model = {_toml_string(config.discovery.semantic_filter.calibration_model)}",
+        f"max_candidates_per_cycle = {config.discovery.semantic_filter.max_candidates_per_cycle}",
+        f"max_calls_per_cycle = {config.discovery.semantic_filter.max_calls_per_cycle}",
+        f"decision_budget_seconds = {config.discovery.semantic_filter.decision_budget_seconds}",
+        "",
         "[decision.providers.jev]",
         f"enabled = {_toml_bool(jev.enabled)}",
         f"model = {_toml_string(jev.model)}",

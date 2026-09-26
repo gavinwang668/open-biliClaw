@@ -293,15 +293,14 @@ main API ← validated response inventory / 2s active-client inventory watcher
          → runtime-stream pool_updated → client total + source badges
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 
-standalone decision foundation (not wired into runtime):
-  explicit developer caller → decision provider contract → Jev typed HTTP adapter
-                           → validated Choice / Score / Noul evidence (no DB write)
-  [decision.providers.jev] → separate config / credentials; default disabled
-offline Director developer path (not production shadow / serving):
-  frozen shortlist + real feedback + topic quotas → PairComposer.prepare_next
-    → feasible pair alternatives → optional DecisionProvider / deterministic fallback
-    → append two tentative cards → next prefix → whole-screen validation
-    → ScreenProposal(tentative=true) + trace; no DB / exposure / commit
+optional Director (default off; separate decision credentials):
+  pool + real feedback → bounded shortlist → recurrent Jev pairs
+                                        ├→ Agent horizon + Jev local repairs
+                                        └→ Agent-only horizon (no Jev orchestration)
+    → tentative screen → fresh eligibility + state/fence/plan CAS → atomic commit
+    → immutable batch → visible ACK / exact click & feedback → future drafts
+  independent discovery semantic filter → shared bounded decision provider → Jev
+    → evidence audit → soft defer / full LLM review; never a chat-LLM fallback
 
 interactive (dialogue / config probe / agent.chat / agent.task) ┐
                                                     ├─ runtime total gate (default 4) ─ ordered instance chain ─ adapter
@@ -410,16 +409,12 @@ pool maintenance → isolated maintenance DB worker → ≤50 mutations/transact
                  → commit/release lock → unchanged skip / 10m safety sweep
 ```
 
-独立 `decision/` 模块提供 Jev typed 判断合同与适配器，默认关闭，凭据与 `[llm]`
-隔离。它只接受显式开发调用并返回证据，尚未接入发现过滤、生产推荐或运行时调度。
-`recommendation/director/` 已提供可执行的离线 `PairComposer.prepare_next()`：
-最多 40 张 shortlist，逐对选择并更新 tentative prefix，精确检查 topic minimum / maximum，
-最终输出最多 20 张的 tentative 提案与归因；真实反馈独立冻结，provider 可缺省或回退。
-这些数量是工程上限，不是质量标定。整屏提交 / 曝光、Agent 草稿 / Jev 修补 / 纯 Agent
-以及生产 shadow 仍为后续业务实现；四表面推荐行为不变，不新增配置或安装依赖。
-已有 Jev 配置文件与 CLI 摘要保持不变，三个图形界面没有模式或服务探测入口。见
-[决策模块](modules/decision.md)、[离线导演内核](modules/director.md)及
-[导演设计](plans/2026-09-26-director-jev-modes.md)。
+独立 `decision/` 与 `[llm]` 凭据和路由隔离。默认关闭的 `[director]` 接通 Jev 逐对、
+Agent+Jev 修补、Agent-only 三策略，`[discovery.semantic_filter]` 独立控制过滤。
+最多 40 张 shortlist、20 张屏、3 屏预排是工程上限；模型提案经 fresh eligibility / fencing / CAS
+后整屏提交，实际可见 ACK 才计曝光，点击与明确反馈精确关联批次。三端和 CLI 接通协议，
+模式设置使用 TOML，未增加图形探测或安装依赖；未实测真实模型质量。见
+[决策模块](modules/decision.md)、[导演运行时](modules/director.md)及[设计](plans/2026-09-26-director-jev-modes.md)。
 
 应用内 Tailnet 的产品边界是“让电脑端应用本身成为一个 tailnet 节点”，而不是要求电脑全局
 开启 Tailscale。`[tailnet].enabled=false` 保持默认；开启时 CLI / 桌面入口在 uvicorn 外层托管

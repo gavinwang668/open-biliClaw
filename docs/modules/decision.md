@@ -1,20 +1,20 @@
 # 独立决策 Provider
 
 > `src/openbiliclaw/decision/` 提供 typed decision 的基础契约和 Jev 适配器。
-> 当前是默认关闭的开发者能力，未接入 discovery 过滤、推荐热路径或运行时调度；
-> `jev_recurrent` / `agent_jev` / `agent_only` 三种导演模式仍是后续接线目标。
+> 默认关闭，已由导演运行时与独立 discovery 语义过滤调用。
+> 与聊天 LLM 路由和凭据隔离；模型只产出证据，不拥有数据库提交权限。
 
 ## 模块边界
 
 ```text
-显式开发调用
+导演 / 独立过滤 / 显式开发调用
   → DecisionRequest（状态、具名问题、purpose、schema 版本、deadline）
   → DecisionProvider.evaluate
   → Jev HTTP adapter
   → 严格解析 / 请求绑定校验
   → DecisionEvidence（答案或不可用原因、模型 / 输入归因、用量）
 
-现有 discovery / recommendation runtime ── 不调用本模块
+runtime ── 共享有界准入、总截止时间、熔断与取消回收
 ```
 
 Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMProvider.complete()`，
@@ -33,12 +33,14 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | Jev Choice / Score / Noul | 已实现 | 原生 typed 问题与答案、严格结果绑定；不解析自由文本回答 |
 | 有界 HTTP 请求 | 已实现 | 总 deadline、有限重试、明确错误原因、取消传播 |
 | 独立配置 | 已实现 | 默认关闭；只保存凭据环境变量名，不保存实际 key |
-| 离线逐对调用者 | 已实现 | `PairComposer` 可显式注入本 provider，输出 tentative 提案与 trace；不触发生产运行时 |
-| 生产过滤与编排接线 | 未接入 | 不改变现有 embedding prefilter、learned scorer、LLM evaluator 或 MMR |
+| 三策略导演调用者 | 已实现 | `PairComposer` 逐对决策，混合模式审查／修补；Agent-only 编排不调用 Jev |
+| 独立过滤与运行时 | 已实现 | 独立 shadow / enforce、真实标签审计与延期重审；运行时共享并发闸与熔断 |
 | 图形界面设置与服务探测 | 未提供 | 首版仅配置文件、`config-show` 和开发者接口 |
 | 线上质量 / 中文效果 / 时延保证 | 未验证 | 离线 fixture 不等于真实模型验收；本轮未调用付费 API |
 
 ## 公共 API
+
+`BoundedDecisionProvider` 默认并发 2、总 admitted（运行+排队）上限 32、连续 5 次 adapter 失败后熔断 30 秒；排队计入 deadline，关闭取消并回收任务。排队超时与调用者取消不算服务失败。这些为工程边界。`LoopLocalDecisionProvider` 为独立 CLI discovery 管理同 loop 共享闸门、每请求独立 transport，不跨多个 `asyncio.run()` 复用 HTTP client。`validate_decision_provider_credentials()` 只验配置和凭据，不创建 transport，off 不读取 key。
 
 | 接口 | 合同 |
 |---|---|
@@ -96,8 +98,8 @@ max_attempts = 2
 
 适配器固定 Jev 官方端点，禁止 HTTP 重定向。自建 client 遵循项目
 `network.outbound_httpx_kwargs()` 的海外网络路由；借用 client 的代理设置由其 owner
-负责。provider 不负责 daemon 并发闸、整屏预算或长时间 circuit breaker，未来接入
-运行时前必须在调用层补齐这些治理，不能把聊天 LLM 的现有预算视为已经覆盖 Jev。
+负责。适配器不负责整屏预算；运行时准入与熔断由 `BoundedDecisionProvider` 负责，
+整屏预算由调用者控制，不能把聊天 LLM 的预算视为已经覆盖 Jev。
 
 ## 安全与四表面边界
 
@@ -110,9 +112,8 @@ max_attempts = 2
 
 ## 后续接线的验收边界
 
-独立 provider 成功不代表三模式导演已上线。下一阶段至少需分别验证：中文判断质量、
-过滤误拒与探索保留、逐对状态传递、草稿局部修改后的后缀复核、已提交屏不可变、
-整屏 deadline 和安全回退。现有内容分类仍负责 topic / style / 时效等 metadata，
+三策略和独立过滤已接线；离线测试覆盖逐对状态、局部修改后缀复核、不可变屏、deadline 和回退。
+中文质量、实际误拒率、探索效果与费用／时延仍需授权实测。现有内容分类仍负责 topic / style / 时效等 metadata，
 不能以相关性判断直接替代。具体模式和提交合同见
 [导演设计](../plans/2026-09-26-director-jev-modes.md)，原生能力与限制见
 [官方研究](../plans/2026-09-26-jev-provider-research.md)。

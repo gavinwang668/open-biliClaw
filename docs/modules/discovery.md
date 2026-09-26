@@ -665,6 +665,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | 5.3 相关推荐链策略 | ✅ | 事件种子 + 偏好/策略兜底种子 + 2 层相关推荐链 + LLM 评分过滤 |
 | 5.4 跨领域探索策略 | ✅ | compact 画像生成短 JSON 探索 domain + 按 covered topic 缓存 + query 搜索 + exploration bonus + prompt 级外推多样性约束 |
 | 5.5 内容评估 | ✅ | `evaluate_content()` 已被四类发现策略复用（含 SearchStrategy） |
+| 独立 Jev 语义过滤 | ✅ 默认 off | 注入 `JevSemanticFilter`，使用独立 provider 与导演共享预算；窄范围稳定避雷判断、探索保留、完整校准 cohort、隐私安全审计、失败放行。校准 enforce 只在本 wave 延期，下一 claim 强制完整评估，不永久拉黑，不替代 LLM 元数据。 |
 | evaluator prefilter shadow 证据门 | ✅ | 默认仍为 `shadow`：每个未命中评分缓存的候选先生成不含标题、URL、正文或原始画像的审计决策，LLM 返回后用随机 decision id 回填原始模型分数和统一 admission 阈值结果；provider / parse 失败在产品评分路径可保守结算为 0，但审计行保持 unjoined，绝不把合成 0 伪装成 eventual LLM score。required-interest 集合与实际 embedding 输入使用同一份按权重排序的 top-256；无 embedding service 也使用固定域分隔 digest namespace 落下可连接证据，`profile_interests_missing` 与缺失/异常向量一并作为 degraded fail-open 进入 gate。审计写失败同样 fail-open。即使显式配置 `enforce`，当前批无法完整生成并持久化每条决策证据时也整批保留 LLM 路径；`scripts/evaluate_prefilter_shadow_gate.py` 只读冻结 retained cohort 并计算 §6.4 gate，从不自动切换 `enforce`。 |
 | evaluator learned scorer shadow 证据门 | ✅ | `[discovery].eval_scorer` 默认 `llm`；`shadow` 并跑 learned + 完整 LLM、由 LLM 决定 relevance 并积累完整隐私安全对照；人工通过 gate 后才可显式选 `learned`，且仅在 LLM 元数据完整、本批审计完整落库时由 learned 覆盖 relevance。当前两种校准模式都继续调用 LLM，不承诺降本。学习器不可用、异常、长度 / 数值 / 维度 / digest 非法或审计失败均 fail-open 到 LLM。只读 gate 要求 ≥100 完整对照、telemetry coverage=1、存在 admission、Spearman≥0.5、admission delta≤2%、admitted coverage≥90%，缺失指标一律失败，且从不自动改配置。 |
 | 5.6 发现引擎编排 | ✅ | 并发执行策略 + 高分去重 + 直接 discover 缓存收口；runtime 正常路径通过待评估池 admission 到 SQLite 推荐池 |
@@ -884,6 +885,60 @@ assert 0.0 <= score <= 1.0
 - `SearchStrategy` / `TrendingStrategy` / `RelatedChainStrategy` / `ExploreStrategy`、YouTube 三策略和 `DouyinDirectStrategy` 在内部临时构造 evaluator 时都会透传 `database`。因此 CLI、daemon runtime、YouTube producer、Douyin producer 和 OpenClaw bootstrap 路径都能读取同一份近期 negative exemplars，避免只有外层 engine 能看到短期负反馈样本。
 - 排序口径优先 `candidate_tier`，再看 `relevance_score`、`last_scored_at`、`view_count`
 - 最终结果会把 `relevance_score`、`relevance_reason`、`candidate_tier` 一并写入 `content_cache`
+
+### 独立 Jev 语义过滤
+
+`[discovery.semantic_filter]` 与 `[director]` 独立；纯 Agent、纯 Jev、混合编排都能
+分别开关它。运行时创建和关闭 provider，`ContentDiscoveryEngine` 只接受已注入的
+`JevSemanticFilter`，不在构造器中读取 Key 或创建 HTTP client。
+该开关当前通过 TOML 配置；修改后完整重启后端，使 discovery 子进程与 API / 推荐
+子进程一并载入新配置。单独重载 API runtime 不会改变另一个已运行的发现进程。
+
+处理顺序是确定性硬规则 → 冻结校准 cohort → 模型过滤证据 → 当前 LLM 评估 / 分类
+→ 现有入池门。单条 `evaluate_content()` 在启用语义过滤时也转入同一个 batch 路径；
+注册到引擎的策略继承它，默认关闭和独立策略未注入时保留历史行为。
+
+| Interface | 合同 |
+|---|---|
+| `JevSemanticFilter(config, provider, *, model, database)` | 接受依赖，不拥有 provider 生命周期；enforce 要求固定模型与校准标识匹配 |
+| `evaluate(contents, profile, *, source_context="", calibration=False)` | 返回 `SemanticFilterBatch`；`suppressed_indices` 只在完整审计成功且可 enforce 时非空 |
+| `complete(batch, *, llm_scores, admission_thresholds)` | 只把真实有限 LLM 分数与准入结果接回审计；缺失标签保留 NULL，不用合成 0 补齐 |
+| `ContentDiscoveryEngine(..., semantic_filter=...)` | 单条 / 批量的共同注入点；不允许 embedding 和 Jev 同时 enforce |
+| `build_cli_semantic_filter(config, database)` | CLI 构造 helper；off 不查凭据，on 先验凭据但不创建 HTTP client，再注入逐请求 transport / 每 event loop 共享 gate |
+| `Database.defer_claimed_semantic_filter_candidates(ids, *, claim_token)` | CAS 检查当前评估租约，把本轮延期行退回 pending，零失败惩罚 |
+
+每个候选的问题在 `instructions` 中明确写入 request-local `candidate_ref`，不能依赖
+服务端不保证可见的 question key；候选标题、摘要和 tags 都是 untrusted data。
+模型只回答是否明确违反稳定避雷，不因陌生领域或近期兴趣不匹配就拒绝。探索来源 / 上下文
+保留。画像通过命名 compact profile view 序列化，不发送 portrait；负偏好不被裁剪。
+
+每 wave 默认最多 30 个非探索候选、1 个请求、2 秒总 deadline；配置可扩到 90 个候选、
+3 个请求，每请求最多 30 个问题。另有 24,000 UTF-8 字节工程上限，不宣称等于 tokenizer
+预算；超限、provider 故障、部分 / 错配 / 非有限结果、超时与审计失败均保留候选。
+所有调用与编排共享 `BoundedDecisionProvider` 的并发 / 排队 / 熔断限制。
+standalone CLI 的 `discover*` 同样注入该过滤器；CLI 可能多次 `asyncio.run()`，所以
+`LoopLocalDecisionProvider` 每次请求在当前 loop 中创建并关闭 transport，同一个 loop
+共享有界 gate，不把连接池带到下一个 loop。API runtime 接管时替换为其单一长期 client；
+两条路径都不回借聊天 / embedding 凭据。构建过滤器只校验启用路由所需的环境变量，
+不会探测远端或自动发送请求。
+
+Jev 启用时绕过普通评分缓存，避免缓存命中把难例从对照中消掉。任一模型 shadow、
+learned scorer 校准或延期复核 wave 都绕过 embedding 与 Jev 的模型拒绝，当前 LLM 继续
+补齐 temporal/topic/style/franchise 元数据。先前确定性已看 / 日期 / 可用性规则不被绕过。
+阈值只接受配置值；默认 1.0 没有真实领域校准背书。`calibration_tag` 是人工校准记录
+引用而非代码替用户完成了质量验收；更换模型必须重新校准，不自动提高上线等级。
+
+`discovery_semantic_filter_audit` 保留完整 cohort，包括探索豁免、预算未覆盖与失败成员。
+字段包含随机 decision/cohort id、候选 hash、输入 digest、requested/actual model、schema、
+rollout mode、calibration tag、阈值和拒绝证据、would-filter、suppressed、原因和真实 LLM
+标签。审计不保存候选标题、URL、正文或原始画像；保留上限 30 天 / 20,000 行。
+失败 / 未评估成员的 `llm_score` 保留 NULL，不能把“没评估”算作模型正确拒绝。
+
+enforce 只延期当前 wave，不写永久低分、不删除候选、不改变长期画像。延期保留
+`semantic_filter_deferred` 标记且不增加 eval/batch 失败次数；下一次 claim 读取它，
+强制完整评估，之后依旧由真实 LLM 分数与现有 admission 规则决定入池。
+`complete_claim()` 单独返回 `deferred` 数量，不误记为 rejected / stale / evaluated。
+此安全版本不承诺消除后续 LLM 成本，也没有 pre-serve 会话过滤路由。
 
 ### DiscoveryCandidatePipeline
 

@@ -495,11 +495,13 @@ fixed A1/A2/A、weighted B，并用同一 input digest 的完整历史 F 作为 
 
 | 流量类 | total priority | 说明 |
 |---|---|---|
-| interactive | 0 | `soul.dialogue*`、`api.sentiment`、`api.config_probe`、`agent.chat`、`agent.task`，仅经过 total gate |
+| interactive | 0 | `soul.dialogue*`、`api.sentiment`、`api.config_probe`、`agent.chat`、`agent.task`、`recommendation.director.plan`，仅经过 total gate |
 | refill.expression | 1 | 推荐文案回填，补货最高优先 |
 | refill.evaluation | 2 | 候选 batch / single 评估 |
 | refill.supply | 3 | durable inventory 低于目标时动态升级的关键词 / 原料生成；包含 `discovery.explore.queries` 与 `sources.*.extract`，防止 supply 等库存、库存又等 supply 的循环 |
-| maintenance | 4 | Soul、评测、purge 与健康库存下的 discovery；未知 caller 也落此类 |
+| maintenance | 4 | Soul、评测、purge、`recommendation.director.preplan` 与健康库存下的 discovery；未知 caller 也落此类 |
+
+导演前台补齐草稿与后台预排共用 `complete_structured_task`，有独立规划截止时间，不注入 core memory；Jev 是另一个 typed decision provider，不进入本 LLM fallback 链或共享它的配额统计。内容摘要与实际反馈不等于 Soul 全画像，详见[导演](director.md)。
 
 当 refill waiter 存在时，新 maintenance 最多一个；没有 runnable refill 时 maintenance 可借用所有空闲后台槽，保持 work-conserving。`empty` 只 park 新 maintenance，绝不会取消或抢占已经进入 provider 的 maintenance。状态输出同时包含 refill/maintenance active、waiting、priority-active 与 inventory state。
 

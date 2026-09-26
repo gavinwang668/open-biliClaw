@@ -297,6 +297,38 @@ base_url = "https://relay.example.com/v1"
 
 **分模块链（可选）**：`[llm.routes.soul/discovery/recommendation/evaluation]` 默认 `inherit=true`；也可设 `inherit=false` 并提供有序 `chain`。典型用法是发现 / 评估优先便宜渠道，Soul 优先高质量渠道；自定义链耗尽后不会越界回到全局链。详见 [docs/modules/config.md](modules/config.md)。
 
+### 可选：Jev 决策与推荐导演
+
+导演三模式与独立语义过滤均默认关闭；它们使用现有依赖，无需安装 Jev SDK、模型
+或额外 sidecar。显式启用时，按[配置参考](modules/config.md#director)修改容器实际
+配置目录 `/app/runtime` 的 TOML，而不是宿主机未挂载的同名文件。`agent_only` 且
+过滤关闭时不需要 Jev；其余启用 Jev 的路由需独立凭据，不借用聊天 / embedding Key。
+
+宿主机的环境变量不会自动进入容器。在所用 Compose 文件的 backend 服务
+`environment` 中显式添加变量映射；以下只保存变量名，不保存 Key：
+
+```yaml
+services:
+  openbiliclaw-backend:
+    environment:
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:?provide the Jev credential in the launch environment}
+```
+
+通过受控启动环境提供该变量；若 `api_key_env` 自定义，映射同名变量。不要输出 Key
+做校验，也不要提交包含秘密的 Compose / `.env` 文件。修改 TOML 或凭据后完整重建
+后端容器，使 API、推荐、发现进程一并重新启动；单纯刷新页面不生效，普通
+`docker compose restart` 也不会更新环境变量。源码 Compose 的命令为：
+
+```bash
+docker compose up -d --force-recreate openbiliclaw-backend
+```
+
+预构建部署使用同一命令并加 `-f docker-compose.prebuilt.yml`（放在 `up` 前）；保留
+原有 HTTPS 等 overlay。重建不会删除 named volumes。启动后检查日志与经过当前
+认证方式访问的 `GET /api/recommendations/director/status`；`config-show` 只验证配置
+展示，不会证明凭据可用或自动做付费探测。过滤先用 shadow；enforce 所需的模型固定
+与真实校准记录见配置参考，填一个标签本身不算质量验证。
+
 ## 日常命令
 
 所有 CLI 命令通过 `docker exec` 在容器内执行：

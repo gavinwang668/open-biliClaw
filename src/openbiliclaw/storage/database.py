@@ -7130,6 +7130,7 @@ class Database:
                 claimed_at = CURRENT_TIMESTAMP,
                 claim_token = ?,
                 eval_error = CASE
+                    WHEN eval_error = 'semantic_filter_deferred' THEN eval_error
                     WHEN COALESCE(eval_error, '') LIKE 'temporal_review_due:%'
                     THEN eval_error
                     ELSE ''
@@ -7537,6 +7538,30 @@ class Database:
             ):
                 updated_ids.add(candidate_id)
         return updated_ids
+
+    def defer_claimed_semantic_filter_candidates(
+        self,
+        candidate_ids: Sequence[int],
+        *,
+        claim_token: str,
+    ) -> int:
+        """Release a soft refusal once, without learning/rejection or retry penalties.
+
+        The marker survives the next claim and forces full evaluator review,
+        preventing repeat-refusal loops. Ownership is checked atomically.
+        """
+        ids = [int(value) for value in candidate_ids if int(value) > 0]
+        if not ids:
+            return 0
+        placeholders = ", ".join("?" for _ in ids)
+        cursor = self._execute_write(
+            f"""UPDATE discovery_candidates SET status='pending_eval',
+            claimed_at=NULL, claim_token=NULL, eval_error='semantic_filter_deferred',
+            last_seen_at=CURRENT_TIMESTAMP
+            WHERE id IN ({placeholders}) AND status='evaluating' AND claim_token=?""",
+            (*ids, str(claim_token)),
+        )
+        return int(cursor.rowcount)
 
     def reset_claimed_discovery_candidates_to_pending(
         self,

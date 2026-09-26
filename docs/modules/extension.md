@@ -11,6 +11,30 @@
 - 通过 background service worker 缓冲并上报到本地后端
 - 在 side panel 中展示连接状态、推荐结果、画像和聊天入口
 
+### 推荐导演三模式接线
+
+side panel 的推荐页支持后端 `jev_recurrent`、`agent_jev`、`agent_only` 三种
+编排策略；模式配置仍由后端 TOML / CLI 管理，不增加另一套插件侧模式开关。
+`popup-api.js`、`popup-helpers.js` 和 `popup.js` 接入
+`src/openbiliclaw/web/shared/director-client.js`，构建时通过已有 shared 资源
+复制流程分发，与桌面 / 移动 Web 共用协议实现。
+
+普通 GET 只恢复已提交卡片；后端标记需要首屏、面板实际可见且没有旧卡片时才
+显式提交 NEXT。追加推荐为 NEXT，换一批为 STAY；首次没有批次的 STAY 仅在
+收到明确 `stay_without_batch` 后转换一次 NEXT。生成 ID 在本地持久化，失败
+重试复用，不因网络超时额外消费一屏；加载时禁用操作，错误保留已有卡片。
+
+卡片归一化保留 `batch_ref`、`stream_ref`、canonical `item_key` 和精确推荐行
+`id`。只有 IntersectionObserver 确认卡片真实进入视口、面板不在后台时才
+发送可见 ACK；预取、返回数据、屏外和后台卡片不算曝光。ACK 保持稳定 ID，
+最多重试两次，重挂载不重复记账。点赞、点踩、评论和点击都附带原始批次归因。
+旧后端和导演 off 继续使用原协议，不添加空的批次字段。
+
+完整接口与桌面 / 移动验证见
+[推荐导演批次协议](desktop-web.md#推荐导演批次协议桌面--移动-web)。共享行为
+由 `tests/js/director-client.test.mjs` 覆盖；插件还需运行既有 popup API、
+归一化测试、`npm run typecheck` 与 `npm run build:bundle`。
+
 ### 配置页 HTML 结构约束
 
 插件与桌面 Web 的设置面板都依赖浏览器原生 HTML 解析后再由脚本切换 `hidden` 状态。桌面 Web 平台源列表中的每个来源卡（尤其 Linux.do / V2EX）必须保持同级 `<article>` 节点，并在来源列表结束前闭合；来源卡不能包住后续的来源总览或其它 `data-settings-panel`。修改来源卡片时同步运行 `tests/test_desktop_web_linuxdo_settings.py`，防止标签嵌套导致配置页只剩 tab 栏。

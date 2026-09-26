@@ -14,13 +14,41 @@ if TYPE_CHECKING:
 
     import httpx
 
-    from openbiliclaw.config import DecisionConfig
+    from openbiliclaw.config import DecisionConfig, JevDecisionConfig
 
     from .base import DecisionProvider
 
 
 class DecisionConfigurationError(ConfigError):
     """An explicitly requested decision provider cannot be constructed safely."""
+
+
+def _resolve_jev_api_key(
+    settings: JevDecisionConfig,
+    environ: Mapping[str, str] | None,
+) -> str:
+    variables = os.environ if environ is None else environ
+    api_key = variables.get(settings.api_key_env, "").strip()
+    if not api_key:
+        raise DecisionConfigurationError(
+            "Enabled decision.providers.jev requires the environment variable named by api_key_env."
+        )
+    # HTTP header syntax, not vendor key shape; never echo received values.
+    if not api_key.isascii() or any(ord(char) < 33 or ord(char) == 127 for char in api_key):
+        raise DecisionConfigurationError("The Jev credential is not a valid bearer token.")
+    return api_key
+
+
+def validate_decision_provider_credentials(
+    config: DecisionConfig,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> None:
+    """Check enabled credentials without constructing a transport or retaining the key."""
+    settings = config.providers.jev
+    validate_jev_decision_config(settings)
+    if settings.enabled:
+        _resolve_jev_api_key(settings, environ)
 
 
 def build_decision_provider(
@@ -43,17 +71,7 @@ def build_decision_provider(
     if not settings.enabled:
         return None
 
-    variables = os.environ if environ is None else environ
-    raw_key = variables.get(settings.api_key_env, "")
-    api_key = raw_key.strip()
-    if not api_key:
-        raise DecisionConfigurationError(
-            "Enabled decision.providers.jev requires the environment variable named by api_key_env."
-        )
-    # HTTP header syntax, not a vendor-specific key format. Never include the
-    # received value in exceptions or diagnostics.
-    if not api_key.isascii() or any(ord(char) < 33 or ord(char) == 127 for char in api_key):
-        raise DecisionConfigurationError("The Jev credential is not a valid bearer token.")
+    api_key = _resolve_jev_api_key(settings, environ)
     return JevDecisionProvider(
         api_key=api_key,
         model=settings.model,

@@ -893,6 +893,31 @@ system-level package the user must consent to.
 > embeddings without registering Ollama for chat or causing any
 > `llama3` probe. Older v0.3.0–v0.3.2 installs should be upgraded.
 
+## Optional: Jev decision provider and recommendation director
+
+The Bash and PowerShell completion summaries link this optional configuration; they
+do not enable a route, add onboarding flags, collect a Jev key, or make a paid probe.
+
+Keep these experimental routes off during normal installation. If the user explicitly asks
+for them after installation, follow [the director / filter configuration reference](modules/config.md#director).
+They use the existing dependencies; there is no additional SDK, model download, installer
+flag, or automatic service probe. The three mode and filter switches are TOML-only, not
+settings-page toggles. Pure `agent_only` with the independent filter off needs no Jev key.
+
+For a Jev-enabled route, arrange the environment variable named by `api_key_env` in the
+**actual backend launch environment**. Keep its value out of TOML, command arguments,
+logs, and repository files. A variable set in an unrelated terminal does not update a
+running desktop app. Docker needs an explicit backend-service environment mapping and
+container recreation; use [the Docker opt-in instructions](docker-deployment.md#可选jev-决策与推荐导演).
+
+After configuration or credential changes, fully stop and restart the backend (including
+the API, recommendation, and discovery processes); restarting one runtime or refreshing
+the UI is insufficient. For desktop installs, quit and relaunch the whole application.
+Completion means the restarted service is healthy and the authenticated
+`GET /api/recommendations/director/status` reports the requested mode / strategy.
+`config-show` does not make a paid call or prove Jev credentials work. Report filtering
+as configured, not calibrated: only the user's real calibration record can justify enforce.
+
 ## Hard rules
 
 1. **Never edit `config.toml` by hand.** Every credential write goes through `scripts/agent_bootstrap.py`.

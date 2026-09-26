@@ -118,8 +118,10 @@ server-owned binding、context preview 与卡片 action 不改变 CLI 的既有�
 显示当前加载的配置、已注册的 LLM 端点实例、全局调用链和最终生效的默认实例。旧格式仍显示等价结果；v2 会额外区分实例 ID 与 Provider 类型，因此两个同类型渠道不会被合并。
 
 独立 Jev 决策配置也展示开关、模型、API key 环境变量名、总超时和最大尝试次数。
-这里不读取或打印实际 key，不创建 provider 或发起探测；即使显示开启，当前发现和推荐
-运行时仍未接入 Jev。配置及四表面边界见[决策配置](config.md#decisionprovidersjev)。
+同时显示导演 mode / strategy、提前编排屏数与独立过滤 mode。
+这里不读取或打印实际 key，不创建 provider 或探测。配置见[决策配置](config.md#decisionprovidersjev)。
+
+导演启用时，`recommend` 支持 `--request-id`（128 字符内，重试复用）、`--stream-ref`（默认 cli）、`--intent NEXT|STAY`、`--restore`、`--limit 1..20`、`--direction`（500 字符内）。恢复仅打印同一批次；成功打印后确认 presentation，provider 在同一事件循环内关闭。CLI feedback 投影原 ingress event，不重复写学习事件。独立 `discover*` 也注入语义过滤，按 loop 管理并发、每请求关闭 transport，不跨 `asyncio.run()` 复用连接。导演 off 保持旧路径。见[导演合同](director.md)。
 
 配置概览会直接显示「停止后台 LLM 请求」是否启用、「浏览器断开后暂停」是否启用和当前宽限秒数、「开机自启动」配置 / 系统注册状态、海外网络模式与自定义代理地址，以及默认关闭的「收藏自动同步」解析状态，方便确认实际网络路由和 `[saved_sync].auto_sync_enabled` 是否已经写入后端配置。
 推荐引擎构造同样读取 `[discovery]` 的 `keyframe_max_frames`、`keyframe_fetch_limit`、

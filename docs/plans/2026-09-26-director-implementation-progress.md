@@ -4,7 +4,43 @@
 
 架构依据：[三模式方案](2026-09-26-director-jev-modes.md)、[基础规格](2026-08-31-recommendation-director-spec.md)。
 
-## 当前切片：离线逐对编排内核
+## 当前交付：三策略、独立过滤与整屏运行时
+
+已完成本轮要求的可运行功能：Jev 两卡递推、Agent 多屏具体预排 + Jev 中间单卡／整对修补、纯 Agent 预排，以及独立 Jev 语义过滤。默认关闭，配置采用 TOML；更改后完整重启后端（主 API、推荐进程、发现 worker）。没有改用户真实配置、调用付费 API、合入 main 或发版。
+
+- 同一 `DirectorRuntime` / `DirectorStore` 承担候选准备、状态版本、幂等、TTL / CAS、原子屏提交与不可变历史；配置换代拒绝旧进程提案，同配置重建保留未来计划。
+- `NEXT` 推进屏，`STAY` 保留根方向；真实可见 ACK / click / 明确反馈与生成、预加载分离。复用 canonical event ID，重试不重复写学习事件。
+- 三端（插件、桌面、移动）共用客户端协议；CLI 和 OpenClaw 接同一运行时，宿主工具返回不当曝光，需实际展示后明确 ACK。
+- 独立过滤只判断明确稳定避雷并保留探索；拒绝仅延期一轮，下轮强制完整 LLM 评估，不承诺永久省掉评估成本。enforce 的人工校准标签不是效果证明。
+- 预算覆盖排队／调用，provider 共用限流／熔断，取消与关闭回收资源；Agent-only 关过滤时不创建 Jev client、不读 key。
+- `shadow` 展示同 shortlist 的确定性 pair baseline，不是旧 MMR 的严格不干预对照；真实中文效果、误拒率、长期满意度、费用和时延仍需授权实测。
+
+完整使用合同见 [导演模块](../modules/director.md)、[配置](../modules/config.md)、[API](../modules/api.md)。
+
+### 本轮验收记录
+
+本功能验收使用临时 SQLite、合成画像、Fake Agent/Jev 或 MockTransport；浏览器测试使用真实 Chromium，没有真实 Jev / Agent 效果验收。全仓测试开始后的审计修复另跑最终定向集，两个统计不混加。
+
+- 最终树定向 Python 集 **1,340 passed**（85.53 秒）：`tests/test_director_*.py`、`test_pair_*.py`、`test_decision_*.py`、`test_jev_*.py`、`test_semantic_filter.py`、`test_config.py`、`test_llm_concurrency.py`、`test_openclaw_*.py`、`test_recommendation_engine.py`、`test_recommendation_proxy_headers.py`。包含真实 SQLite / API / CLI / OpenClaw 和三端 Chromium 协议用例。
+- 安装合同与安装器测试 **21 passed**；`bash -n scripts/install.sh` 通过。安装完成提示仅链接默认关闭的可选配置，不读取 Key 或探测服务。
+- `node --test tests/js/*.test.mjs`：**77 passed**，其中共享导演客户端 16 项。扩展全套 `npm test`：**1,497 passed / 1 failed**；唯一失败是下述已复现的聊天旧断言。
+- 扩展 `npm run typecheck`、`npm run build:bundle` 通过，Chrome 19 项 manifest / WAR 资源预检通过；构建未发布。
+- 全仓 `ruff check src/ tests/`、新文件格式检查、`mypy src/`（**315 source files**）、`git diff --check` 通过。
+
+已知基线例外均在干净 detached worktree **1253a0a8** 再次复现：
+
+1. Python：`tests/test_desktop_web_list_stability_e2e.py::test_pool_refill_event_keeps_loaded_cards_and_scroll_position`，库存数字期望 `70`、实际 `40`（第 331 行）。
+2. 扩展：`tests/popup-api.test.ts` 的 `startChatTurn posts durable chat turn metadata`，实现已发送 `streaming: false`，旧断言仍期望该字段不存在。
+
+全仓 Python `pytest -q --disable-warnings --maxfail=12` 完整跑完：**10,088 passed / 65 skipped / 6 failed**，1,368.15 秒。该进程在最终审计修复前启动，不是最终树的一次性全绿结果：其中旧 CLI stub 的两个失败、OpenClaw 反馈 / CLI 各一个失败、Weibo 源码检查失败，已在最终树连同相关用例复跑 **32 passed**。补齐了 JSON CLI 测试对夹杂的 fixture 启动日志的隔离；源码检查在文件冻结后的新进程中通过。剩下的桌面库存断言为上述干净基线问题。
+
+补跑既有 CLI 全文件时，另遇 `test_login_codex_import_uses_source_path` 的 `ConnectError`：该测试仅 mock 凭据导入，未 mock 登录后的联网探测；测试及登录探测路径均未在本分支修改。这项作为额外的非隔离测试失败记录，不将其算成通过。显式排除该项后，`test_cli.py` + `test_director_openclaw.py` + `test_weibo_wiring.py` 为 **289 passed / 1 deselected**。默认功能测试不依赖这条登录路径。
+
+这些统计不是“全仓全绿”；未在导演分支夹带修改桌面库存、聊天协议或登录探测行为。
+
+## 历史切片：离线逐对编排内核（e364b4e2）
+
+以下是该次提交时的历史边界，不代表当前能力；后续待办已由上面的运行时交付覆盖。
 
 已在同一独立 worktree 实现 `PairComposer.prepare_next()`；这次推进的是可回放内核，
 **不是生产 shadow 或导演上线**。只有小 Interface 返回 tentative 提案，复杂的可行性、
@@ -78,7 +114,7 @@
 detached worktree，基于未改动的 **1253a0a8** 单独运行，同一断言也失败。该桌面
 HTML/JS 与测试均不在本次改动中；作为既有回归例外留痕，不在 Jev 分支夹带修复。
 
-## 后续切片与先后依赖
+## 历史规划：后续切片与先后依赖（已按上文推进）
 
 1. **屏与反馈底座**：BatchInstance 身份、生成请求幂等、真实曝光确认、反馈归因与提交
    fencing。现有 GET top-up 混合历史行的问题必须先解决，才能上线“每屏”导演。

@@ -17,6 +17,18 @@
 
 ## 可移植数据迁移
 
+### 可选导演与过滤审计的持久化
+
+| 能力 / API | 合同 |
+|---|---|
+| `DirectorStore.begin/commit/restore` | 按需创建 director_streams / requests / batches / batch_items / plans；短 `BEGIN IMMEDIATE` 原子重验并消费整屏，批次不可变，模型调用不占锁 |
+| `DirectorStore.present/feedback` | director_feedback 与 projected_events 去重，实际可见才呈现；点击／反馈引用原 event ID，版本与游标单调推进 |
+| `save_plan/load_plan/activate_context` | 未提交计划 TTL / CAS / epoch；同配置重建保留草稿，配置换代废弃未来状态，不改历史屏 |
+| `Database.defer_claimed_semantic_filter_candidates` | token-fenced 本轮延期，不惩罚 attempts；后续一次强制完整 LLM 复审，不形成永久黑名单 |
+| 独立过滤审计 | discovery_semantic_filter_audit 只保存 hashes / 模型 / schema / 校准归因与真实标签，保留 30 天且最多 20,000 行 |
+
+导演表与 canonical recommendations / content_cache 共用数据库、事务与最新准入门；特征指纹防止模型运行期间内容被替换。详见 [导演](director.md) 和 [发现](discovery.md)。数据库仍随既有一致快照迁移，不新增外部依赖。
+
 `storage/migration.py` 把运行中的用户状态导出为格式版本 1 的 `openbiliclaw-user-data` 包，文件扩展名为 `.obcbackup`。容器本质是标准 ZIP，**没有密码和加密**；`manifest.json` 明确写入 `contains_secrets=true`、`encrypted=false`，并为每个允许成员记录路径、类型、字节数与 SHA-256。导出 SQLite 时不直接复制可能正在写入的主文件，而是以只读 URI 打开源库、用 SQLite online backup API 生成一致快照并执行 `PRAGMA integrity_check`；其它文件复制前后会核对 stat / digest，持续变化时拒绝生成伪一致快照。目录遍历会在进入前剪枝排除根、采用独立扫描上限，并在复制前、复制流中和 ZIP 写入时逐层执行容量限制；ZIP 完成后立即删除最多 8 GB 的未压缩 snapshot，只在一次受全程互斥保护的下载期间保留最多 2 GB 的 archive。
 
 ### 导出范围
