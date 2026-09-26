@@ -640,7 +640,7 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 
 推荐交互：`主 API → 默认独立推荐进程 → 当前 SQLite 候选 → 完整排序 → 原子提交 → 卡片 + 总量/平台库存`；主 API 桥接库存事件，后台补货由有客户端时的库存观察任务同步。
 
-独立决策基础模块：`显式开发调用 → decision provider → Jev → Choice / Score / Noul 证据`。默认关闭，配置与聊天 LLM 独立；尚未接入发现过滤或推荐运行时，三种推荐导演模式仍在开发设计中。见[决策模块](docs/modules/decision.md)。
+独立决策基础模块：`显式开发调用 → decision provider → Jev → Choice / Score / Noul 证据`。默认关闭，配置与聊天 LLM 独立。离线导演内核已有 `冻结 shortlist + 真实反馈 → PairComposer → 合法二卡选择 / 确定性回退 → 更新前缀 → tentative 整屏提案`；不写数据库，未接入过滤、生产推荐或曝光提交，Agent 草稿 / 局部修补仍待实现。见[决策模块](docs/modules/decision.md)与[离线导演内核](docs/modules/director.md)。
 
 完整的架构总览 ASCII 图（runtime 并发闸门、Agent 编排层、多源适配、发现 / 推荐 / 保存链路）已拆分到单独文档，避免 README 过长：
 

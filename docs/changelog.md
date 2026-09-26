@@ -2,12 +2,14 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
-## 开发中：独立 Jev 决策 Provider 基础（2026-09-26）
+## 开发中：独立 Jev 决策 Provider 与离线导演内核（2026-09-26）
 
+- **离线逐对编排内核**：新增 `recommendation.director.PairComposer.prepare_next()`，在最多 40 张的 caller-owned shortlist 中每次追加两张、最多准备 20 张；每步最多 16 个合法 pair 与 `none_suitable`，精确校验 topic minimum / maximum、canonical 去重和排除，保留递推前缀 / 真实反馈分离及逐步归因。Provider 缺席或失败走可诊断的确定性回退；短缺、不可满足和奇数尾部明确处理。所有输出仍为 tentative，不写数据库，不接生产 shadow / serve / 过滤，不实现 Agent 草稿及局部修补；新上限是工程预算而非质量标定，四表面、配置与安装依赖均不变。
+- **内核验收与回放**：新增 205 项测试通过，director 模块覆盖率 99%；相关 provider / 推荐回归合计 578 项通过，全仓 Ruff / MyPy 通过。新增 `scripts/replay_director_pairs.py` 演示逐对递推和中间拒选，全部为不联网合成 fixture；修复并覆盖 adapter 吞掉外部取消、超大 revision 和错绑证据。未重跑全仓 pytest，未验证真实 Jev 质量，详见实施进度。
 - **独立 `decision/` 模块**：新增 provider-neutral typed 请求 / 证据合同与 Jev Choice / Score / Noul HTTP 适配器，严格绑定本次问题和选项，记录模型、schema、输入摘要及用量归因；总 deadline 覆盖有限重试，取消传播，失败保留稳定原因且不泄漏 key / state / 远端正文。复用现有 `httpx`，不加入聊天 LLM fallback 链。
 - **默认关闭的配置基础**：新增 `[decision.providers.jev]`，固定模型默认 `jev-1.13.0`，凭据仅引用 `TYPESAFE_API_KEY` 环境变量名；严格解析 / 保存并由 `config-show` 展示非秘密摘要。首版为配置文件 / CLI / 开发者接口，插件、桌面 Web、移动 Web 和配置表单 API 均不增加设置或探测入口。
 - **交付边界**：尚未接入 discovery 过滤、推荐热路径或 runtime 调度，三种推荐导演模式未上线，现有推荐行为不变；未调用付费 API，不声明中文效果或线上时延已验证，安装流程与依赖不变。新增决策模块文档，同步配置 / CLI、导航、架构 / SPEC 与中英文 README 的未接线边界。
-- **验证**：新增 144 项离线测试通过，decision 模块覆盖率 98%；连同既有配置测试共 487 项通过，全仓 Ruff / MyPy 通过。全量回归 9517 passed / 65 skipped / 1 failed；唯一桌面库存更新断言失败已在干净基线 `1253a0a8` 复现，详见[实施进度与验收记录](plans/2026-09-26-director-implementation-progress.md)。
+- **前一 provider 切片验证**：新增 144 项离线测试通过，decision 模块覆盖率 98%；连同既有配置测试共 487 项通过，全仓 Ruff / MyPy 通过。该切片全量回归 9517 passed / 65 skipped / 1 failed；唯一桌面库存更新断言失败已在干净基线 `1253a0a8` 复现，详见[实施进度与验收记录](plans/2026-09-26-director-implementation-progress.md)。
 
 ## 设计文档：推荐导演规格收口（2026-09-26）
 

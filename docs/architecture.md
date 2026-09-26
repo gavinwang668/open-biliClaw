@@ -16,6 +16,11 @@ standalone decision foundation (not wired into runtime):
   explicit developer caller → decision provider contract → Jev typed HTTP adapter
                            → validated Choice / Score / Noul evidence (no DB write)
   [decision.providers.jev] → separate config / credentials; default disabled
+offline Director developer path (not production shadow / serving):
+  frozen shortlist + real feedback + topic quotas → PairComposer.prepare_next
+    → feasible pair alternatives → optional DecisionProvider / deterministic fallback
+    → append two tentative cards → next prefix → whole-screen validation
+    → ScreenProposal(tentative=true) + trace; no DB / exposure / commit
 
 LAN clients ─ HTTP（默认）────────────→ IPv4 0.0.0.0 + IPv6 [::] listeners → one uvicorn / FastAPI app
 public clients ─ HTTPS（可选）→ Caddy :443 ─ shared-loopback HTTP ─────────────────────────────┤
@@ -340,6 +345,7 @@ Web durable turn 只在成功 completion CAS 后交接认知与成功事件；�
 
 ### Recommendation Engine (`recommendation/`)
 - 推荐排序与朋友式推荐表达生成；统一从候选池读取
+- 独立的 `recommendation/director/` 提供开发者显式调用的 `PairComposer.prepare_next()`：冻结最多 40 张 shortlist、真实反馈与 topic 配额，逐次用可选 decision provider 选择合法二卡方案并递推 prefix，最终复核最多 20 张 tentative 提案。精确约束只覆盖快照 eligibility、canonical 去重 / 排除与 topic minimum / maximum；风格 / 标题语义不是硬保证。没有进入 `serve()`、过滤或生产 shadow，也没有数据库写入、整屏提交或真实曝光协议；Agent 多屏预编排 / 局部修补仍未实现。详见[离线内核](modules/director.md)。
 - 文案生成与 admitted backlog 解耦：canonical `copy_ready` 使用全部 serve gate 但不套 topic 展示窗口。正数水位生成量为 `max(copy_ready_target-copy_ready, min(pool_target-available, admitted_pending_available))`，再受全部 pending 与单批上限钳制；锁内先领取能净增 topic 展示窗口的行，公开目标达到后只维持 copy-ready 水位。serve/feedback/delight/maintenance 只发非阻塞 refill 通知，provider 工作由 coordinator 承担并在 expression lock 内复核缺口。`0` 是 legacy drain-all 回滚，任何模式都不放松非空文案硬门。
 - 惊喜队列 `GET /api/delight/pending-batch` 的完整阈值和候选读取在 FastAPI 线程池执行，避免手机刷新时占住主 API 事件循环、拖住独立推荐进程的转发响应；队列筛选和返回结构不变。
 - 惊喜推荐复用普通推荐的 copy-ready 与 canonical `seen_items` 状态门：`pool_expression / pool_topic_label` 未同时生成，或身份已经看过时，候选不进入惊喜打分、动态阈值样本、计数或 pending 出口。正式文案就绪后才复用 Evo 的 `relevance_score` 打分，并由条件写入原子同步 `delight_reason / delight_hook`；pending API、CLI 与 runtime stream 继续校验精确快照。evaluator 的内部 `relevance_reason` 永不作为惊喜状态或 UI 推荐理由；旧版错写快照在正式文案就绪后由后台 backfill 修复。普通推荐只在高分行已被 profile-aware 惊喜打分并同步快照后让出该行。移动 Web、桌面 Web 与插件的“×”统一调用 `dismiss`：它不是临时隐藏，而是把 canonical identity 写入 `seen_items` 后永久消费该惊喜。
@@ -507,9 +513,10 @@ flowchart LR
 写权限。配置为默认关闭的 `[decision.providers.jev]`，凭据只引用环境变量名；
 自建 HTTP client 遵循现有海外网络策略。
 
-本批只交付基础能力，未由 `RuntimeContext`、discovery 或 recommendation 调用，
-因此没有改变生产排序、过滤或反馈闭环。三模式导演和独立过滤的业务接线仍需另外实现；
-运行时准入、整屏预算与提交归属也不能从 provider 的请求 deadline 推导为已完成。
+`RuntimeContext`、discovery 和生产推荐热路径仍不调用本模块，因此没有改变生产排序、
+过滤或反馈闭环。开发者可在离线 `PairComposer` 中显式注入 provider，逐对选择并记录
+tentative trace；其整屏决策预算仅限本次离线调用，不等于 runtime 准入或提交授权。
+Agent 草稿 / 修补、独立过滤、生产三模式与整屏提交仍需另外实现。
 首版仅配置文件 / CLI 可见，三个图形界面不新增控件。详见[模块文档](modules/decision.md)。
 
 ### LLM Providers (`llm/`)

@@ -1,9 +1,11 @@
 # 推荐导演：Jev 逐对编排、双速修正与纯 Agent 模式
 
-日期：2026-09-26。状态：**架构设计增补，尚未实现；不是已上线功能或可直接使用的配置**。
+日期：2026-09-26。状态：**架构设计增补，部分离线底座已实现；不是已上线功能或可直接使用的配置**。
 
-实施状态：独立 Jev provider 底座已在开发分支实现，详见[实施进度](2026-09-26-director-implementation-progress.md)
-与[模块文档](../modules/decision.md)；本文的导演三模式、过滤策略和业务路由仍未接线。
+实施状态：独立 Jev provider 与离线逐对编排内核已在开发分支实现，详见
+[实施进度](2026-09-26-director-implementation-progress.md)、[决策模块](../modules/decision.md)
+与[内核合同](../modules/director.md)。内核仅返回 tentative 提案；本文的导演三模式、
+过滤策略、生产 shadow 和业务路由仍未接线，不表示整套架构已经实现。
 
 本文落实用户的新要求：每次选择两张卡、逐对拼成一屏；支持 Jev 独立编排、Agent 预编排后由 Jev 局部修正、纯 Agent 预编排；Jev 同时是可供过滤使用的独立 provider。
 

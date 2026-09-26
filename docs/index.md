@@ -23,7 +23,7 @@
 
 - [项目规格说明书 (SPEC)](spec.md) — 完整的项目设计与规划
 - [架构设计](architecture.md) — 系统架构与模块关系
-- [推荐导演三模式设计](plans/2026-09-26-director-jev-modes.md) / [实施进度](plans/2026-09-26-director-implementation-progress.md) / [Jev 官方研究](plans/2026-09-26-jev-provider-research.md) / [基础规格](plans/2026-08-31-recommendation-director-spec.md) — 逐对编排、Agent+Jev 局部修正、纯 Agent 与独立过滤 provider；[独立决策基础模块](modules/decision.md) 已实现，导演及过滤运行时尚未接线
+- [推荐导演三模式设计](plans/2026-09-26-director-jev-modes.md) / [实施进度](plans/2026-09-26-director-implementation-progress.md) / [Jev 官方研究](plans/2026-09-26-jev-provider-research.md) / [基础规格](plans/2026-08-31-recommendation-director-spec.md) — [独立决策 Provider](modules/decision.md)与[离线逐对编排内核](modules/director.md)已可显式调用；Agent 草稿 / 局部修正、独立过滤、整屏提交及生产运行时尚未接线
 - [架构总览图](architecture-overview.md) / [English](architecture-overview.en.md) — 从 README 拆出的 ASCII 架构总览：runtime 并发闸门、Agent 编排层、多源适配与发现/推荐/保存链路
 - [记忆系统设计](memory-design.md) — 多层网状记忆架构详解
 - [v0.1 开发任务清单](v0.1-todolist.md) — 当前版本的开发主线
@@ -71,6 +71,7 @@
 | 内容发现引擎 | [modules/discovery.md](modules/discovery.md) | `src/openbiliclaw/discovery/` | ✅ v0.3.x 多源 + 统一待评估池 + 跨源跨轮 topic 配额 |
 | 独立决策 Provider | [modules/decision.md](modules/decision.md) | `src/openbiliclaw/decision/` | 🧪 Jev Choice / Score / Noul 契约与适配器、独立配置；默认关闭，未接入发现 / 推荐运行时 |
 | 推荐引擎 | [modules/recommendation.md](modules/recommendation.md) | `src/openbiliclaw/recommendation/` | ✅ v0.3.x 双轴 fatigue + per-group 候选窗口 + reshuffle 0.6s |
+| 推荐导演离线内核 | [modules/director.md](modules/director.md) | `src/openbiliclaw/recommendation/director/` | 🧪 有界逐对编排、精确 topic 配额与 tentative trace；仅开发者调用，未接生产推荐或过滤 |
 | 存储层 | [modules/storage.md](modules/storage.md) | `src/openbiliclaw/storage/` | ✅ SQLite schema + discovery candidates / pool readiness + 去除 API auth 的 `.obcbackup` 快照、暂存 / 取消、重启应用与回滚 |
 | 原生保存同步 | [modules/saved-sync.md](modules/saved-sync.md) | `src/openbiliclaw/saved_sync/` | ✅ canonical API + runtime + B 站 direct adapter + 六平台 extension adapter/executor + 三端后端状态驱动保存界面；GitHub repository 与微博保持 typed identity 的 local-only 保存 |
 | 灵魂管线架构 | [modules/soul-pipeline-architecture.md](modules/soul-pipeline-architecture.md) | `src/openbiliclaw/soul/` | ✅ 完成 |

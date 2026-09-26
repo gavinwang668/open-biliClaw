@@ -19,11 +19,13 @@ HTTPS URL。
 - **RecommendationEngine** — 推荐排序、朋友式表达和推荐历史更新入口
 - **Recommendation** — 单条推荐结果
 - **PersonalTopic** — 后续个性化主题分组的占位结构
+- **PairComposer** — [离线逐对编排内核](director.md)；显式开发调用，输出 tentative 整屏提案，未接入上述生产推荐链路
 
 ## 已实现功能
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 推荐导演离线逐对内核 | 🧪 开发者可执行 | `PairComposer.prepare_next()` 在有界 shortlist 内逐对选择、精确校验 topic 配额并记录 trace；可注入独立 decision provider 或确定性回退。输出只是假定快照下的 tentative 提案，不写数据库，不表示三模式导演、过滤或生产 shadow 已上线；详见[模块合同](director.md) |
 | v0.3.191 视觉 embedding pipeline 完整契约 | ✅ | P1/P3 共享质心但与 P1 cover bonus 分开开关；质心、关键帧、弹幕状态绑定 embedding fingerprint / 维度，关键帧再绑定采样签名；瞬时失败保持可重试，成功空结果才推进完成状态。预热使用配置 limit 和当前 servable pool，跨平台 bonus 以 0 为固定点分段归一化，离线 A/B 脚本复用生产公式 |
 | 6.1 推荐排序 | ✅ | 从 `content_cache` 选未推荐内容、按分数排序、以 canonical `item_key` 写入推荐历史 |
 | 6.2 朋友式推荐表达 | ✅ | 用 LLM 生成朋友式推荐理由和个性化 topic，并在 CLI 中真实展示；`recommendation.*` 的分类和短文案调用在未显式指定时统一用 `reasoning_effort=""`，避免 DeepSeek thinking 拉长文案回填 |
@@ -123,6 +125,10 @@ HTTPS URL。
 cover bonus 仍由前者单独控制。
 
 ## 公开 API
+
+新增 `recommendation.director.PairComposer.prepare_next()` 仅供离线开发 / 回放使用；
+请求、结果和硬约束见[导演内核 API](director.md#公共合同)。它不替换下列
+`RecommendationEngine` 接口，不调用 `serve()`，也不触发 pool shown / presentation 更新。
 
 2026-09-08：公开方法签名、候选窗口和返回协议不变；批次选择内部仅复用同一候选对的精确余弦值，下一批重新计算，完整多样性规则与补满流程保持不变。
 

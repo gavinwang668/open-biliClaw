@@ -4,7 +4,45 @@
 
 架构依据：[三模式方案](2026-09-26-director-jev-modes.md)、[基础规格](2026-08-31-recommendation-director-spec.md)。
 
-## 当前切片：独立 Jev provider
+## 当前切片：离线逐对编排内核
+
+已在同一独立 worktree 实现 `PairComposer.prepare_next()`；这次推进的是可回放内核，
+**不是生产 shadow 或导演上线**。只有小 Interface 返回 tentative 提案，复杂的可行性、
+递推、证据与故障处理留在内核里；没有直接接入旧 `serve()` 或混合历史列表。
+
+- 冻结且版本化的 shortlist、session / state / feedback cursor、方向和约束合同。
+  当前合同是离线输入，不冒充完整 SessionStepPolicy、请求幂等或 stream fence。
+- 每步一个 Choice 选有序双卡组合，下一步携带已选 prefix；真实反馈不会随草稿增长。
+- 精确处理互斥 topic minimum / maximum、canonical 去重、排除和 eligibility 快照。
+  每个选项都必须保留整屏可完成性；保留确定性完整 witness，有界提供语义备选。
+- 模型拒选、错绑 / 非法证据、超时、迟到、预算耗尽都带原因回退；调用者取消传播，
+  包括 adapter 捕捉取消后仍试图返回成功的情况。
+- 支持奇数尾部和最大合法短缺数量；硬 minimum 无法满足时明确 UNSATISFIABLE，
+  不放松规则、不重复凑数。内部不变量失败抛出错误，不伪装成证明无解。
+- 可执行合成回放：`python scripts/replay_director_pairs.py`，演示三次顺序选择与
+  中间拒选后的确定性补完；不读真实画像 / 数据库 / 配置，不使用真实凭据或网络。
+- shortlist 40、目标 20、每步最多 16 个候选组合、256 次组合探测、24,000 UTF-8
+  字节、默认 2 秒整屏模型决策预算均为工程上限，不是质量或性能标定。
+
+详见[内核合同与示例](../modules/director.md)。Agent 多屏草稿、混合修补、独立过滤、
+屏提交 / 实际曝光 / 反馈桥和真实中文质量验收仍未完成。四表面推荐行为、配置字段、
+依赖和安装流程都不变；未合入 main、未发布。
+
+### 本切片验收
+
+- 四个新增 `test_pair_*` 文件：**205 passed**；director 模块 **99%** 覆盖率
+  （384 statements，5 未覆盖）。包括 120 组固定种子的穷举对照、prompt / 输入摘要
+  golden、真实 Jev adapter 的 mock HTTP 串联、故障、取消和可执行回放。
+- 上述用例与独立 decision / Jev、推荐引擎、PoolCurator、画像边界和 style 回归合跑：
+  **578 passed**，32.88 秒。两次统计是重叠集合，不相加。
+- 全仓 `ruff check src/ tests/`（另含新脚本）通过；`mypy src/` **306 files** 通过；
+  新文件格式检查与 `git diff --check` 通过。
+- 本切片未重跑耗时全仓 pytest。下方全仓 9517 / 65 / 1 属于前一 provider 切片，
+  不能当作本次最终树的全量结果；已知桌面库存失败未在本切片修改或重新验证。
+- 交叉审计发现并修复了“provider 吞掉外部取消仍返回成功”和超大 revision 整数
+  序列化失败两个边界，分别加入回归用例。未调用真实 / 付费服务。
+
+## 前一切片：独立 Jev provider（24f34424）
 
 代码与模块验收已完成；全仓回归有一项已在干净基线复现的既有失败。本切片没有启用
 任何用户推荐行为，未合入 main、未发布。
@@ -19,7 +57,7 @@
 这是可独立测试的 provider 底座，不表示基础规格的 Phase 0A 已完成，也不表示导演
 三模式已可用。主工作区的设计稿保留；实现、配置、测试和文档变更均在独立 worktree。
 
-## 验收记录
+## 独立 provider 验收记录（前一切片）
 
 所有 Python 命令均在独立 worktree 使用 `PYTHONPATH=src` 与项目现有 `.venv`；没有
 安装新依赖，也没有调用真实 Jev 服务。
@@ -47,8 +85,9 @@ HTML/JS 与测试均不在本次改动中；作为既有回归例外留痕，不
 2. **过滤 shadow**：在模型预过滤之前冻结对照 cohort，复用 Jev provider；保留现有
    metadata 评估，排除现有 embedding filter 与 Jev 同时 enforce 的混杂。
    这是可与屏底座并行开发的独立接线，但需要自己的证据持久化与样本覆盖门槛。
-3. **逐对编排内核**：合法 pair 提案、递归 prefix、两卡追加、整屏约束验证、无 Plan 的
-   SESSION_STEP / SESSION_STAY 合同；先离线与 shadow，再接提交底座。
+3. **逐对编排接线**：离线合法 pair 提案、递归 prefix、两卡追加和整屏 topic 配额验证
+   已实现；仍需真实供给映射、中文评测与生产 shadow，以及完整无 Plan 的
+   SESSION_STEP / SESSION_STAY 合同。先完成屏底座，再接线上提交。
 4. **Agent 多屏草稿**：有限候选引用、具体配对与语义意图分离、TTL / 失效、纯 Agent
    路径；模型输出只能作为提案，最终提交仍由程序校验。
 5. **混合修补**：草稿批量审查、单卡 / 单对替换、中间修改后的后缀复核、修改预算、
