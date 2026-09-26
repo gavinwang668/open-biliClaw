@@ -293,6 +293,11 @@ main API ← validated response inventory / 2s active-client inventory watcher
          → runtime-stream pool_updated → client total + source badges
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 
+standalone decision foundation (not wired into runtime):
+  explicit developer caller → decision provider contract → Jev typed HTTP adapter
+                           → validated Choice / Score / Noul evidence (no DB write)
+  [decision.providers.jev] → separate config / credentials; default disabled
+
 interactive (dialogue / config probe / agent.chat / agent.task) ┐
                                                     ├─ runtime total gate (default 4) ─ ordered instance chain ─ adapter
 background ─ background admission (default 3) ──────┘
@@ -399,6 +404,12 @@ reshuffle HTTP → temporal review-hold / expiry retirement → PoolServeSnapsho
 pool maintenance → isolated maintenance DB worker → ≤50 mutations/transaction
                  → commit/release lock → unchanged skip / 10m safety sweep
 ```
+
+独立 `decision/` 模块提供 Jev typed 判断合同与适配器，默认关闭，凭据与 `[llm]`
+隔离。它只接受显式开发调用并返回证据，尚未接入发现过滤、推荐排序或运行时调度；
+逐对编排 / Agent+Jev 修补 / 纯 Agent 三模式仍为后续业务实现。配置文件和 CLI
+展示已经覆盖，插件、桌面 Web、移动 Web 设置与服务探测均不在本批范围。见
+[决策模块](modules/decision.md)及[导演设计](plans/2026-09-26-director-jev-modes.md)。
 
 应用内 Tailnet 的产品边界是“让电脑端应用本身成为一个 tailnet 节点”，而不是要求电脑全局
 开启 Tailscale。`[tailnet].enabled=false` 保持默认；开启时 CLI / 桌面入口在 uvicorn 外层托管

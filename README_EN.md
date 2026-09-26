@@ -638,6 +638,8 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
 
+Standalone decision foundation: `explicit developer call → decision provider → Jev → Choice / Score / Noul evidence`. It is disabled by default and configured separately from chat LLMs. Discovery filtering and recommendation runtime do not call it yet; the three Director modes remain planned work. See the [decision module](docs/modules/decision.md).
+
 The full architecture overview ASCII diagrams (runtime concurrency gates, agent orchestration, source adapters, discovery / recommendation / saved-sync pipelines) have been moved to a separate document to keep the README compact:
 
 Publication date preference: `[sources.<name>].recommendation_date_*` per source → out-of-window candidates are filtered before LLM evaluation → effective inventory → PoolCurator soft/strict serving semantics.

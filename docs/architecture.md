@@ -12,6 +12,11 @@ main API ← validated response inventory / 2s active-client inventory watcher
          → runtime-stream pool_updated → client total + source badges
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 
+standalone decision foundation (not wired into runtime):
+  explicit developer caller → decision provider contract → Jev typed HTTP adapter
+                           → validated Choice / Score / Noul evidence (no DB write)
+  [decision.providers.jev] → separate config / credentials; default disabled
+
 LAN clients ─ HTTP（默认）────────────→ IPv4 0.0.0.0 + IPv6 [::] listeners → one uvicorn / FastAPI app
 public clients ─ HTTPS（可选）→ Caddy :443 ─ shared-loopback HTTP ─────────────────────────────┤
 trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose HTTP ───────────────────────┘
@@ -493,6 +498,19 @@ flowchart LR
 `https://linux.do/*` host permission 的唯一理由是：浏览器扩展必须在用户真实站点会话中发起这些同源只读请求；后端不能也不会接收 Cookie 后重放。自动化测试已覆盖解析、分页、cap、超时、错误映射、dispatcher 与任务 tab 隔离；2026-08-09 已用真实已登录 Chrome unpacked extension 验证 bootstrap、五路 discovery 和候选入池。E2E 同时发现 hash marker 会被 Discourse SPA 清除，任务 tab 现改用稳定 query marker，修复后真实 feed 任务的 Linux.do 行为事件增量为 0。
 
 微博的个人 bootstrap 采用同一类隔离任务边界，但不是普通行为采集：`weibo_tasks` → `/api/sources/weibo/next-task` → 带 `openbiliclaw_weibo_task=1` 的 `m.weibo.cn` tab → 同源 `/api/config` / `/api/account/getuid` 与收藏、关注、mentions GET → `/api/sources/weibo/task-result`。`SUBP + ALF` 只在扩展本地作为登录布尔提示，游客 `SUB` 不算凭据；任务结果必须带正 uid，后端按账号与 scope 去重后才进入 profile event ingress。失败/登录墙/挑战页/部分 scope 不会伪装成 healthy empty，已采 rows 仍留在 staged result 中。
+
+### Decision Providers (`decision/`，独立基础模块)
+
+独立 typed decision 合同及 Jev HTTP adapter，接受显式调用者提供的状态和具名问题，
+返回经过严格校验的 Choice / Score / Noul 证据与模型 / 输入归因。它不实现聊天
+`LLMProvider.complete()`，不加入 `[llm]` fallback 链，也没有候选池、推荐历史或画像
+写权限。配置为默认关闭的 `[decision.providers.jev]`，凭据只引用环境变量名；
+自建 HTTP client 遵循现有海外网络策略。
+
+本批只交付基础能力，未由 `RuntimeContext`、discovery 或 recommendation 调用，
+因此没有改变生产排序、过滤或反馈闭环。三模式导演和独立过滤的业务接线仍需另外实现；
+运行时准入、整屏预算与提交归属也不能从 provider 的请求 deadline 推导为已完成。
+首版仅配置文件 / CLI 可见，三个图形界面不新增控件。详见[模块文档](modules/decision.md)。
 
 ### LLM Providers (`llm/`)
 - 统一的多模型接口（OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty）

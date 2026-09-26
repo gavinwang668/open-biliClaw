@@ -217,6 +217,41 @@ auto_sync_enabled = false
 
 如果当前进程依赖 `OPENBILICLAW_*`、`GOOGLE_API_KEY` / `GEMINI_API_KEY`、或配置的抖音 Cookie 环境变量，自启动开启会被拒绝：登录会话通常拿不到交互式 shell 环境变量，应先把这些值写进 `config.toml`。
 
+### `[decision.providers.jev]`
+
+独立 typed decision provider 的开发者配置，类型为
+`Config.decision → DecisionConfig.providers → DecisionProvidersConfig.jev → JevDecisionConfig`。
+不加入聊天 `[llm]` 调用链，不复用聊天或 embedding 凭据。当前仅提供基础适配器，
+`enabled=true` 不会启动发现过滤、推荐导演或任何后台 Jev 调用。
+
+```toml
+[decision.providers.jev]
+enabled = false
+model = "jev-1.13.0"
+api_key_env = "TYPESAFE_API_KEY"
+timeout_seconds = 2.0
+max_attempts = 2
+```
+
+| 键 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `enabled` | bool | `false` | 允许显式构建 provider；只接受真实布尔值，不把字符串或数字当作开关 |
+| `model` | string | `"jev-1.13.0"` | 非空且无首尾空白的模型 ID；固定版本方便归因，换模型须重新校准 |
+| `api_key_env` | string | `"TYPESAFE_API_KEY"` | 合法环境变量名称，不是 key 本身；实际秘密由显式调用进程提供 |
+| `timeout_seconds` | float | `2.0` | 有限且大于 0 的总请求预算，覆盖所有尝试及重试等待，不是每次尝试各有一份预算 |
+| `max_attempts` | int | `2` | 大于等于 1 的整数，包含第一次请求；不接受布尔或小数 |
+
+旧配置缺段时使用默认关闭值；加载 / 保存通过
+`validate_jev_decision_config()` 严格校验，非法字段抛 `ConfigError`，不静默回落默认值。
+`decision` 命名空间还拒绝未知字段，例如误填的 `api_key`，报错不回显其值。
+配置校验不读取实际环境变量值，配置中也不保存 key。CLI `config-show` 展示开关、
+模型、变量名与超时 / 尝试次数，不执行远端探测。插件 popup、桌面 Web、移动 Web
+和配置表单 API 本轮均不新增 Jev 编辑或测试入口；需手动编辑配置文件。使用前必须在
+实际调用进程的环境中提供凭据，配置文件迁移不会搬运其值。
+
+这是[独立决策基础模块](decision.md)的配置，不是设计文档中三种编排策略或过滤
+shadow / enforce 开关的实现；这些业务路由尚未接线。安装器、依赖和默认启动流程不变。
+
 ### `[llm]`
 
 | 键 | 类型 | 默认值 | 说明 |

@@ -2,6 +2,18 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## 开发中：独立 Jev 决策 Provider 基础（2026-09-26）
+
+- **独立 `decision/` 模块**：新增 provider-neutral typed 请求 / 证据合同与 Jev Choice / Score / Noul HTTP 适配器，严格绑定本次问题和选项，记录模型、schema、输入摘要及用量归因；总 deadline 覆盖有限重试，取消传播，失败保留稳定原因且不泄漏 key / state / 远端正文。复用现有 `httpx`，不加入聊天 LLM fallback 链。
+- **默认关闭的配置基础**：新增 `[decision.providers.jev]`，固定模型默认 `jev-1.13.0`，凭据仅引用 `TYPESAFE_API_KEY` 环境变量名；严格解析 / 保存并由 `config-show` 展示非秘密摘要。首版为配置文件 / CLI / 开发者接口，插件、桌面 Web、移动 Web 和配置表单 API 均不增加设置或探测入口。
+- **交付边界**：尚未接入 discovery 过滤、推荐热路径或 runtime 调度，三种推荐导演模式未上线，现有推荐行为不变；未调用付费 API，不声明中文效果或线上时延已验证，安装流程与依赖不变。新增决策模块文档，同步配置 / CLI、导航、架构 / SPEC 与中英文 README 的未接线边界。
+- **验证**：新增 144 项离线测试通过，decision 模块覆盖率 98%；连同既有配置测试共 487 项通过，全仓 Ruff / MyPy 通过。全量回归 9517 passed / 65 skipped / 1 failed；唯一桌面库存更新断言失败已在干净基线 `1253a0a8` 复现，详见[实施进度与验收记录](plans/2026-09-26-director-implementation-progress.md)。
+
+## 设计文档：推荐导演规格收口（2026-09-26）
+
+- **Jev 三模式架构增补（仅文档）**：新增 [逐对编排 / Agent+Jev 局部修正 / 纯 Agent 预编排方案](plans/2026-09-26-director-jev-modes.md) 与 [官方能力核实](plans/2026-09-26-jev-provider-research.md)，明确每次选两张卡、独立过滤 provider、应用层递归状态、未来草稿中间换卡后的后缀重验、整屏提交和分别计量的预算/归因。原单模式规格标明被替代条款；未接入服务、未调用付费 API，运行时代码与配置不变。
+- **补全可实施合同（仅文档）**：为推荐导演规格补齐确定性 Feedback Gate 阈值与版本、规划和请求并发活性、Batch 执行类型与回退归因、状态变更事件账本、slot 失败释放、DELIVERED 重规划、Phase 0A 反馈身份桥及不隐藏失败样本的工程验收门；当前推荐行为和配置未变化。
+
 ## 修复：移动端聊一聊 SSE 僵尸流假死（2026-09-25，fix/mobile-stream-watchdog）
 
 - **服务端 SSE 心跳**：`/api/chat/agent/stream` 与旧 `/api/chat/stream` 的事件流统一经 `_sse_heartbeat_wrap` 包装——相邻事件静默超过 10 秒（`_SSE_HEARTBEAT_INTERVAL_SECONDS`，含首字节前的 LLM 首跳）即发一行 SSE 注释 `: ping`。此前事件间完全静默，代理缓冲 / NAT idle / 网络切换把连接掐死不报错时客户端永久挂起。心跳推进用 shielded task 包住内部迭代，超时不会取消在飞的 LLM 调用；三端 SSE 解析器本就跳过注释行。回归：`test_chat_agent_stream_api.py::test_agent_stream_emits_heartbeat_during_silent_gap`（慢 LLM 静默期断言收到 ping 且事件完好）。

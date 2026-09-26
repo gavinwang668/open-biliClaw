@@ -1,0 +1,117 @@
+# 独立决策 Provider
+
+> `src/openbiliclaw/decision/` 提供 typed decision 的基础契约和 Jev 适配器。
+> 当前是默认关闭的开发者能力，未接入 discovery 过滤、推荐热路径或运行时调度；
+> `jev_recurrent` / `agent_jev` / `agent_only` 三种导演模式仍是后续接线目标。
+
+## 模块边界
+
+```text
+显式开发调用
+  → DecisionRequest（状态、具名问题、purpose、schema 版本、deadline）
+  → DecisionProvider.evaluate
+  → Jev HTTP adapter
+  → 严格解析 / 请求绑定校验
+  → DecisionEvidence（答案或不可用原因、模型 / 输入归因、用量）
+
+现有 discovery / recommendation runtime ── 不调用本模块
+```
+
+Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMProvider.complete()`，
+也不加入 `[llm]` 的全局或模块 fallback 链。它返回判断证据，不直接改候选池、曝光历史、
+推荐草稿或用户画像。调用方拥有业务阈值、最终约束校验、降级与提交权限。
+
+同一请求中的问题独立求值；第二题不会自动看到第一题的输出。以后做“两张一组”的
+递推编排时，应选择一个合法 `pair_id`，由应用更新已选前缀后再调用下一步，不能把
+独立的两个单卡 Choice 当作有条件依赖的二卡选择。模型不持有本项目的跨请求会话状态。
+
+## 已实现功能
+
+| 能力 | 状态 | 范围 |
+|---|---|---|
+| Provider-neutral 请求与证据合同 | 已实现 | 区分请求目的、问题 schema、输入摘要与模型归因 |
+| Jev Choice / Score / Noul | 已实现 | 原生 typed 问题与答案、严格结果绑定；不解析自由文本回答 |
+| 有界 HTTP 请求 | 已实现 | 总 deadline、有限重试、明确错误原因、取消传播 |
+| 独立配置 | 已实现 | 默认关闭；只保存凭据环境变量名，不保存实际 key |
+| 生产过滤与编排接线 | 未接入 | 不改变现有 embedding prefilter、learned scorer、LLM evaluator 或 MMR |
+| 图形界面设置与服务探测 | 未提供 | 首版仅配置文件、`config-show` 和开发者接口 |
+| 线上质量 / 中文效果 / 时延保证 | 未验证 | 离线 fixture 不等于真实模型验收；本轮未调用付费 API |
+
+## 公共 API
+
+| 接口 | 合同 |
+|---|---|
+| `DecisionRequest` | `request_id`、`purpose`、`question_schema_version`、JSON `state`、具名 `questions` 和可选 `deadline_monotonic` |
+| `DecisionPurpose` | `FILTER` / `CHOOSE_PAIR` / `AUDIT_DRAFT` / `REPAIR_PAIR`，仅用于归因，不自动实现对应业务流程或阈值 |
+| `DecisionRequest.input_digest` | 对 purpose / schema / state / questions 做 canonical JSON SHA-256；不包含请求 ID 和 deadline。模型归因独立保存，不可仅凭此摘要跨模型复用结果 |
+| `DecisionProvider.evaluate(request)` | 异步返回 `DecisionEvidence`；provider 不拥有业务副作用 |
+| `ChoiceQuestion` | `instructions` + `criteria`（选项 ID → 描述）；答案必须属于本次合法选项，最多 255 项 |
+| `ScoreQuestion` | `instructions` + 有序 `criteria`；2–10 档评分，不是任意浮点排序器 |
+| `NoulQuestion` / `NoulCriteria` | 二元判断，可明确 true / false 定义；答案是 `noul`，没有独立 `confidence` 字段 |
+| `JevDecisionProvider(...)` | 接收 `api_key`、模型、超时、最大尝试次数，以及可选的 `httpx.AsyncClient` |
+| `JevDecisionProvider.aclose()` | 只关闭适配器自己创建的 HTTP client；借用 client 仍由调用方关闭 |
+| `parse_jev_response(payload, request)` | 校验并绑定本次请求，返回实际模型、答案映射、用量；非法响应抛出不含敏感正文的 `ValueError` |
+| `build_decision_provider(config, *, provider_name="jev", client=None, environ=None)` | 接受 `DecisionConfig`；关闭时返回 `None`，不读取凭据、不创建 client；启用但缺凭据或 provider 未知时抛 `DecisionConfigurationError`（`ConfigError` 子类），不会借用 LLM key |
+| `ScriptedDecisionProvider(payloads, *, model="jev-fixture")` | 依次消费离线 fixture，复用真实响应校验器；`requests` 保存请求快照供状态传递断言，不请求网络 |
+
+`DecisionEvidence` 区分成功、服务不可用和响应无效，记录请求 / 输入 / schema 归因、
+实际模型、用量、时延、尝试次数、HTTP 状态和稳定 `reason_code`。失败不是全零分、
+空合法选择或“用户不感兴趣”。Choice / Score 的 `confidence` 与 Noul 值均不等于
+经本项目校准的点击率或满意度概率；调用方不得伪造 Noul 的 confidence。
+
+`usage` 仅表示当前返回响应中的 token 用量；重试前失败的远端尝试也可能产生费用，
+因此不能把它误称为整个逻辑请求的完整账单。
+
+本地请求构造错误由类型校验拒绝；若调用者事后破坏了嵌套数据，`evaluate()` 会重新
+冻结并校验输入，抛出不含原文的 `ValueError("invalid decision request")`，不发 HTTP。
+这类调用者错误不同于远端返回 `INVALID`。第一版问题指令与选项描述接受字符串；
+state 接受有限数值组成的 JSON 文本 / 对象 / 数组，不支持多模态。Choice / Score
+数量上限已校验；调用层仍须控制总上下文 token 预算，不能视为已实现官方 tokenizer。
+
+## 配置与调用生命周期
+
+```toml
+[decision.providers.jev]
+enabled = false
+model = "jev-1.13.0"
+api_key_env = "TYPESAFE_API_KEY"
+timeout_seconds = 2.0
+max_attempts = 2
+```
+
+完整字段校验见[配置参考](config.md#decisionprovidersjev)。启用配置只表示允许显式
+构建 provider，并不让 daemon 开始请求 Jev，也不自动启用导演或过滤。调用进程必须
+自行提供 `api_key_env` 指向的环境变量；不要把实际 key 写进配置样例、命令行参数或日志。
+固定模型 ID 是可复现实验的起点，换模型后应重新校准业务阈值。
+
+固定模型请求若返回不同的实际模型，结果为 `INVALID / model_mismatch`，保留可用的
+实际模型 / 用量归因但不放出答案；`jev-latest` / `jev-preview` 两个已知 alias 允许
+解析到实际版本。离线 fake 的模型名是 fixture 标签，不施加远端固定版本匹配规则。
+
+`max_attempts` 包括第一次请求。重试只用于可重试的 HTTP 限流 / 服务错误
+（429、529、5xx），受同一个总 deadline 约束，等待时间和所有尝试都计入预算；
+认证、非法请求和无效响应不会自动变成无限重试。调用方提供的更早 deadline 可以
+进一步收紧预算；取消请求直接传播，不被折叠为普通失败证据。
+
+适配器固定 Jev 官方端点，禁止 HTTP 重定向。自建 client 遵循项目
+`network.outbound_httpx_kwargs()` 的海外网络路由；借用 client 的代理设置由其 owner
+负责。provider 不负责 daemon 并发闸、整屏预算或长时间 circuit breaker，未来接入
+运行时前必须在调用层补齐这些治理，不能把聊天 LLM 的现有预算视为已经覆盖 Jev。
+
+## 安全与四表面边界
+
+- 请求状态与候选描述会发往配置的外部决策服务；后续调用者应只提供完成判断所需的最小摘要。
+- 候选文本是不可信数据，不能因为 typed 输出就认为模型不受内容诱导；provider 本身没有工具或数据库写权限。
+- 不记录 API key、state 或远端错误响应正文；错误以类型和稳定原因码呈现。
+- CLI：`config-show` 展示开关、模型、凭据变量名和预算，不探测网络，也不读取或打印实际 key。
+- 插件 popup、桌面 Web、移动 Web：首版均不提供 Jev 设置、切换或探测按钮；配置 API 不新增 Jev 表单合同。
+- Git / Docker / 桌面安装的依赖与启动流程不变；复用现有 `httpx`，未安装 Jev SDK，也没有自动下载模型。
+
+## 后续接线的验收边界
+
+独立 provider 成功不代表三模式导演已上线。下一阶段至少需分别验证：中文判断质量、
+过滤误拒与探索保留、逐对状态传递、草稿局部修改后的后缀复核、已提交屏不可变、
+整屏 deadline 和安全回退。现有内容分类仍负责 topic / style / 时效等 metadata，
+不能以相关性判断直接替代。具体模式和提交合同见
+[导演设计](../plans/2026-09-26-director-jev-modes.md)，原生能力与限制见
+[官方研究](../plans/2026-09-26-jev-provider-research.md)。

@@ -16398,6 +16398,14 @@ def config_show() -> None:
         ("语言", cfg.language),
         (llm_label, llm_value or "未配置"),
         ("LLM 并发", str(cfg.llm.concurrency)),
+        (
+            "Jev decision client",
+            "开启（未接入业务路由）" if cfg.decision.providers.jev.enabled else "关闭",
+        ),
+        ("Jev 模型", cfg.decision.providers.jev.model),
+        ("Jev 凭据变量名", cfg.decision.providers.jev.api_key_env),
+        ("Jev 超时（秒）", str(cfg.decision.providers.jev.timeout_seconds)),
+        ("Jev 最大尝试次数", str(cfg.decision.providers.jev.max_attempts)),
         ("B站认证", cfg.bilibili.auth_method),
         (
             "B站发布日期范围",

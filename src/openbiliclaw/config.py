@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import math
 import os
 import re
 import shutil
@@ -439,6 +440,36 @@ class LLMInstanceConfig(LLMProviderConfig):
     name: str = ""
     provider_type: str = ""
     enabled: bool = True
+
+
+@dataclass
+class JevDecisionConfig:
+    """Independent Jev client settings; credentials remain in the environment.
+
+    Enabling the client does not enable a recommendation or filtering route.
+    ``max_attempts`` includes the initial request. Timeout and attempt defaults
+    are conservative initial transport budgets, not a measured latency SLA.
+    """
+
+    enabled: bool = False
+    model: str = "jev-1.13.0"
+    api_key_env: str = "TYPESAFE_API_KEY"
+    timeout_seconds: float = 2.0
+    max_attempts: int = 2
+
+
+@dataclass
+class DecisionProvidersConfig:
+    """Provider settings independent of chat and embedding configuration."""
+
+    jev: JevDecisionConfig = field(default_factory=JevDecisionConfig)
+
+
+@dataclass
+class DecisionConfig:
+    """Typed decision-provider configuration, without business routing."""
+
+    providers: DecisionProvidersConfig = field(default_factory=DecisionProvidersConfig)
 
 
 @dataclass
@@ -1793,6 +1824,7 @@ class Config:
     data_dir: str = "data"
     api: ApiConfig = field(default_factory=ApiConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    decision: DecisionConfig = field(default_factory=DecisionConfig)
     bilibili: BilibiliConfig = field(default_factory=BilibiliConfig)
     # Overseas-outbound proxy (LLM SDKs / YouTube / Bangumi / updater).
     # CN-direct clients never use it — see NetworkConfig docstring.
@@ -2709,6 +2741,7 @@ def _build_config(
             auth=api_auth,
         ),
         llm=llm,
+        decision=_build_decision_config(raw.get("decision", {})),
         bilibili=bilibili,
         network=_build_network_config(raw),
         sources=sources,
@@ -2955,6 +2988,83 @@ def _build_config(
         tls_proxy=_build_tls_proxy(raw, consult_environment=consult_environment),
         tailnet=_build_tailnet(raw, consult_environment=consult_environment),
     )
+
+
+def _jev_decision_config_issues(config: JevDecisionConfig) -> list[ConfigIssue]:
+    """Check typed Jev settings without reading or revealing credentials."""
+    issues: list[ConfigIssue] = []
+
+    def add(name: str, message: str) -> None:
+        issues.append(
+            ConfigIssue(
+                field=f"decision.providers.jev.{name}", message=message, severity="blocking"
+            )
+        )
+
+    if not isinstance(config.enabled, bool):
+        add("enabled", "必须为 TOML 布尔值 true 或 false。")
+    if (
+        not isinstance(config.model, str)
+        or not config.model.strip()
+        or config.model != config.model.strip()
+    ):
+        add("model", "必须为非空模型名称，且不能含首尾空白。")
+    if (
+        not isinstance(config.api_key_env, str)
+        or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", config.api_key_env) is None
+    ):
+        add("api_key_env", "必须为合法环境变量名；请勿填写实际 API Key。")
+    timeout = config.timeout_seconds
+    try:
+        valid_timeout = (
+            isinstance(timeout, (int, float))
+            and not isinstance(timeout, bool)
+            and math.isfinite(timeout)
+            and timeout > 0
+        )
+    except OverflowError:
+        valid_timeout = False
+    if not valid_timeout:
+        add("timeout_seconds", "必须为大于 0 的有限秒数。")
+    if (
+        not isinstance(config.max_attempts, int)
+        or isinstance(config.max_attempts, bool)
+        or config.max_attempts < 1
+    ):
+        add("max_attempts", "必须为大于等于 1 的整数（包含首次请求）。")
+    return issues
+
+
+def validate_jev_decision_config(config: JevDecisionConfig) -> None:
+    """Reject invalid Jev client settings; credential resolution is separate."""
+    issues = _jev_decision_config_issues(config)
+    if issues:
+        issue = issues[0]
+        raise ConfigError(f"{issue.field}: {issue.message}")
+
+
+def _build_decision_config(raw: object) -> DecisionConfig:
+    """Parse the isolated decision namespace without credential lookup."""
+
+    def table(value: object, section: str, allowed: set[str]) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ConfigError(f"`[{section}]` 必须是 TOML table。")
+        unknown = set(value) - allowed
+        if unknown:
+            # Do not echo values: a mistaken api_key entry can be a secret.
+            raise ConfigError(f"{section}: 不支持的配置字段 {', '.join(sorted(unknown))}。")
+        return value
+
+    decision_raw = table(raw, "decision", {"providers"})
+    providers_raw = table(decision_raw.get("providers", {}), "decision.providers", {"jev"})
+    jev_raw = table(
+        providers_raw.get("jev", {}),
+        "decision.providers.jev",
+        {item.name for item in fields(JevDecisionConfig)},
+    )
+    jev = JevDecisionConfig(**jev_raw)
+    validate_jev_decision_config(jev)
+    return DecisionConfig(providers=DecisionProvidersConfig(jev=jev))
 
 
 def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
@@ -4360,7 +4470,7 @@ def _source_date_preference_issues(config: Config) -> list[ConfigIssue]:
 
 def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     """Collect non-fatal config issues to display as guidance."""
-    issues: list[ConfigIssue] = []
+    issues: list[ConfigIssue] = _jev_decision_config_issues(config.decision.providers.jev)
 
     try:
         normalize_tailnet_hostname(config.tailnet.hostname)
@@ -5608,6 +5718,7 @@ def save_config(
         validate_bangumi_username,
     )
 
+    validate_jev_decision_config(config.decision.providers.jev)
     date_preference_issues = _source_date_preference_issues(config)
     if date_preference_issues:
         first_issue = date_preference_issues[0]
@@ -5727,6 +5838,8 @@ def _render_config_toml(
     include_api_auth: bool = True,
 ) -> str:
     """Render a Config dataclass into TOML."""
+    jev = config.decision.providers.jev
+    validate_jev_decision_config(jev)
     api_auth_lines = (
         _api_auth_lines(
             config,
@@ -5738,6 +5851,13 @@ def _render_config_toml(
         else []
     )
     lines = [
+        "[decision.providers.jev]",
+        f"enabled = {_toml_bool(jev.enabled)}",
+        f"model = {_toml_string(jev.model)}",
+        f"api_key_env = {_toml_string(jev.api_key_env)}",
+        f"timeout_seconds = {jev.timeout_seconds}",
+        f"max_attempts = {jev.max_attempts}",
+        "",
         "[general]",
         f"language = {_toml_string(config.language)}",
         f"data_dir = {_toml_string(config.data_dir)}",
