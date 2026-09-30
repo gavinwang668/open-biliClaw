@@ -61,7 +61,16 @@ class FakeAgent:
                 }
             )
         return LLMResponse(
-            content=json.dumps({"screens": screens}),
+            content=json.dumps(
+                {
+                    "screens": screens,
+                    "completion": {
+                        "reason": "target_reached"
+                        if len(refs) >= count * request["horizon_screens"]
+                        else "supply_exhausted"
+                    },
+                }
+            ),
             model="fixture-agent.v1",
             provider="fixture",
             usage={"input_tokens": 10, "output_tokens": 10},

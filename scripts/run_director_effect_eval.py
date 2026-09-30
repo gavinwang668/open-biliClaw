@@ -1,4 +1,4 @@
-"""Opt-in real Agent comparison over preregistered synthetic Chinese fixtures.
+"""Opt-in current-policy Agent evaluation over synthetic Chinese fixtures.
 
 Uses the configured recommendation model with a single pinned route and no
 fallback, production LLMService/HorizonPlanner, and isolated temporary memory.
@@ -10,7 +10,6 @@ exception strings. This is not an online satisfaction or real-Jev experiment.
 from __future__ import annotations
 
 import argparse
-import ast
 import asyncio
 import copy
 import hashlib
@@ -40,42 +39,20 @@ from openbiliclaw.llm.service import (  # noqa: E402
 from openbiliclaw.memory.manager import MemoryManager  # noqa: E402
 from openbiliclaw.recommendation.director.composer import PairComposer  # noqa: E402
 from openbiliclaw.recommendation.director.planner import HorizonPlanner  # noqa: E402
+from openbiliclaw.recommendation.director.policy import DIRECTOR_POLICY_VERSION  # noqa: E402
 
 if TYPE_CHECKING:
     from openbiliclaw.llm.base import LLMResponse
 
 
-def _legacy_prompt(ref: str) -> str:
-    source = subprocess.check_output(
-        ["git", "show", f"{ref}:src/openbiliclaw/recommendation/director/planner.py"],
-        cwd=PROJECT_ROOT,
-        text=True,
-    )
-    for node in ast.parse(source).body:
-        if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "_PLANNER_SYSTEM_PROMPT"
-            for target in node.targets
-        ):
-            value = ast.literal_eval(node.value)
-            if isinstance(value, str):
-                return value
-    raise ValueError("legacy prompt was not a static literal")
-
-
 class RecordingLLM:
     """Record actual transport outputs without replacing or judging the model."""
 
-    def __init__(self, service: LLMService, old_prompt: str | None = None) -> None:
+    def __init__(self, service: LLMService) -> None:
         self.service = service
-        self.old_prompt = old_prompt
         self.calls: list[dict[str, Any]] = []
 
     async def complete_structured_task(self, **kwargs: Any) -> LLMResponse:
-        if self.old_prompt is not None:
-            kwargs["system_instruction"] = self.old_prompt
-            payload = json.loads(kwargs["user_input"])
-            payload.pop("screen_policy", None)
-            kwargs["user_input"] = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         record: dict[str, Any] = {
             "prompt_sha256": hashlib.sha256(kwargs["system_instruction"].encode()).hexdigest(),
             "input_sha256": hashlib.sha256(kwargs["user_input"].encode()).hexdigest(),
@@ -136,6 +113,14 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("bounded eval requires 1..2 repeats and <=60 seconds per call")
     if args.output.exists():
         raise ValueError("output exists; use a new artifact path")
+    conditions = args.conditions.split(",")
+    if "legacy_prompt" in conditions:
+        raise ValueError(
+            "legacy_prompt is incompatible with the current completion contract; "
+            "use a frozen prior report or a historical checkout for the legacy policy"
+        )
+    if conditions != ["screen_policy"]:
+        raise ValueError("current single-arm evaluation only accepts --conditions screen_policy")
     transport = getattr(args, "transport", "configured")
     cli_service = None
     if transport == "codex-cli":
@@ -161,7 +146,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError("--config-root is required for configured transport")
         os.environ["OPENBILICLAW_PROJECT_ROOT"] = str(args.config_root.resolve())
         config = copy.deepcopy(load_config())
-        # Local memory-only route pin: changing model on failure would confound A/B.
+        # Local memory-only route pin: changing models would confound repeated cases.
         overrides = module_overrides_from_config(config)
         recommendation = overrides.get("recommendation")
         route = (
@@ -188,13 +173,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             "fallback_enabled": False,
         }
         production_budget = config.director.planning_budget_seconds
-    old_prompt = _legacy_prompt(args.legacy_ref)
     cases = [case for case in build_cases() if not args.case or case.case_id == args.case]
     if not cases:
         raise ValueError("unknown fixture case")
-    conditions = args.conditions.split(",")
-    if not set(conditions) <= {"legacy_prompt", "screen_policy"}:
-        raise ValueError("unknown condition")
     report: dict[str, Any] = {
         "started_at": datetime.now(UTC).isoformat(),
         "code_commit": subprocess.check_output(
@@ -216,8 +197,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         "cli_latency_includes_startup": transport == "codex-cli",
         "planning_budget_seconds": args.budget_seconds,
         "production_planning_budget_seconds": production_budget,
-        "legacy_ref": args.legacy_ref,
-        "comparison": "Old planner prompt (without screen_policy block) vs new policy, same current validator and synthetic inputs; deterministic pair baseline is NOT production MMR.",
+        "evaluation_design": "current_policy_single_arm",
+        "policy_version": DIRECTOR_POLICY_VERSION,
+        "comparison": "Current policy with its strict completion contract only. Compare frozen v1 reports separately; this is not a concurrent A/B. The deterministic pair baseline is NOT production MMR.",
         "repeats": args.repeats,
         "horizon_screens": args.horizon,
         "cases": [
@@ -242,7 +224,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
             },
             concurrency=1,
         )
-        for case_index, case in enumerate(cases):
+        for case in cases:
             baseline = await PairComposer().prepare_next(case.request)
             report["results"].append(
                 {
@@ -254,8 +236,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                 }
             )
             for repeat in range(args.repeats):
-                order = conditions if (case_index + repeat) % 2 == 0 else list(reversed(conditions))
-                for condition in order:
+                for condition in conditions:
                     print(
                         json.dumps(
                             {
@@ -268,9 +249,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                         ),
                         flush=True,
                     )
-                    recorder = RecordingLLM(
-                        service, old_prompt if condition == "legacy_prompt" else None
-                    )
+                    recorder = RecordingLLM(service)
                     started = time.monotonic()
                     planning = await HorizonPlanner(recorder).plan(
                         case.request,
@@ -292,6 +271,11 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                         screens = planning.plan.screens
                         refs = tuple(ref for screen in screens for ref in screen.card_refs)
                         entry.update(
+                            planning_completion=planning.plan.planning_completion.model_dump(
+                                mode="json"
+                            )
+                            if planning.plan.planning_completion is not None
+                            else None,
                             screens=[screen.model_dump(mode="json") for screen in screens],
                             first_screen_metrics=score_selection(case, screens[0].card_refs),
                             each_screen_metrics=[
@@ -325,13 +309,13 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                         "planner_timeout",
                         "late_planner_result",
                     }:
-                        # Do not let one arm's provider cooldown masquerade as
-                        # the next arm's result, or hammer a failing endpoint.
+                        # Do not let provider cooldown contaminate later cases
+                        # or hammer a failing endpoint.
                         report["stopped_early"] = {
                             "reason": planning.reason_code,
                             "case_id": case.case_id,
                             "condition": condition,
-                            "remaining_comparisons_not_run": True,
+                            "remaining_evaluations_not_run": True,
                         }
                         report["finished_at"] = datetime.now(UTC).isoformat()
                         _save(args.output, report)
@@ -352,8 +336,10 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", default="")
     parser.add_argument("--instance", default="")
-    parser.add_argument("--conditions", default="legacy_prompt,screen_policy")
-    parser.add_argument("--legacy-ref", default="e86105b1")
+    parser.add_argument("--conditions", default="screen_policy")
+    parser.add_argument(
+        "--legacy-ref", help="Deprecated and ignored; use frozen historical reports"
+    )
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--horizon", type=int, choices=(1, 2, 3), default=3)
     parser.add_argument("--budget-seconds", type=float, default=20.0)

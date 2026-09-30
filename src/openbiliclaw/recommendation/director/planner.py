@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from pydantic import Field
 
+from .horizon_coverage import HorizonStop, build_horizon_contract, validate_horizon_coverage
 from .horizon_models import (
     HorizonPlan,
     PlannedPair,
@@ -46,7 +47,8 @@ and ordered pairs of concrete cards. Return only JSON with this shape:
 "uncertainties":["what the available evidence does not establish"],
 "avoid":["an unwanted repetition"],"revise_when":["explicit_feedback"],
 "source":"agent"},"pairs":[{"card_refs":["ref1","ref2"],
-"role":"anchor","intent":"what this pair adds to this screen"}]}]}.
+"role":"anchor","intent":"what this pair adds to this screen"}]}],
+"completion":{"reason":"target_reached","omissions":[],"note":""}}.
 Each brief uses task follow_intent, deepen, change_angle, browse, explore or
 redirect. Each pair uses role anchor, complement, exploration or open. These
 are descriptive soft roles, not hard quotas. Include a brief for every screen;
@@ -57,13 +59,43 @@ must come from the supplied event ledger; explicit intent and profile context
 do not need fabricated event refs. revise_when is a descriptive list (at most
 4) drawn only from explicit_intent_changed, explicit_feedback,
 candidate_unavailable and profile_changed; it cannot override runtime guards.
-Return at most horizon_screens screens. Each screen may contain up to target_count
-cards. Each pair has exactly two distinct cards except a final single-card tail
-for an odd count or shortage. Across ALL future screens each card occurs at most
-once. Honor the supplied registered topic quotas and eligible refs. Supply fewer
-cards/screens on shortage; never invent references or relax a hard minimum.
+Plan toward horizon_screens FULL screens of target_count cards each in ONE call.
+planning_contract describes that target, not permission to stop after one screen.
+First identify the useful candidate set for the whole horizon, then distribute it
+into full screens plus at most one shorter FINAL screen. Do not split one screen's
+worth of useful cards into several short screens. No screen may be empty. Each
+pair has two distinct cards except a final single-card tail for an odd count.
+Across ALL future screens each card occurs at most once. Honor registered topic
+quotas independently on EVERY screen; reserve scarce minimum-quota cards for later
+screens when possible. The physical_card_upper_bound is only an inventory bound,
+not proof that the hard quotas or semantic needs can be satisfied.
+Current explicit intent governs ALL future screens until the user changes it.
+Different directions must add distinct value WITHIN that intent; do not pad later
+screens with unrelated stable interests, repeated introductions or a fictional
+learning sequence. Without explicit intent, stable interests may supply variety.
+If useful supply is sufficient, return the full horizon with completion.reason
+target_reached and empty omissions. Otherwise use supply_exhausted and explain
+the early stop: omissions lists unused eligible refs you judged unhelpful, grouped
+by reason off_intent, redundant, style_mismatch or insufficient_evidence. Example:
+{"reason":"supply_exhausted","omissions":[{"refs":["ref9","ref10"],
+"reason":"off_intent","note":"does not help the current request"}],
+"note":"useful supply supports one full screen and a short tail"}.
+Use at most four omission groups, one concise note per group (160 characters),
+and a completion note of at most 240 characters. Omit no selected ref and invent
+no refs. Only omit content for a concrete semantic reason grounded in the supplied
+intent/profile/feedback/content, not to save effort or because the first screen
+already feels complete. Omissions are Agent judgments, not proven user dislikes.
+After semantic omissions, use all remaining hard-feasible capacity up to the
+target. With a shorter final screen, stop only if no remaining usable card can
+extend it legally. After a full screen, append another legal screen (even short)
+if one fits and the horizon target is not reached. Never relax hard minima.
+Keep directions, objectives and pair intents concise; do not repeat common
+uncertainties verbatim on each screen. Optional brief lists may be empty. These
+short outcomes are for audit, not an invitation to generate long explanations.
 The user message contains profile_context, session_context, current_direction,
-screen_policy, policy and untrusted_candidates. screen_policy provides the shared
+screen_policy, planning_contract, policy and untrusted_candidates. screen_policy
+is a ONE-screen template to apply anew to every planned screen: its remaining_count
+is not the whole-horizon card budget or an early-stop signal. It provides the shared
 screen task, evidence and role contract. profile_context contains stable taste and
 recent concerns; insights/speculations are hypotheses, not explicit preferences.
 session_context.recent_screens contains actual exposure confirmations and actions
@@ -103,6 +135,7 @@ class _ScreenOutput(_Model):
 
 class _PlannerOutput(_Model):
     screens: tuple[_ScreenOutput, ...] = Field(min_length=1, max_length=3)
+    completion: HorizonStop
 
 
 def _no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -171,6 +204,7 @@ class HorizonPlanner:
                 "current_direction": frozen.direction,
                 "horizon_screens": horizon_screens,
                 "target_count": frozen.target_count,
+                "planning_contract": build_horizon_contract(frozen, horizon_screens),
                 "planning_input_digest": frozen.input_digest,
                 "screen_policy": build_policy_context(frozen, brief=conservative_brief),
                 "policy": {
@@ -247,6 +281,7 @@ class HorizonPlanner:
                     screen_id=f"{plan_id}_s{index}",
                     direction=screen.direction,
                     target_count=frozen.target_count,
+                    initial_card_count=sum(len(pair.card_refs) for pair in screen.pairs),
                     pairs=screen.pairs,
                     brief=briefs[index],
                 )
@@ -257,6 +292,12 @@ class HorizonPlanner:
             for screen in screens:
                 if not validate_screen(frozen, screen.card_refs, len(screen.card_refs)):
                     raise ValueError("illegal planned screen")
+            completion = validate_horizon_coverage(
+                frozen,
+                horizon_screens,
+                tuple(screen.card_refs for screen in screens),
+                output.completion,
+            )
             plan = HorizonPlan(
                 plan_id=plan_id,
                 session_ref=frozen.session.session_ref,
@@ -270,6 +311,7 @@ class HorizonPlanner:
                 planning_explicit_intent=frozen.session.explicit_intent,
                 planning_profile_digest=frozen.session.profile_digest,
                 planning_policy_version=DIRECTOR_POLICY_VERSION,
+                planning_completion=completion,
                 planning_input_digest=frozen.input_digest,
                 candidate_set_ref=frozen.candidate_set_ref,
                 feature_schema_version=frozen.feature_schema_version,

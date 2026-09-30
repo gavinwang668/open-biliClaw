@@ -11,6 +11,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .horizon_coverage import PlanningCompletion  # noqa: TC001 - Pydantic runtime type
 from .models import CompositionCard, CompositionRequest, digest
 from .policy import PairRole, ScreenBrief, ScreenReview  # noqa: TC001 - Pydantic runtime types
 
@@ -47,6 +48,8 @@ class ScreenDraft(_Model):
     tentative: Literal[True] = True
     direction: str = Field(min_length=1, max_length=500)
     target_count: int = Field(ge=1, le=20)
+    # Initial Agent allocation, not the length after hard repair or consumption.
+    initial_card_count: int | None = Field(default=None, ge=1, le=20)
     pairs: tuple[PlannedPair, ...] = Field(max_length=10)
     brief: ScreenBrief | None = None
 
@@ -59,6 +62,8 @@ class ScreenDraft(_Model):
         refs = self.card_refs
         if len(refs) > self.target_count or len(refs) != len(set(refs)):
             raise ValueError("invalid planned screen count")
+        if self.initial_card_count is not None and self.initial_card_count > self.target_count:
+            raise ValueError("initial allocation exceeds screen target")
         if any(len(pair.card_refs) != 2 for pair in self.pairs[:-1]):
             raise ValueError("singleton is only allowed at screen tail")
         return self
@@ -79,6 +84,9 @@ class HorizonPlan(_Model):
     planning_explicit_intent: str = Field(default="", max_length=500)
     planning_profile_digest: str = Field(default="", max_length=64)
     planning_policy_version: str = Field(default="", max_length=64)
+    # Historical planning outcome, not a count of the current unconsumed drafts.
+    # Older stored plans remain readable without inventing a completion reason.
+    planning_completion: PlanningCompletion | None = None
     planning_input_digest: _Key
     candidate_set_ref: _Key
     feature_schema_version: _Key

@@ -305,6 +305,12 @@ class DirectorRuntime:
                 )
                 stored_revision = stored.revision if stored else 0
                 horizon = None
+                planning_trace: dict[str, Any] = {
+                    "source": "not_applicable",
+                    "reason_code": "agent_planning_not_requested",
+                    "calls": 0,
+                    "completion": None,
+                }
                 if (
                     intent == "NEXT"
                     and stored
@@ -332,6 +338,23 @@ class DirectorRuntime:
                         budget_seconds=self.config.director.planning_budget_seconds,
                     )
                     horizon = planning.plan
+                    planning_trace = {
+                        "source": "fresh",
+                        "reason_code": planning.reason_code,
+                        "calls": planning.calls,
+                        "completion": horizon.planning_completion.model_dump(mode="json")
+                        if horizon is not None and horizon.planning_completion is not None
+                        else None,
+                    }
+                elif self.config.director.strategy != "jev_recurrent" and horizon is not None:
+                    planning_trace = {
+                        "source": "cached",
+                        "reason_code": "cached_agent_horizon",
+                        "calls": 0,
+                        "completion": horizon.planning_completion.model_dump(mode="json")
+                        if horizon.planning_completion is not None
+                        else None,
+                    }
                 result = await self.controller.prepare_next(
                     request,
                     strategy=cast("DirectorStrategy", self.config.director.strategy),
@@ -341,6 +364,7 @@ class DirectorRuntime:
                 selected_refs = proposal.card_refs
                 realized = proposal.realized_strategy
                 trace = result.model_dump(mode="json")
+                trace["planning"] = planning_trace
                 plan_id, plan_revision, slot_seq = proposal.plan_id, proposal.plan_revision, None
                 direction_ref, chosen_direction = proposal.direction_ref, proposal.direction
                 if proposal.screen_id and result.horizon:

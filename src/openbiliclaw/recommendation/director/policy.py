@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from .models import CompositionCard, CompositionRequest, PairAlternative
 
-DIRECTOR_POLICY_VERSION = "director-screen-policy.v1"
+DIRECTOR_POLICY_VERSION = "director-screen-policy.v2"
 PairRole = Literal["anchor", "complement", "exploration", "open"]
 PAIR_ROLE_INTENTS: dict[PairRole, str] = {
     "anchor": "Directly serve the screen objective with independently useful entries.",

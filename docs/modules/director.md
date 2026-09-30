@@ -13,6 +13,7 @@
             ┌──────────┼──────────────┐
      jev_recurrent   agent_jev      agent_only
      二卡递推选择    Agent 多屏草稿   Agent 多屏草稿
+                    └── 目标覆盖 / 合法短尾校验 ──┘
      prefix→下一对  Jev 审查/局部换卡 不调用 Jev
             └──────────┼──────────────┘
                  tentative 屏提案
@@ -41,6 +42,7 @@
 | 画像与短期上下文 | 三策略共用推荐画像、近期关注、最近三屏实际曝光／行为和卡片语义；画像内容变化使旧 Agent 计划失效 |
 | 共享屏幕策略 | `policy.py` 统一证据区分、屏任务、内容角色、逐对增量价值和整屏自检指令；简短决策结果入 trace，不保存长篇推理过程 |
 | 有界诊断 | `screen_review` 仅报告规范化标题重复，固定 `semantic_quality=not_certified`；不是语义质量认证 |
+| 预排覆盖 | Agent 以请求屏数为目标；仅末屏可短，必须说明未用候选并通过剩余容量检查；语义短尾在执行／修补时不自动补满 |
 
 “两个两个”不是两张卡打擂台，也不是一次调用的两个独立 Choice。模型没有本项目的跨请求隐状态；应用显式递推。未来草稿不是用户行为，候选文本不是指令。
 
@@ -60,7 +62,23 @@
 
 纯 Agent 的生产路径读取 `latest_preference_revision`：Store 在同一事务中从**全部持久化的非 presented / click 回执**读取最新状态版本。水位未超过规划状态时，连续曝光／弱点击即使挤出 4+4 prompt 窗口也可保留计划；新增 like / dislike / skip / 明确要求等其它反馈或状态版本回退则重排。该水位只供程序判断，不发给模型。无权威水位的离线输入则严格要求新增事件完整解释 state revision 增量、且全为 `presented / click`，窗口截断或事件缺口保守重排。**重排不代表把 skip 或点击写成强偏好**，游标也不能单独证明发生了什么。
 
-两种 Agent 模式都在明确意图、画像摘要或 `planning_policy_version` 变化时重排。当前策略版本为 `director-screen-policy.v1`，也纳入 runtime context digest，经既有 epoch / fence 阻止旧策略的在飞提交或后台计划写入；旧计划 JSON 仍可读，缺版本的未来计划不复用，已提交屏不重写。
+两种 Agent 模式都在明确意图、画像摘要或 `planning_policy_version` 变化时重排。当前策略版本为 `director-screen-policy.v2`，也纳入 runtime context digest，经既有 epoch / fence 阻止旧策略的在飞提交或后台计划写入；旧计划 JSON 仍可读，旧版本的未来计划不复用，已提交屏不重写。
+
+### 多屏目标与提前结束（2026-10-01）
+
+`planning_contract` 区分「本屏目标」与「整段预排目标」：请求屏数、每屏卡数、合法库存数、物理卡数上界和名义屏长度。`screen_policy` 是每屏重复使用的模板，其中的 `remaining_count` 不是整段计划的剩余预算。物理上界不证明 topic 配额或语义上有足够供给。
+
+一次调用先确定整段可用内容，再组织为完整屏＋可选的一个短尾；当下明确要求贯穿所有未来屏。每屏仍应独立有用，不假定用户读过或掌握前屏，也不能为了凑满第三屏偷偷换到画像里的其他兴趣。屏方向、brief、pair intent 使用简短结果，不反复抄写相同未知点。
+
+- 新模型输出必带 `completion`：满目标用 `target_reached`；不足用 `supply_exhausted`。语义上不适合的未选卡用最多四组 `omissions` 引用说明，原因限 `off_intent / redundant / style_mismatch / insufficient_evidence`。不允许引用未知卡、已选卡或重复引用。
+- 所有屏必须非空，只有末屏可不足目标。去掉明确说明的语义遗漏后，短尾若还能合法添加一卡就拒绝；末屏已满但未达到请求屏数，剩余仍能形成合法屏（包括短屏）也拒绝。硬 minimum / maximum 不放松。程序只证明**给定已选前缀无法继续扩展**，不证明全局最优分配，更不认证语义判断。
+- `HorizonPlan.planning_completion` 保存初始屏长、请求目标、说明与程序归因：`target_reached / candidate_shortage / residual_constraints / semantic_shortage`。固定 `semantic_quality=not_certified`；这是历史快照，不是当前剩余屏数。消费首屏、重启、ref 重绑定和局部修改不能把历史快照误算成非法计划。旧持久化 JSON 缺字段仍可读为 `None`，但不能以旧输出格式绕过新生成校验。
+- 遗漏 refs 属于 `planning_input_digest` 对应的**最初候选命名空间**；修补重绑定后不可用当前 `horizon.cards` 反查其身份或标题。当前没有据此渲染卡片的 UI；后续若要展示，应使用原规划输入记录，而不是将同名 ref 当成同一内容。
+- 纯 Agent 与混合模式执行已验证的语义短尾时，以 `ScreenDraft.initial_card_count` 的初始分配数为容量上限，仍复核最新硬约束；不会用硬准入合格但偏题的卡机械补满。初始数独立保存，避免把原本满屏、后来因硬约束缩水的草稿误认成有意短尾。遗漏说明不是全局黑名单、长期负偏好或禁止未来重规划使用这些卡。
+- 容量保护不保证替换内容的语义质量：原卡失效时，既有确定性硬修补仍可能选中曾被遗漏的卡，并明确归因为修补、请求重排；它不冒充 Agent 已认证的新编排。
+- 前台 trace 区分新规划、缓存计划与不适用，保留安全的规划原因、调用数及初始覆盖；规划失败后兜底不再只剩 `agent_plan_missing`。已验证的语义短尾本身不触发每屏重排；计划耗尽或硬失效仍沿用原触发，物理供给／硬约束不足的短尾也保留既有补货重排行为。
+
+无新配置、数据库列、模型调用或安装依赖；默认 20 秒规划预算和 4096 输出 token 请求保持不变。空候选仍在调用前返回无候选；全候选均被语义拒绝的零屏输出暂不支持，按非法计划显式回退，不伪称成功。
 
 ### 推荐画像 + 会话短期 context（2026-09-30）
 
@@ -83,7 +101,9 @@ Agent 将该投影中的 `profile_context` 提到 user input 顶层首字段，�
 | 接口 | 职责 |
 |---|---|
 | `PairComposer.prepare_next(request)` | 纯内核：冻结输入、精确配额、合法 pair / role 联合选择、逐对证据校验、tentative 提案 |
-| `HorizonPlanner.plan(request, ...)` | 一次有界 LLM 调用产出带 brief / roles / policy version 的 `HorizonPlan`；只接受已有证据和卡片 refs，验证所有屏及跨屏唯一性 |
+| `HorizonPlanner.plan(request, ...)` | 一次有界 LLM 调用产出带 brief / roles / policy version / planning_completion 的 `HorizonPlan`；只接受已有证据和卡片 refs，验证所有屏、跨屏唯一性及提前结束理由 |
+| `build_horizon_contract(request, horizon_screens)` | 无模型调用地描述整段目标和物理库存上界，不声称配额可行 |
+| `validate_horizon_coverage(request, horizon_screens, screen_refs, stop)` | 验证紧凑屏形、遗漏 refs 与剩余硬可扩展性，产生不可变初始 `PlanningCompletion` |
 | `DirectorController.prepare_next(request, strategy, horizon)` | 三策略统一提案；不持久化、不曝光、不偷偷启动规划 |
 | `DraftRepairer.repair(request, horizon)` | 携带当前及剩余角色的草稿审查／局部修改，保存 intent、两阶段证据、补丁前后版本和状态绑定 |
 | `DirectorRuntime.generate(profile, stream_ref, request_id, intent, ...)` | 准备候选、补齐缺失计划、执行、提交、滚动预排 |
@@ -130,7 +150,7 @@ Git / Docker / 桌面包无需新增依赖或下载模型；显式启用外部 J
 
 `python scripts/replay_director_pairs.py` 演示离线递推和拒选回退。测试覆盖原生 parser/mock HTTP、三策略、真实 SQLite、运行时/API、客户端协议；最终结果见 [实施验收](../plans/2026-09-26-director-implementation-progress.md)。本地批次 trace 保存提案、brief、每对 role / intent、`screen_review`、证据、降级原因和来源，可能含有限候选／反馈文字，不是匿名遥测。新增决策字段存在原有 JSON 载荷中，不增加表／列，仅增加偏好水位查询索引。实现阶段未调用付费服务；后续获授权的配置模型试跑遇服务失败，临时 Codex CLI / GPT-6 Luna 则完成了六次合成场景调用。小样本结果不能认证真实用户满意度、Jev 误拒、生产成本或时延。
 
-`scripts/run_director_effect_eval.py` 是独立的开发者评测入口，不是产品 CLI，也不启用导演。必须显式传 `--real`；读取指定项目的现有推荐路由，只在测试进程内固定一个已配置实例、关闭跨模型 fallback，使用临时 memory 与合成画像／候选／历史，不读写真实推荐库存、曝光或画像。默认比较旧 planner prompt 与新策略（同一当前校验器），不是运行完整旧版本或生产 MMR。`--instance` 只能选择既有推荐链中的实例；`--case`、`--horizon`、`--repeats` 控制测试范围，最多两次重复、每调用最多 60 秒。
+`scripts/run_director_effect_eval.py` 是独立的开发者评测入口，不是产品 CLI，也不启用导演。必须显式传 `--real`；配置模型路径读取指定项目的现有推荐路由，只在测试进程内固定一个已配置实例、关闭跨模型 fallback，使用临时 memory 与合成画像／候选／历史，不读写真实推荐库存、曝光或画像。v2 默认且仅接受 `screen_policy` 单臂，记录策略版本和初始覆盖快照；旧 prompt 不输出新 completion 合同，因此在联网前拒绝 `legacy_prompt`，避免把格式不兼容误算成质量退步。旧版需使用历史 checkout，当前与冻结的 v1 JSON 只能做描述性前后对照，不是并行 A/B。确定性 pair baseline 不是生产 MMR。`--instance` 只能选择既有推荐链中的实例；`--case`、`--horizon`、`--repeats` 控制测试范围，最多两次重复、每调用最多 60 秒。
 
 ```bash
 PYTHONPATH=src python scripts/run_director_effect_eval.py --real \

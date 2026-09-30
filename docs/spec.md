@@ -415,6 +415,8 @@ pool maintenance → isolated maintenance DB worker → ≤50 mutations/transact
 Agent+Jev 修补、Agent-only 三策略，`[discovery.semantic_filter]` 独立控制过滤。
 三策略共用屏 brief／事件证据／软角色策略：先定本屏任务，再比较每对的增量价值和整屏覆盖。
 Jev 每步一次联合选择 pair + role；Agent 一次输出具体多屏目标，修补带上原角色与剩余草稿。
+Agent 预排 → 目标覆盖／合法短尾校验 → 初始 completion 留痕；修补不机械补满语义短尾。
+提前停排必须说明遗漏候选并通过剩余硬可行性检查；仅给定前缀的验证，不证明语义质量或全局最优。
 角色不是固定比例或硬配额，整屏自检是模型指令；程序仅报告规范化标题重复，不认证语义质量。
 最多 40 张 shortlist、20 张屏、3 屏预排是工程上限；模型提案经 fresh eligibility / fencing / CAS
 后整屏提交，实际可见 ACK 才计曝光，点击与明确反馈精确关联批次。三端和 CLI 接通协议，

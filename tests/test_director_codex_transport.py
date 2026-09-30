@@ -212,6 +212,88 @@ async def test_failed_or_unknown_event_cannot_be_misreported_as_success(
     assert not service.records[0].get("completed")
 
 
+@pytest.mark.parametrize("failure_kind", ["error", "turn.failed"])
+async def test_exit_zero_fatal_error_retains_only_safe_markers_not_final_success(
+    transport, monkeypatch, failure_kind
+):
+    events = _complete_events()
+    payload = {
+        "message": "PRIVATE_ENDPOINT?key=PRIVATE_SECRET: usage limit HTTP 429",
+        "code": "PRIVATE_ERROR_CODE",
+    }
+    events.append(
+        {"type": failure_kind, **(payload if failure_kind == "error" else {"error": payload})}
+    )
+    process = FakeProcess(
+        _jsonl(*events), stderr=b"PRIVATE_STDERR stream disconnected", returncode=0
+    )
+    _install_process(transport, monkeypatch, process)
+    service = transport.CodexCLIService()
+    # A matching final file and turn.completed must never salvage a later fatal
+    # event, even if the CLI process itself returned exit status zero.
+    with pytest.raises(transport.CodexCLIError, match="^cli_turn_failed$") as caught:
+        await _request(service)
+    record = service.records[0]
+    assert record["exit_code"] == 0
+    assert record["failure_code"] == "cli_turn_failed"
+    assert record["error_markers"] == ["429", "usage limit", "stream disconnected"]
+    assert record["event_types"][failure_kind] == 1
+    assert record["event_types"]["turn.completed"] == 1
+    assert record["event_types"]["item.completed"] == 2
+    assert record["event_type_counts_capped"] is False
+    assert not record.get("completed")
+    assert "PRIVATE" not in json.dumps(record)
+    assert "PRIVATE" not in str(caught.value)
+
+
+@pytest.mark.parametrize("returncode", [0, 7])
+async def test_markers_never_come_from_candidate_prompt_reasoning_or_final_text(
+    transport, monkeypatch, returncode
+):
+    misleading = "PRIVATE_CANDIDATE discusses usage limit, rate limit, 429, quota"
+    events = _complete_events()
+    events[0]["prompt"] = misleading
+    events[2]["item"]["text"] = misleading
+    events[3]["item"]["text"] = misleading
+    events.append(
+        {
+            "type": "error",
+            "message": "PRIVATE_FATAL",
+            "prompt": misleading,
+            "candidates": [{"summary": misleading}],
+        }
+    )
+    process = FakeProcess(_jsonl(*events), stderr=b"", returncode=returncode)
+    _install_process(transport, monkeypatch, process, final_text=misleading)
+    service = transport.CodexCLIService()
+    with pytest.raises(transport.CodexCLIError):
+        await _request(service, user_input=misleading)
+    assert service.records[0]["error_markers"] == []
+    assert "PRIVATE" not in json.dumps(service.records)
+
+
+def test_event_diagnostic_names_and_counts_are_bounded_and_do_not_retain_unknown_data(transport):
+    events = [
+        {"type": "PRIVATE_UNKNOWN_EVENT", "message": "PRIVATE_BODY 429"},
+        {"type": ["PRIVATE_BAD_KIND"]},
+        {"type": "item.completed", "item": {"type": "error", "status_code": 429}},
+    ]
+    diagnostics = transport._safe_diagnostics(
+        _jsonl(*events)
+        + b"\n"
+        + (b'{"type":"turn.started"}\n' * (transport._MAX_DIAGNOSTIC_EVENT_COUNT + 1)),
+        b"",
+    )
+    assert diagnostics["event_types"] == {
+        "item.completed": 1,
+        "turn.started": transport._MAX_DIAGNOSTIC_EVENT_COUNT,
+        "unknown": 2,
+    }
+    assert diagnostics["event_type_counts_capped"] is True
+    assert diagnostics["error_markers"] == ["429"]
+    assert "PRIVATE" not in json.dumps(diagnostics)
+
+
 @pytest.mark.parametrize("failure", ["no_completion", "two_completions", "no_final", "commentary"])
 async def test_exactly_one_completion_and_a_final_answer_are_required(
     transport, monkeypatch, failure

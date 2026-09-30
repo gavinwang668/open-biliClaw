@@ -18,7 +18,7 @@ from openbiliclaw.recommendation.director.policy import (
     DIRECTOR_POLICY_VERSION,
     build_screen_brief,
 )
-from tests.test_director_horizon_modes import _LLM, _horizon, _request
+from tests.test_director_horizon_modes import _LLM, _horizon, _planner_output, _request
 
 
 def _output(request: CompositionRequest, *, brief: bool = True) -> dict[str, object]:
@@ -54,7 +54,7 @@ def _output(request: CompositionRequest, *, brief: bool = True) -> dict[str, obj
             }
         )
         output["brief"] = value
-    return {"screens": [output]}
+    return {"screens": [output], "completion": {"reason": "target_reached"}}
 
 
 async def test_planner_normalizes_structured_brief_roles_and_policy_version() -> None:
@@ -78,7 +78,7 @@ async def test_planner_normalizes_structured_brief_roles_and_policy_version() ->
     output = _output(request)
     output["screens"][0]["brief"]["evidence_refs"] = ["feedback-1"]
     llm = _LLM(canonical_json(output))
-    result = await HorizonPlanner(llm).plan(request, now_epoch=100.0)
+    result = await HorizonPlanner(llm).plan(request, horizon_screens=1, now_epoch=100.0)
     assert result.plan is not None
     assert result.calls == len(llm.calls) == 1
     assert result.plan.planning_policy_version == DIRECTOR_POLICY_VERSION
@@ -105,8 +105,10 @@ async def test_each_future_screen_keeps_its_own_goal_and_roles() -> None:
     ):
         pair["card_refs"] = refs
         pair["role"] = "open"
-    llm = _LLM(canonical_json({"screens": [first, second]}))
-    result = await HorizonPlanner(llm).plan(request)
+    llm = _LLM(
+        canonical_json({"screens": [first, second], "completion": {"reason": "target_reached"}})
+    )
+    result = await HorizonPlanner(llm).plan(request, horizon_screens=2)
     assert result.plan is not None
     assert [screen.brief.task for screen in result.plan.screens] == [
         "follow_intent",
@@ -131,7 +133,7 @@ async def test_invalid_or_unsupported_brief_never_becomes_plan(field, value) -> 
     output = _output(request)
     output["screens"][0]["brief"][field] = value
     llm = _LLM(canonical_json(output))
-    result = await HorizonPlanner(llm).plan(request)
+    result = await HorizonPlanner(llm).plan(request, horizon_screens=1)
     assert result.plan is None
     assert result.reason_code == "invalid_planner_output"
     assert result.calls == len(llm.calls) == 1
@@ -142,7 +144,7 @@ async def test_unknown_pair_role_is_rejected_without_a_second_model_call() -> No
     output = _output(request)
     output["screens"][0]["pairs"][0]["role"] = "guaranteed_click"
     llm = _LLM(canonical_json(output))
-    result = await HorizonPlanner(llm).plan(request)
+    result = await HorizonPlanner(llm).plan(request, horizon_screens=1)
     assert result.plan is None and result.reason_code == "invalid_planner_output"
     assert len(llm.calls) == 1
 
@@ -152,7 +154,7 @@ async def test_missing_legacy_brief_and_role_get_honest_conservative_defaults() 
     output = _output(request, brief=False)
     for pair in output["screens"][0]["pairs"]:
         del pair["role"]
-    result = await HorizonPlanner(_LLM(canonical_json(output))).plan(request)
+    result = await HorizonPlanner(_LLM(canonical_json(output))).plan(request, horizon_screens=1)
     assert result.plan is not None
     screen = result.plan.screens[0]
     assert screen.brief == build_screen_brief(request)
@@ -170,14 +172,14 @@ async def test_policy_prompt_is_static_and_keeps_stable_profile_cache_prefix() -
     )
     llm = _LLM(canonical_json(_output(request, brief=False)))
     planner = HorizonPlanner(llm)
-    assert (await planner.plan(request)).plan is not None
+    assert (await planner.plan(request, horizon_screens=1)).plan is not None
     changed = request.model_copy(
         update={
             "direction": "补一些轻松的入口",
             "session": request.session.model_copy(update={"explicit_intent": "换个方向"}),
         }
     )
-    assert (await planner.plan(changed)).plan is not None
+    assert (await planner.plan(changed, horizon_screens=1)).plan is not None
     assert llm.calls[0]["system_instruction"] == llm.calls[1]["system_instruction"]
     assert DIRECTOR_POLICY_INSTRUCTIONS in llm.calls[0]["system_instruction"]
     prefix = '{"profile_context":{"stable":' + canonical_json(profile["stable"]) + ","
@@ -192,7 +194,7 @@ async def test_policy_prompt_is_static_and_keeps_stable_profile_cache_prefix() -
 async def test_prompt_requires_auditable_outcomes_and_no_invented_consumption() -> None:
     request = _request()
     llm = _LLM(canonical_json(_output(request)))
-    assert (await HorizonPlanner(llm).plan(request)).plan is not None
+    assert (await HorizonPlanner(llm).plan(request, horizon_screens=1)).plan is not None
     prompt = llm.calls[0]["system_instruction"]
     assert "concise decision outcomes, never a" in prompt
     assert "private reasoning transcript" in prompt
@@ -200,3 +202,69 @@ async def test_prompt_requires_auditable_outcomes_and_no_invented_consumption() 
     assert "descriptive soft roles, not hard quotas" in prompt
     assert "Lack of action is not\ndislike; a click is not a like" in prompt
     assert "future drafts are not exposures" in prompt
+
+
+async def test_multi_screen_target_is_separate_from_single_screen_policy() -> None:
+    request = _request()
+    llm = _LLM(_planner_output(request))
+    result = await HorizonPlanner(llm).plan(request)
+    assert result.plan is not None
+    completion = result.plan.planning_completion
+    assert completion is not None
+    assert completion.initial_screen_counts == (6, 6, 6)
+    assert completion.reason == "target_reached"
+    assert completion.semantic_quality == "not_certified"
+    payload = json.loads(llm.calls[0]["user_input"])
+    assert payload["planning_contract"]["nominal_screen_counts"] == [6, 6, 6]
+    assert payload["planning_contract"]["requested_screens"] == 3
+    assert payload["planning_contract"]["physical_card_upper_bound"] == 18
+    prompt = llm.calls[0]["system_instruction"]
+    assert "ONE-screen template" in prompt
+    assert "Current explicit intent governs ALL future screens" in prompt
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.parametrize("audit_omissions", [True, False])
+async def test_semantic_short_tail_needs_audited_unused_supply(audit_omissions: bool) -> None:
+    request = _request()
+    output = json.loads(_planner_output(request))
+    output["screens"] = output["screens"][:2]
+    output["screens"][1]["pairs"] = [
+        {"card_refs": ["c6", "c7"]},
+        {"card_refs": ["c8"]},
+    ]
+    output["completion"] = {
+        "reason": "supply_exhausted",
+        "omissions": [
+            {
+                "refs": [f"c{i}" for i in range(9, 24)],
+                "reason": "off_intent",
+                "note": "Synthetic semantic judgment for testing, not a content-quality claim",
+            }
+        ]
+        if audit_omissions
+        else [],
+    }
+    llm = _LLM(canonical_json(output))
+    result = await HorizonPlanner(llm).plan(request)
+    assert len(llm.calls) == 1
+    if not audit_omissions:
+        assert result.plan is None and result.reason_code == "invalid_planner_output"
+        return
+    assert result.plan is not None
+    completion = result.plan.planning_completion
+    assert completion is not None
+    assert completion.initial_screen_counts == (6, 3)
+    assert completion.reason == "semantic_shortage"
+    assert HorizonPlan.model_validate_json(result.plan.model_dump_json()) == result.plan
+
+
+async def test_live_completion_is_required_but_old_persisted_plans_remain_readable() -> None:
+    request = _request()
+    output = json.loads(_planner_output(request))
+    del output["completion"]
+    result = await HorizonPlanner(_LLM(canonical_json(output))).plan(request)
+    assert result.plan is None and result.reason_code == "invalid_planner_output"
+    saved = _horizon(request).model_dump(mode="json")
+    saved.pop("planning_completion", None)
+    assert HorizonPlan.model_validate_json(canonical_json(saved)).planning_completion is None

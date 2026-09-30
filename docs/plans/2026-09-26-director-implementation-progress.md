@@ -1,8 +1,38 @@
 # 推荐导演实施进度
 
-更新：2026-09-30。最新评测分支：`test/director-codex-luna`，基于前轮评测 `1cccee24`，生产屏策略实现为 `4ead2946` / `feat/director-screen-policy`。
+更新：2026-10-01。当前优化分支：`fix/director-horizon-completion`，独立 worktree，基于 CLI 评测 `5419f168`；前轮评测分支为 `test/director-codex-luna`，生产屏策略实现为 `4ead2946` / `feat/director-screen-policy`。未合入 main／发布，未改用户配置。
 
 架构依据：[三模式方案](2026-09-26-director-jev-modes.md)、[基础规格](2026-08-31-recommendation-director-spec.md)。
+
+## 多屏覆盖与短尾保护优化（2026-10-01）
+
+本次针对上一轮三个新策略调用都只排一屏的问题，统一修正规划合同与执行边界，不仅改一句 prompt：
+
+1. 将请求屏数表达为**目标**而不只是上限；单屏 `screen_policy` 是逐屏复用的模板，避免其中的 `remaining_count=6` 被误当整个规划预算。
+2. Agent 一次确定适用内容，再编排完整屏＋至多一个短尾；明确意图约束全部未来屏，不为凑数改推其他稳定兴趣，也不虚构用户读完前屏。
+3. 新输出必带完成／缺货声明，并按已有 refs 说明语义未用候选。程序独立校验屏形、唯一性、硬配额及剩余可扩展容量。语义判断仍为未认证意见；硬可行性只针对已选前缀，不证明全局最优。
+4. 初始 `planning_completion` 随计划保存，消费／重绑定后不拿历史计数与剩余屏数比较；每屏保存 `initial_card_count` 区分有意短尾与后续硬修补缩水，纯 Agent／混合修补不机械补满语义短尾。遗漏不写入长期偏好或全局屏蔽。
+5. 规划原因进入安全 trace；策略版本升为 v2，旧持久化格式可读、旧未来计划不复用。默认预算和调用次数不变。
+
+采用 codebase-design 的模块边界原则，将覆盖／提前结束规则收进统一的 `horizon_coverage.py`，规划与执行使用同一份有界历史合同。没有新增数据库列、UI、配置、安装依赖或远端 provider；四表面仍共用后端。CLI 临时测试通道不是上线方案。
+
+### 同场景再测与限制
+
+使用同一份三场景合成 fixture、24 张候选、每屏 6 卡、目标 3 屏，固定 Codex CLI / `gpt-6-luna` / `low` 与 60 秒诊断预算。v2 严格完成合同与旧 prompt 不兼容；评测入口现在仅运行当前策略单臂，与冻结的 [v1 报告](../../artifacts/director-effect-eval/luna-matrix-60s.json)做描述性前后对照，不是同时 A/B。历史 artifacts 不重写。
+
+首轮 [v2 原始记录](../../artifacts/director-effect-eval/luna-horizon-v2-60s.json) 在工程需求场景 34.725 秒返回 `planner_unavailable`：CLI 退出码为 0，但 JSONL 含致命失败事件，适配器按 `cli_turn_failed` 拒绝，后两场景未调用。该轮无有效计划，不可判定新策略好坏，也不把可能出现的部分正文计为成功。成功判定继续要求唯一 `turn.completed`、无致命 error／turn.failed、最终消息与文件一致；参照 [OpenAI 官方非交互事件文档](https://learn.chatgpt.com/docs/non-interactive-mode)，不为跑通评测放宽失败语义。
+
+只增加错误诊断白名单后做了一次 [诊断重试](../../artifacts/director-effect-eval/luna-horizon-v2-diagnostic.json)：38.721 秒，同样被适配器拒收。退出码 0；事件计数为 5 个顶层 `error`、1 个 `turn.completed`、3 个 completed item；无 `turn.failed` 事件。脱敏标记为 `connection`、`stream disconnected`。**只能确认顶层错误触发严格合同拒收，不能断言没有模型回答或编排质量失败。** 未继续第三次调用；两轮后续场景均未跑，暂不能给出 v1→v2 的模型效果或延迟改善结论。
+
+新增诊断只从 stderr 与真实错误事件字段取有限词表，不保存错误正文、候选、最终文案或推理；成功规则不变。不绕过限额／网络故障、不改模型，不使用 mock 输出补齐真实效果表。硬失效情况下的确定性替换仍可能用到原遗漏内容（有明确归因并要求重排）；短尾容量保护不等于运行期语义强保证。
+
+### 本增量验收
+
+- 最终代码树相关集 **1,572 passed / 78 warnings**（104.98 秒）：全部 `test_director_*`、`test_pair_*`、`test_decision_*`、`test_jev_*`，以及 semantic filter、config、LLM concurrency、OpenClaw、recommendation engine／proxy headers、profile views 和 soul profile。包含真实 Chromium、SQLite 和明确 mock 的模型边界；不是模型质量得分。
+- 覆盖未解释停排、6＋3 语义短尾、6＋6＋6 满目标、硬配额、无效遗漏 refs、初始快照消费／重启／STAY、缓存 trace、模型故障归因、短尾不反复重排、失效卡明确修补，以及原满屏硬缩水后恢复。共享版本变化的 Jev golden 已核验：只把版本改回 v1，即精确恢复旧 digest，问题指令／选项未漂移。
+- 全仓 `ruff check src/ tests/`（另含两评测脚本）、变更 Python 格式检查、`mypy src/`（317 文件）和 `git diff --check` 通过。
+- 曾启动全仓 `pytest -q -m 'not integration' --maxfail=3`，运行 423.15 秒后主动中止以收束到改动相关集；当时 **1,627 passed / 121 deselected**，约 15%，不是完整全仓通过。最终采用上述完整相关集验收，不合并重复计数。
+- 两次真实 CLI 调用均无被接受的计划，未测试真实 Jev；未修改用户配置、真实画像／库存／曝光，未合回 main、推送或发布。
 
 ## Codex CLI / GPT-6 Luna 合成场景实测（2026-09-30）
 

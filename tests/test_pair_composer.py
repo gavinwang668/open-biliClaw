@@ -170,7 +170,15 @@ async def test_pair_question_golden_binds_static_instructions_and_exact_dynamic_
     # option ordering; excludes runtime request identity/deadline. Deliberate
     # prompt/transport changes require reviewing this golden and schema version.
     assert (
-        decision.input_digest == "561fa3db363e085aed26c8b08a582a72760cd4666268c0f115aa313ea0c0d8af"
+        decision.input_digest == "a3912e18ea40a4b34ce81fd6552c18a8d5879520268e5903311319b589053d31"
+    )
+    # Only the shared policy version changed (v2 fences old Agent plans); Jev
+    # question schema/instructions/options stay byte-for-byte compatible here.
+    old = decision.model_dump(mode="python")
+    old["state"]["screen_policy"]["version"] = "director-screen-policy.v1"
+    assert (
+        DecisionRequest.model_validate(old).input_digest
+        == "561fa3db363e085aed26c8b08a582a72760cd4666268c0f115aa313ea0c0d8af"
     )
 
     changed_provider = _RecordingProvider()

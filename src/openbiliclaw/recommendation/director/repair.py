@@ -403,6 +403,22 @@ class DraftRepairer:
         replan = False
         for screen_index, screen in enumerate(horizon.screens):
             local = _screen_request(request, screen, set(prior))
+            semantic_tail = (
+                horizon.planning_completion is not None
+                and horizon.planning_completion.reason == "semantic_shortage"
+                and screen.initial_card_count is not None
+                and screen.initial_card_count < screen.target_count
+            )
+            desired_count = (
+                screen.initial_card_count
+                if semantic_tail and screen.initial_card_count is not None
+                else screen.target_count
+            )
+            if semantic_tail:
+                # Respect the Agent's verified intentional shortfall. Recheck
+                # current hard feasibility, but never pad it with merely legal
+                # cards. Omitted refs are historical opinions, not a hard ban.
+                local = local.model_copy(update={"target_count": desired_count})
             target = largest_feasible_count(local)
             prefix: tuple[str, ...] = ()
             new_pairs: list[PlannedPair] = []
@@ -555,6 +571,7 @@ class DraftRepairer:
                 revision=screen.revision + int(changed),
                 direction=screen.direction,
                 target_count=screen.target_count,
+                initial_card_count=screen.initial_card_count,
                 pairs=tuple(new_pairs),
                 brief=screen.brief,
             )
@@ -584,7 +601,7 @@ class DraftRepairer:
             screens.append(updated)
             traces.append(tuple(pair_traces))
             prior += prefix
-            if len(prefix) < screen.target_count:
+            if len(prefix) < desired_count:
                 replan = True
         values = horizon.model_dump(mode="python")
         values.update(

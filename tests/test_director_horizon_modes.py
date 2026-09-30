@@ -195,7 +195,8 @@ def _planner_output(request: CompositionRequest, screens: int = 3) -> str:
                     "pairs": [pair.model_dump(mode="json") for pair in screen.pairs],
                 }
                 for screen in _horizon(request, screens).screens
-            ]
+            ],
+            "completion": {"reason": "target_reached"},
         },
         ensure_ascii=False,
     )
@@ -720,7 +721,10 @@ async def test_planner_does_not_relax_hard_minimum_on_shortage() -> None:
             version="q", topic_quotas=(TopicQuota(topic_group="explore", minimum=2),)
         )
     )
-    llm = _LLM('{"screens":[{"direction":"bad","pairs":[{"card_refs":["c0","c1"]}]}]}')
+    llm = _LLM(
+        '{"screens":[{"direction":"bad","pairs":[{"card_refs":["c0","c1"]}]}],'
+        '"completion":{"reason":"supply_exhausted"}}'
+    )
     result = await HorizonPlanner(llm).plan(request)
     assert result.plan is None
 

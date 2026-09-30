@@ -33,14 +33,13 @@ def _args(tmp_path, **changes):
         "instance": "",
         "legacy_ref": "synthetic-ref",
         "case": "practical_agent",
-        "conditions": "legacy_prompt,screen_policy",
+        "conditions": "screen_policy",
         "horizon": 1,
     }
     return argparse.Namespace(**(values | changes))
 
 
-@pytest.mark.parametrize("old_prompt", [None, "FIXED OLD SYSTEM"])
-async def test_recording_adapter_preserves_payload_except_old_policy_and_system(runner, old_prompt):
+async def test_recording_adapter_preserves_current_policy_and_payload(runner):
     calls = []
 
     class FakeService:
@@ -71,16 +70,13 @@ async def test_recording_adapter_preserves_payload_except_old_policy_and_system(
         "inject_core_memory": False,
     }
     before = copy.deepcopy(kwargs)
-    recorder = runner.RecordingLLM(FakeService(), old_prompt)
+    recorder = runner.RecordingLLM(FakeService())
     response = await recorder.complete_structured_task(**kwargs)
     assert kwargs == before
     assert len(calls) == 1
     forwarded = calls[0]
-    expected = copy.deepcopy(payload)
-    if old_prompt is not None:
-        expected.pop("screen_policy")
-    assert json.loads(forwarded["user_input"]) == expected
-    assert forwarded["system_instruction"] == (old_prompt or "FIXED NEW SYSTEM")
+    assert json.loads(forwarded["user_input"]) == payload
+    assert forwarded["system_instruction"] == "FIXED NEW SYSTEM"
     for key in ("temperature", "max_tokens", "caller", "inject_core_memory"):
         assert forwarded[key] == before[key]
     record = recorder.calls[0]
@@ -175,7 +171,7 @@ async def test_external_calls_and_existing_output_are_guarded_before_config_load
         assert not args.output.exists()
 
 
-@pytest.mark.parametrize("failure", ["exception", "invalid_json"])
+@pytest.mark.parametrize("failure", ["exception", "invalid_json", "missing_completion"])
 async def test_failed_calls_are_not_scored_as_success_and_real_config_stays_unchanged(
     runner, monkeypatch, tmp_path, failure
 ):
@@ -213,6 +209,24 @@ async def test_failed_calls_are_not_scored_as_success_and_real_config_stays_unch
         async def complete_structured_task(self, **kwargs):
             if failure == "exception":
                 raise RuntimeError("CONFIG_SECRET must not leak")
+            if failure == "missing_completion":
+                return LLMResponse(
+                    content=json.dumps(
+                        {
+                            "screens": [
+                                {
+                                    "direction": "Historical shape without completion",
+                                    "pairs": [
+                                        {"card_refs": ["c01", "c02"]},
+                                        {"card_refs": ["c03", "c04"]},
+                                        {"card_refs": ["c05", "c06"]},
+                                    ],
+                                }
+                            ]
+                        }
+                    ),
+                    model="fixed-model",
+                )
             return LLMResponse(content="not JSON", model="fixed-model")
 
     def fake_registry(config):
@@ -222,7 +236,6 @@ async def test_failed_calls_are_not_scored_as_success_and_real_config_stays_unch
     monkeypatch.setattr(runner, "load_config", lambda: original)
     monkeypatch.setattr(runner, "module_overrides_from_config", lambda config: {})
     monkeypatch.setattr(runner, "build_llm_registry", fake_registry)
-    monkeypatch.setattr(runner, "_legacy_prompt", lambda ref: "STATIC OLD SYSTEM")
     monkeypatch.setattr(runner.subprocess, "check_output", lambda *args, **kwargs: "synthetic-sha")
     monkeypatch.setattr(runner, "MemoryManager", FakeMemory)
     monkeypatch.setattr(runner, "LLMService", FakeService)
@@ -246,11 +259,11 @@ async def test_failed_calls_are_not_scored_as_success_and_real_config_stays_unch
         assert report["stopped_early"] == {
             "reason": "planner_unavailable",
             "case_id": "practical_agent",
-            "condition": "legacy_prompt",
-            "remaining_comparisons_not_run": True,
+            "condition": "screen_policy",
+            "remaining_evaluations_not_run": True,
         }
     else:
-        assert len(results) == 3
+        assert len(results) == 2
         assert "stopped_early" not in report
     for result in results[1:]:
         assert result["plan_valid"] is False
@@ -278,6 +291,7 @@ async def test_codex_cli_runs_real_planner_without_business_config_or_http_regis
     planner_calls = []
     fixed_output = json.dumps(
         {
+            "completion": {"reason": "target_reached"},
             "screens": [
                 {
                     "direction": "合成测试屏幕，不代表模型效果",
@@ -324,7 +338,6 @@ async def test_codex_cli_runs_real_planner_without_business_config_or_http_regis
     for name in ("load_config", "build_llm_registry", "MemoryManager", "LLMService"):
         monkeypatch.setattr(runner, name, forbidden_config_or_http)
     monkeypatch.setattr(transport, "CodexCLIService", FakeCLIService)
-    monkeypatch.setattr(runner, "_legacy_prompt", lambda ref: "STATIC OLD SYSTEM")
     monkeypatch.setattr(runner.subprocess, "check_output", fake_check_output)
     monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", "UNCHANGED_EXISTING_ROOT")
     report = await runner.run(args)
@@ -346,15 +359,18 @@ async def test_codex_cli_runs_real_planner_without_business_config_or_http_regis
     assert report["cli_latency_includes_startup"] is True
     assert report["online_user_satisfaction_test"] is False
     assert report["jev_tested"] is False
+    assert report["evaluation_design"] == "current_policy_single_arm"
+    assert report["policy_version"] == runner.DIRECTOR_POLICY_VERSION == "director-screen-policy.v2"
+    assert "not a concurrent A/B" in report["comparison"]
+    assert "frozen v1 reports separately" in report["comparison"]
+    assert "legacy_ref" not in report
     assert "stopped_early" not in report
-    baseline, old, new = report["results"]
+    baseline, new = report["results"]
     assert baseline["network_calls"] == 0
-    assert [old["condition"], new["condition"]] == ["legacy_prompt", "screen_policy"]
-    assert len(planner_calls) == 2
-    assert planner_calls[0]["system_instruction"] == "STATIC OLD SYSTEM"
-    assert "screen_policy" not in json.loads(planner_calls[0]["user_input"])
-    assert "screen_policy" in json.loads(planner_calls[1]["user_input"])
-    for result in (old, new):
+    assert new["condition"] == "screen_policy"
+    assert len(planner_calls) == 1
+    assert "screen_policy" in json.loads(planner_calls[0]["user_input"])
+    for result in (new,):
         assert result["plan_valid"] is True
         assert result["first_screen_metrics"]["valid_selection"] is True
         assert result["first_screen_metrics"]["selected_count"] == 6
@@ -367,6 +383,9 @@ async def test_codex_cli_runs_real_planner_without_business_config_or_http_regis
         }
         assert result["calls"][0]["raw_response"] == fixed_output
         assert result["calls"][0]["provider"] == "codex_cli"
+        assert result["planning_completion"]["reason"] == "target_reached"
+        assert result["planning_completion"]["initial_screen_counts"] == [6]
+        assert result["planning_completion"]["semantic_quality"] == "not_certified"
     assert json.loads(args.output.read_text(encoding="utf-8")) == json.loads(json.dumps(report))
 
 
@@ -383,3 +402,35 @@ async def test_codex_cli_rejects_business_instance_selector_before_external_call
     with pytest.raises(ValueError, match="--instance is only used with configured transport"):
         await runner.run(args)
     assert not args.output.exists()
+
+
+@pytest.mark.parametrize("transport", ["configured", "codex-cli"])
+@pytest.mark.parametrize("conditions", ["legacy_prompt", "legacy_prompt,screen_policy"])
+async def test_legacy_condition_rejected_before_configuration_or_external_calls(
+    runner, monkeypatch, tmp_path, transport, conditions
+):
+    args = _args(tmp_path, transport=transport, conditions=conditions)
+
+    def forbidden_call(*args, **kwargs):
+        pytest.fail("incompatible legacy condition must be rejected before external setup")
+
+    monkeypatch.setattr(runner, "load_config", forbidden_call)
+    monkeypatch.setattr(runner, "build_llm_registry", forbidden_call)
+    monkeypatch.setattr(runner.subprocess, "check_output", forbidden_call)
+    cli_transport = importlib.import_module("director_codex_transport")
+    monkeypatch.setattr(cli_transport, "CodexCLIService", forbidden_call)
+    with pytest.raises(ValueError, match="frozen prior report or a historical checkout"):
+        await runner.run(args)
+    assert not args.output.exists()
+
+
+@pytest.mark.parametrize("conditions", ["", "unknown", "screen_policy,screen_policy"])
+async def test_only_one_current_policy_arm_is_accepted_before_config_load(
+    runner, monkeypatch, tmp_path, conditions
+):
+    def forbidden_load():
+        pytest.fail("condition validation must happen before config load")
+
+    monkeypatch.setattr(runner, "load_config", forbidden_load)
+    with pytest.raises(ValueError, match="single-arm evaluation only accepts"):
+        await runner.run(_args(tmp_path, conditions=conditions))
