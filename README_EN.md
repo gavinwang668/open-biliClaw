@@ -638,7 +638,7 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
 
-Optional Director, disabled by default: `shortlist + real feedback → recurrent Jev pairs / Agent + Jev repair / Agent-only preplanning → fresh eligibility check → atomic screen commit → actual-visibility ACK → future drafts`. Jev is an independent decision provider, also available for discovery filtering, not a chat-LLM fallback. Web surfaces and CLI preserve screen identity and exact feedback; configure through TOML. Live model quality remains unverified. See the [decision module](docs/modules/decision.md) and [Director runtime](docs/modules/director.md).
+Optional Director, disabled by default: `recommendation profile + latest 3 experienced screens + shortlist → recurrent Jev pairs / Agent + Jev repair / Agent-only preplanning → fresh eligibility check → atomic screen commit → actual-visibility ACK → future drafts`. Jev is an independent decision provider, also available for discovery filtering, not a chat-LLM fallback. Web surfaces and CLI preserve screen identity and exact feedback; configure through TOML. Live model quality remains unverified. See the [decision module](docs/modules/decision.md) and [Director runtime](docs/modules/director.md).
 
 The full architecture overview ASCII diagrams (runtime concurrency gates, agent orchestration, source adapters, discovery / recommendation / saved-sync pipelines) have been moved to a separate document to keep the README compact:
 

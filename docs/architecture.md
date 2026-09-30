@@ -13,7 +13,8 @@ main API ← validated response inventory / 2s active-client inventory watcher
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 
 optional Director (default off; separate decision credentials):
-  pool + real feedback → bounded shortlist → recurrent Jev pairs
+  profile view + latest 3 experienced screens + bounded shortlist
+                                        ├→ recurrent Jev pairs
                                         ├→ Agent horizon + Jev local repairs
                                         └→ Agent-only horizon (no Jev orchestration)
     → tentative screen → fresh eligibility + state/fence/plan CAS → atomic commit

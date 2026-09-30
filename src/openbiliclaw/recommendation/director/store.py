@@ -17,7 +17,11 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 from openbiliclaw.recommendation.director.models import (
+    ExperiencedCard,
+    FeedbackContent,
     RealFeedback,
+    RecentScreen,
+    ScreenAction,
     ScreenConstraints,
     canonical_json,
     digest,
@@ -73,6 +77,8 @@ CREATE TABLE IF NOT EXISTS director_batches (
 );
 CREATE INDEX IF NOT EXISTS idx_director_batches_root
     ON director_batches(root_batch_ref);
+CREATE INDEX IF NOT EXISTS idx_director_batches_stream_created
+    ON director_batches(stream_ref, created_at);
 CREATE TABLE IF NOT EXISTS director_batch_items (
     batch_ref TEXT NOT NULL REFERENCES director_batches(batch_ref),
     item_key TEXT NOT NULL,
@@ -94,6 +100,9 @@ CREATE TABLE IF NOT EXISTS director_feedback (
 );
 CREATE INDEX IF NOT EXISTS idx_director_feedback_stream_created
     ON director_feedback(stream_ref, created_at);
+CREATE INDEX IF NOT EXISTS idx_director_feedback_batch_created
+    ON director_feedback(
+        stream_ref, json_extract(NULLIF(feedback_json, ''), '$.batch_ref'), created_at);
 CREATE TABLE IF NOT EXISTS director_projected_events (
     event_id INTEGER PRIMARY KEY REFERENCES events(id),
     stream_ref TEXT NOT NULL,
@@ -136,6 +145,7 @@ class SessionSnapshot(_Record):
     experience_step_seq: int = 0
     latest_batch_ref: str | None = None
     real_feedback: tuple[RealFeedback, ...] = ()
+    recent_screens: tuple[RecentScreen, ...] = ()
 
 
 class GenerationClaim(_Record):
@@ -294,7 +304,90 @@ class DirectorStore:
         return cast("sqlite3.Row", row)
 
     @staticmethod
-    def _snapshot(conn: sqlite3.Connection, row: sqlite3.Row) -> SessionSnapshot:
+    def _content(item: dict[str, JsonValue]) -> FeedbackContent:
+        return FeedbackContent(
+            ref="c_" + digest(str(item["item_key"]))[:24],
+            title=str(item.get("title") or "")[:120],
+            summary=str(item.get("description") or item.get("body_text") or "")[:160],
+            topic_group=str(item.get("topic_group") or item.get("topic") or "")[:80],
+            content_style=str(item.get("style_key") or "")[:80],
+            source_platform=str(item.get("source_platform") or "")[:32],
+        )
+
+    @classmethod
+    def _recent_screens(cls, conn: sqlite3.Connection, stream: str) -> tuple[RecentScreen, ...]:
+        # Three latest *experienced* screens, not three generated drafts. Caps
+        # are engineering budgets, not fatigue/engagement thresholds.
+        batches = conn.execute(
+            "SELECT b.batch_json FROM director_batches b WHERE b.stream_ref = ? "
+            "AND EXISTS (SELECT 1 FROM director_feedback f WHERE f.stream_ref = b.stream_ref "
+            "AND json_extract(NULLIF(f.feedback_json, ''), '$.batch_ref') = b.batch_ref) "
+            "ORDER BY b.created_at DESC, b.rowid DESC LIMIT 3",
+            (stream,),
+        ).fetchall()
+        screens = []
+        for record in reversed(batches):
+            batch = BatchInstance.model_validate_json(record["batch_json"])
+            events = []
+            # ACKs are bounded by screen size; keep them independently so many
+            # later actions never erase exposure confirmation from the view.
+            for presented in (True, False):
+                events.extend(
+                    conn.execute(
+                        "SELECT feedback_json, receipt_json, created_at, rowid AS event_rowid "
+                        "FROM director_feedback WHERE stream_ref = ? "
+                        "AND json_extract(NULLIF(feedback_json, ''), '$.batch_ref') = ? "
+                        "AND (json_extract(NULLIF(feedback_json, ''), '$.kind') = 'presented') = ? "
+                        "ORDER BY created_at DESC, rowid DESC LIMIT 80",
+                        (stream, batch.batch_ref, presented),
+                    ).fetchall()
+                )
+            events.sort(key=lambda entry: (entry["created_at"], entry["event_rowid"]))
+            exposures: dict[str, float] = {}
+            actions_by_key: dict[str, list[ScreenAction]] = {}
+            for event in events:
+                receipt = FeedbackReceipt.model_validate_json(event["receipt_json"])
+                feedback = RealFeedback.model_validate_json(event["feedback_json"])
+                for key in receipt.item_keys:
+                    if feedback.kind == "presented":
+                        exposures[key] = float(event["created_at"])
+                    else:
+                        actions_by_key.setdefault(key, []).append(
+                            ScreenAction(
+                                event_ref=feedback.event_ref,
+                                kind=feedback.kind,
+                                note=feedback.description,
+                                occurred_at=float(event["created_at"]),
+                            )
+                        )
+            cards = []
+            for position, item in enumerate(batch.items, 1):
+                key = str(item["item_key"])
+                exposed = key in exposures
+                actions = actions_by_key.get(key, [])
+                # Do not send never-exposed, never-interacted cards as history.
+                if exposed or actions:
+                    cards.append(
+                        ExperiencedCard(
+                            **cls._content(item).model_dump(),
+                            position=position,
+                            exposure_confirmed=exposed,
+                            exposure_at=exposures.get(key),
+                            actions=tuple(actions[-4:]),
+                        )
+                    )
+            screens.append(
+                RecentScreen(
+                    batch_ref=batch.batch_ref,
+                    direction=batch.direction,
+                    committed_at=batch.committed_at,
+                    cards=tuple(cards),
+                )
+            )
+        return tuple(screens)
+
+    @classmethod
+    def _snapshot(cls, conn: sqlite3.Connection, row: sqlite3.Row) -> SessionSnapshot:
         # Engineering summary cap: four actual actions plus four exposures.
         # Per-card ACK bursts must not push the newest preference change out
         # of the model's bounded context. Persisted event history is unchanged.
@@ -302,7 +395,8 @@ class DirectorStore:
         for presented in (False, True):
             records.extend(
                 conn.execute(
-                    "SELECT feedback_json, created_at, rowid AS event_rowid FROM director_feedback "
+                    "SELECT feedback_json, receipt_json, created_at, rowid AS event_rowid "
+                    "FROM director_feedback "
                     "WHERE stream_ref = ? AND feedback_json <> '' AND "
                     "(json_extract(NULLIF(feedback_json, ''), '$.kind') = 'presented') = ? "
                     "ORDER BY created_at DESC, rowid DESC LIMIT 4",
@@ -310,11 +404,31 @@ class DirectorStore:
                 ).fetchall()
             )
         records.sort(key=lambda event: (event["created_at"], event["event_rowid"]))
+        enriched = []
+        for event in records:
+            feedback = RealFeedback.model_validate_json(event["feedback_json"])
+            receipt = FeedbackReceipt.model_validate_json(event["receipt_json"])
+            batch = cls._batch(conn, feedback.batch_ref)
+            enriched.append(
+                feedback.model_copy(
+                    update={
+                        "occurred_at": float(event["created_at"]),
+                        "content": tuple(
+                            cls._content(item)
+                            for item in batch.items
+                            if item["item_key"] in receipt.item_keys
+                        ),
+                    }
+                )
+            )
         return SessionSnapshot(
-            **{name: row[name] for name in SessionSnapshot.model_fields if name != "real_feedback"},
-            real_feedback=tuple(
-                RealFeedback.model_validate_json(event["feedback_json"]) for event in records
-            ),
+            **{
+                name: row[name]
+                for name in SessionSnapshot.model_fields
+                if name not in {"real_feedback", "recent_screens"}
+            },
+            real_feedback=tuple(enriched),
+            recent_screens=cls._recent_screens(conn, row["stream_ref"]),
         )
 
     def session(self, stream_ref: str) -> SessionSnapshot:

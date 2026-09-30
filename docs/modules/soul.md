@@ -6,6 +6,8 @@
 
 ## 概述
 
+推荐导演通过公共纯函数 `profile_views.build_director_profile_view(profile, fast=False)` 消费有效画像：稳定兴趣／内容风格／完整避雷与近期觉察／洞察分开，用户否定的洞察不再进入此视图；`fast=True` 为 Jev 的较小投影。它不含 `personality_portrait`，不修改画像，不增加后台推理调用。具体字段及工程容量见[导演上下文](director.md)与[使用登记](../profile-usage.md)。
+
 `soul/` 包实现了用户理解的核心逻辑，包括：
 
 - **SoulEngine** — 编排器，从事件出发驱动各层分析

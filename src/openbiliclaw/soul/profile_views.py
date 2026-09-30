@@ -925,6 +925,60 @@ def compact_content_prompt_profile_summary(
     return compacted
 
 
+def build_director_profile_view(profile: SoulProfile, *, fast: bool = False) -> dict[str, object]:
+    """Recommendation-specific stable taste and recent concerns, without portrait.
+
+    Engineering context caps (not calibrated): fast decisions retain 12 interests
+    and 3 recent observations, slow planning 32 and 6. Explicit dislikes are never
+    truncated. Caller payload limits must reject oversize inputs, not erase bans.
+    """
+    summary = compact_content_prompt_profile_summary(
+        build_profile_summary(profile, exclude_archived_topics=True)
+    )
+    stable = {
+        key: summary[key]
+        for key in (
+            "cognitive_style",
+            "core_traits",
+            "values",
+            "deep_needs",
+            "style",
+            "context",
+            "exploration_openness",
+            "source_platform_mix",
+        )
+    }
+    for key in ("cognitive_style", "core_traits", "values", "deep_needs"):
+        stable[key] = _cap_profile_sequence(stable[key], 4 if fast else 8)
+    stable["interests"] = _cap_weighted_profile_dicts(summary["interests"], 12 if fast else 32)
+    stable["interest_domains"] = _cap_weighted_profile_dicts(
+        summary["interest_domains"], 6 if fast else 12
+    )
+    stable["disliked_topics"] = list(profile.preferences.disliked_topics)
+    recent = {
+        "current_phase": summary["current_phase"],
+        "life_stage": summary["life_stage"],
+        "awareness": _cap_profile_sequence(
+            summary["recent_awareness"], 3 if fast else 6, newest=True
+        ),
+        "insights": [
+            {
+                "hypothesis": insight.hypothesis,
+                "evidence": insight.evidence[:4],
+                "confidence": insight.confidence,
+                "validated": insight.validated,
+                "user_verdict": insight.user_verdict,
+            }
+            for insight in profile.active_insights
+            if insight.user_verdict != "rejected"
+        ][-(3 if fast else 6) :],
+        "speculative_interests": _cap_profile_sequence(
+            summary.get("speculative_interests", []), 3 if fast else 6
+        ),
+    }
+    return {"schema_version": "director-profile.v1", "stable": stable, "recent": recent}
+
+
 def _coerce_query_embedding_vector(value: object) -> list[float]:
     if not isinstance(value, list):
         return []

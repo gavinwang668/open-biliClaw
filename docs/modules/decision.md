@@ -17,6 +17,11 @@
 runtime ── 共享有界准入、总截止时间、熔断与取消回收
 ```
 
+导演调用的 `session_context` 包含命名推荐画像快视图、最近三屏真实经历和语义反馈。
+pair / audit / repair question schema 已升级为 v2；导演 Jev 输入总上限为 64,000 UTF-8
+字节（不是 token 限额或 SLA），独立过滤仍是原来的 24,000 字节。超限有因回退，不
+静默删掉避雷项。画像／历史卡片不能扩大程序提供的合法选项集合，详见[导演上下文](director.md)。
+
 Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMProvider.complete()`，
 也不加入 `[llm]` 的全局或模块 fallback 链。它返回判断证据，不直接改候选池、曝光历史、
 推荐草稿或用户画像。调用方拥有业务阈值、最终约束校验、降级与提交权限。

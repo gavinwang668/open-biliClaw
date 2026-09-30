@@ -640,7 +640,7 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 
 推荐交互：`主 API → 默认独立推荐进程 → 当前 SQLite 候选 → 完整排序 → 原子提交 → 卡片 + 总量/平台库存`；主 API 桥接库存事件，后台补货由有客户端时的库存观察任务同步。
 
-可选推荐导演（默认关闭）：`shortlist + 真实反馈 → Jev 逐对 / Agent+Jev 修补 / 纯 Agent 预排 → 最新准入复核 → 整屏原子提交 → 实际可见 ACK → 后续草稿`。Jev 是独立 decision provider，也可单独用于发现阶段语义过滤；不加入聊天 LLM fallback。三种 Web 表面与 CLI 保留屏身份和精确反馈，配置通过 TOML。未声称真实模型质量已验证，见[决策模块](docs/modules/decision.md)与[导演运行时](docs/modules/director.md)。
+可选推荐导演（默认关闭）：`推荐画像 + 最近三屏真实经历 + shortlist → Jev 逐对 / Agent+Jev 修补 / 纯 Agent 预排 → 最新准入复核 → 整屏原子提交 → 实际可见 ACK → 后续草稿`。Jev 是独立 decision provider，也可单独用于发现阶段语义过滤；不加入聊天 LLM fallback。三种 Web 表面与 CLI 保留屏身份和精确反馈，配置通过 TOML。未声称真实模型质量已验证，见[决策模块](docs/modules/decision.md)与[导演运行时](docs/modules/director.md)。
 
 完整的架构总览 ASCII 图（runtime 并发闸门、Agent 编排层、多源适配、发现 / 推荐 / 保存链路）已拆分到单独文档，避免 README 过长：
 

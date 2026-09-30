@@ -74,6 +74,7 @@ class HorizonPlan(_Model):
     planning_feedback_cursor: _Key
     planning_feedback_event_refs: tuple[_Key, ...] = Field(default=(), max_length=8)
     planning_explicit_intent: str = Field(default="", max_length=500)
+    planning_profile_digest: str = Field(default="", max_length=64)
     planning_input_digest: _Key
     candidate_set_ref: _Key
     feature_schema_version: _Key

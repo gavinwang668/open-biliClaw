@@ -6,10 +6,10 @@ import hashlib
 import json
 from typing import Annotated, Final, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 COMPOSITION_SCHEMA_VERSION: Final = "pair-composition.v1"
-PAIR_QUESTION_VERSION: Final = "director-choose-pair.v1"
+PAIR_QUESTION_VERSION: Final = "director-choose-pair.v2"
 PAIR_POLICY_VERSION: Final = "topic-quota-pairs.v1"
 
 _Ref = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")]
@@ -85,6 +85,38 @@ class ScreenConstraints(_FrozenModel):
         return self
 
 
+class FeedbackContent(_FrozenModel):
+    """Immutable semantic identity of a past card; never a new candidate."""
+
+    ref: _Ref
+    title: str = Field(max_length=120)
+    summary: str = Field(default="", max_length=160)
+    topic_group: str = Field(default="", max_length=80)
+    content_style: str = Field(default="", max_length=80)
+    source_platform: str = Field(default="", max_length=32)
+
+
+class ScreenAction(_FrozenModel):
+    event_ref: _Key
+    kind: Literal["click", "like", "dislike", "skip", "explicit_request"]
+    note: str = Field(default="", max_length=256)
+    occurred_at: float = Field(ge=0)
+
+
+class ExperiencedCard(FeedbackContent):
+    position: int = Field(ge=1, le=20)
+    exposure_confirmed: bool = False
+    exposure_at: float | None = Field(default=None, ge=0)
+    actions: tuple[ScreenAction, ...] = Field(default=(), max_length=4)
+
+
+class RecentScreen(_FrozenModel):
+    batch_ref: _Key
+    direction: str = Field(max_length=500)
+    committed_at: float = Field(ge=0)
+    cards: tuple[ExperiencedCard, ...] = Field(max_length=20)
+
+
 class RealFeedback(_FrozenModel):
     """Caller-supplied actual event, never synthesized from a tentative pair.
 
@@ -98,6 +130,8 @@ class RealFeedback(_FrozenModel):
     batch_ref: _Key
     kind: Literal["presented", "click", "like", "dislike", "skip", "explicit_request"]
     description: str = Field(max_length=256)
+    occurred_at: float = Field(default=0, ge=0)
+    content: tuple[FeedbackContent, ...] = Field(default=(), max_length=20)
 
 
 class CompositionSession(_FrozenModel):
@@ -110,6 +144,27 @@ class CompositionSession(_FrozenModel):
     configuration_revision: _Revision
     explicit_intent: str = Field(default="", max_length=500)
     real_feedback: tuple[RealFeedback, ...] = Field(default=(), max_length=8)
+    profile_context: dict[str, JsonValue] = Field(default_factory=dict)
+    fast_profile_context: dict[str, JsonValue] = Field(default_factory=dict)
+    recent_screens: tuple[RecentScreen, ...] = Field(default=(), max_length=3)
+
+    @property
+    def profile_digest(self) -> str:
+        return digest(self.profile_context) if self.profile_context else ""
+
+    def prompt_context(self, *, fast: bool = False) -> dict[str, JsonValue]:
+        """One projection used by all models; fast calls omit historical summaries."""
+        data = self.model_dump(mode="json", exclude={"fast_profile_context"})
+        data["context_schema_version"] = "director-context.v1"
+        if fast:
+            data["profile_context"] = self.fast_profile_context or self.profile_context
+            for screen in data["recent_screens"]:
+                for card in screen["cards"]:
+                    card.pop("summary", None)
+            for feedback in data["real_feedback"]:
+                for card in feedback["content"]:
+                    card.pop("summary", None)
+        return data
 
     @model_validator(mode="after")
     def _unique_events(self) -> Self:

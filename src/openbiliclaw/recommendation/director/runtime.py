@@ -14,6 +14,7 @@ from openbiliclaw.config import decision_routes_enabled
 from openbiliclaw.decision.registry import build_decision_provider
 from openbiliclaw.decision.runtime import BoundedDecisionProvider
 from openbiliclaw.discovery.semantic_filter import JevSemanticFilter
+from openbiliclaw.soul.profile_views import build_director_profile_view
 
 from .composer import PairComposer
 from .controller import DirectorController, plan_needs_replanning
@@ -149,6 +150,7 @@ class DirectorRuntime:
         snapshot: DirectorCandidateSnapshot,
         *,
         explicit_intent: str,
+        profile: SoulProfile,
     ) -> CompositionRequest:
         session = self.store.session(claim.stream_ref)
         if (
@@ -165,6 +167,7 @@ class DirectorRuntime:
             direction_ref=claim.direction_ref,
             direction=claim.direction,
             explicit_intent=explicit_intent,
+            profile=profile,
         )
 
     def _build_request(
@@ -177,6 +180,7 @@ class DirectorRuntime:
         direction_ref: str,
         direction: str,
         explicit_intent: str,
+        profile: SoulProfile,
     ) -> CompositionRequest:
         cards = tuple(
             CompositionCard(
@@ -201,6 +205,11 @@ class DirectorRuntime:
                 configuration_revision=session.configuration_revision,
                 explicit_intent=explicit_intent,
                 real_feedback=session.real_feedback,
+                recent_screens=session.recent_screens,
+                profile_context=json.loads(json.dumps(build_director_profile_view(profile))),
+                fast_profile_context=json.loads(
+                    json.dumps(build_director_profile_view(profile, fast=True))
+                ),
             ),
             candidate_set_ref="serving_" + digest([card.model_dump(mode="json") for card in cards]),
             candidate_revision=session.state_revision,
@@ -286,7 +295,7 @@ class DirectorRuntime:
                     excluded_keys=excluded_keys | frozenset(claim.excluded_item_keys),
                 )
                 request = await asyncio.to_thread(
-                    self._request, claim, snapshot, explicit_intent=explicit_intent
+                    self._request, claim, snapshot, explicit_intent=explicit_intent, profile=profile
                 )
                 stored = await asyncio.to_thread(
                     self.store.load_plan, stream_ref, include_stale=True
@@ -466,6 +475,7 @@ class DirectorRuntime:
                 direction_ref="direction_" + digest(intent or "current")[:24],
                 direction=intent or "结合当前兴趣与实际反馈安排接下来的几屏",
                 explicit_intent=intent,
+                profile=profile,
             )
             stored = await asyncio.to_thread(self.store.load_plan, stream, include_stale=True)
             result = await self.planner.plan(

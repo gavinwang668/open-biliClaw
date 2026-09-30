@@ -57,7 +57,7 @@ async def test_composer_consumes_real_jev_adapter_over_mock_transport(fail_middl
         prefix: list[str] = []
         for body, trace in zip(bodies, proposal.pairs, strict=True):
             assert body["state"]["tentative_prefix"] == prefix
-            assert body["state"]["session_context"] == request.session.model_dump(mode="json")
+            assert body["state"]["session_context"] == request.session.prompt_context(fast=True)
             assert trace.evidence_json is not None
             evidence = json.loads(trace.evidence_json)
             assert evidence["provider"] == "jev"

@@ -34,6 +34,8 @@ def plan_needs_replanning(
     """
     if horizon.planning_explicit_intent != request.session.explicit_intent:
         return True
+    if horizon.planning_profile_digest != request.session.profile_digest:
+        return True
     if strategy != "agent_only":
         return False
     if (

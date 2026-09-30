@@ -131,7 +131,7 @@ async def test_pair_calls_recur_on_prefix_without_inventing_real_feedback() -> N
     for index, (decision, trace) in enumerate(zip(provider.requests, proposal.pairs, strict=True)):
         state = cast("dict[str, object]", decision.state)
         assert state["tentative_prefix"] == list(proposal.card_refs[: index * 2])
-        assert state["session_context"] == request.session.model_dump(mode="json")
+        assert state["session_context"] == request.session.prompt_context(fast=True)
         assert state["remaining_count"] == 6 - index * 2
         assert trace.prefix_refs == tuple(state["tentative_prefix"])
         assert trace.decision_input_digest == decision.input_digest
@@ -165,12 +165,12 @@ async def test_pair_question_golden_binds_static_instructions_and_exact_dynamic_
     provider = _RecordingProvider()
     await PairComposer(provider).prepare_next(_request(target=2))
     decision = provider.requests[0]
-    assert decision.question_schema_version == "director-choose-pair.v1"
+    assert decision.question_schema_version == "director-choose-pair.v2"
     # Includes policy/schema, the complete prompt, snapshot digests and exact
     # option ordering; excludes runtime request identity/deadline. Deliberate
     # prompt/transport changes require reviewing this golden and schema version.
     assert (
-        decision.input_digest == "553886235071cf9910b926e270a94181dd201f4c02381c40aeb1407a402c91bf"
+        decision.input_digest == "f4b1cdf7e356f5ac454a908176284158ebc14c12904c96ed42333234409ae076"
     )
 
     changed_provider = _RecordingProvider()
@@ -461,6 +461,13 @@ async def test_oversized_utf8_payload_falls_back_without_provider_call() -> None
         for card in request.cards
     )
     request = request.model_copy(update={"cards": cards})
+    request = request.model_copy(
+        update={
+            "session": request.session.model_copy(
+                update={"profile_context": {"stable": {"disliked_topics": ["禁" * 100] * 256}}}
+            )
+        }
+    )
     provider = _RecordingProvider()
     proposal = await PairComposer(provider).prepare_next(request)
     assert proposal.provider_calls == 0
