@@ -23,8 +23,9 @@
 |---|---|
 | `DirectorStore.begin/commit/restore` | 按需创建 director_streams / requests / batches / batch_items / plans；短 `BEGIN IMMEDIATE` 原子重验并消费整屏，批次不可变，模型调用不占锁 |
 | `DirectorStore.present/feedback` | director_feedback 与 projected_events 去重，实际可见才呈现；点击／反馈引用原 event ID，版本与游标单调推进 |
-| `DirectorStore.session` | 在同一事务拼接状态、语义反馈及最近三屏真实经历；从批次冻结内容与 receipt 的 item_keys 精确关联。增加 stream/created 与 feedback batch/created 查询索引，旧数据按需读取，无事件重写 |
+| `DirectorStore.session` | 在同一事务拼接状态、语义反馈、最近三屏真实经历与完整历史偏好水位；从批次冻结内容与 receipt 的 item_keys 精确关联。使用 stream/created、feedback batch/created 与偏好回执版本索引，旧数据按需读取，无事件重写 |
 | `save_plan/load_plan/activate_context` | 未提交计划 TTL / CAS / epoch；同配置重建保留草稿，配置换代废弃未来状态，不改历史屏 |
+| 导演计划与批次 JSON | 保存屏 brief、配对 role / intent、策略版本与 `screen_review`；沿用既有 plan / trace JSON，不新增 SQL 列、不改写旧载荷 |
 | `Database.defer_claimed_semantic_filter_candidates` | token-fenced 本轮延期，不惩罚 attempts；后续一次强制完整 LLM 复审，不形成永久黑名单 |
 | 独立过滤审计 | discovery_semantic_filter_audit 只保存 hashes / 模型 / schema / 校准归因与真实标签，保留 30 天且最多 20,000 行 |
 
@@ -35,6 +36,27 @@
 `exposure_confirmed=false` 和空曝光时间，不丢失行为也不虚构曝光确认。存量 v1 反馈在
 读取时从 receipt 与不可变批次补语义，原事件、学习信号和批次不重写；旧计划缺少画像摘要
 时在下次生成自动重排。无需人工数据迁移，源码、Docker、桌面安装共用此路径。
+
+屏幕策略版本为 `director-screen-policy.v1`。旧 `HorizonPlan` JSON 缺失的新字段仍可解析，
+但没有当前 `planning_policy_version` 的未来计划会在生成入口重排；这不是改写历史批次。
+策略版本也参与 runtime context digest，通过既有 epoch / fence 拒绝旧策略在飞写入。
+`ScreenBrief.revise_when` 仅保存可审计的软说明，不在数据库执行模型提供的规则。
+批次 `trace_json` 中的 `screen_review` 只报告规范化标题完全重复，并固定标记
+`semantic_quality=not_certified`，不能当作语义质量验收或用户满意度标签。字段增加不改变
+幂等、CAS、实际曝光投影或安装依赖。
+
+`SessionSnapshot.latest_preference_revision` 在同一读事务内查询所有非 `presented / click`
+回执的最大状态版本，没有此类回执时为 `0`。新增 partial expression index
+`idx_director_feedback_preference_revision` 支持该查询，不增加表／列、不重写旧回执。
+它仅供 Controller 判断纯 Agent 计划是否过期，不进入模型 prompt：密集 ACK／点击不会因
+4+4 窗口截断而平白触发重排，也不能掩盖窗口外的新偏好反馈。离线输入没有权威水位时保持
+严格事件覆盖检查，缺口保守重排；`skip` 被保守纳入水位不表示认定用户不喜欢。
+
+同一水位查询同时返回最新非 `presented / click` 回执，供 `real_feedback` 在现有 4 个动作槽内
+保护这条反馈：若不在最近四条动作中，用它替换最旧动作，保留三条最新动作与该反馈；最新
+4 条曝光 ACK 不变，总数仍不超过 8。合并后按真实时间排序，原 event ref、类型、备注与
+冻结卡片语义保留；不新增查询、不改写事件。模型能读到触发重排的实际原因，而不仅是程序
+知道水位变化；每张历史卡自身的最近 4 条 actions 窗口不因此扩大。
 
 `storage/migration.py` 把运行中的用户状态导出为格式版本 1 的 `openbiliclaw-user-data` 包，文件扩展名为 `.obcbackup`。容器本质是标准 ZIP，**没有密码和加密**；`manifest.json` 明确写入 `contains_secrets=true`、`encrypted=false`，并为每个允许成员记录路径、类型、字节数与 SHA-256。导出 SQLite 时不直接复制可能正在写入的主文件，而是以只读 URI 打开源库、用 SQLite online backup API 生成一致快照并执行 `PRAGMA integrity_check`；其它文件复制前后会核对 stat / digest，持续变化时拒绝生成伪一致快照。目录遍历会在进入前剪枝排除根、采用独立扫描上限，并在复制前、复制流中和 ZIP 写入时逐层执行容量限制；ZIP 完成后立即删除最多 8 GB 的未压缩 snapshot，只在一次受全程互斥保护的下载期间保留最多 2 GB 的 archive。
 

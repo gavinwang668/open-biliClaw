@@ -18,7 +18,7 @@ runtime ── 共享有界准入、总截止时间、熔断与取消回收
 ```
 
 导演调用的 `session_context` 包含命名推荐画像快视图、最近三屏真实经历和语义反馈。
-pair / audit / repair question schema 已升级为 v2；导演 Jev 输入总上限为 64,000 UTF-8
+pair / audit / repair question schema 当前为 v3；导演 Jev 输入总上限为 64,000 UTF-8
 字节（不是 token 限额或 SLA），独立过滤仍是原来的 24,000 字节。超限有因回退，不
 静默删掉避雷项。画像／历史卡片不能扩大程序提供的合法选项集合，详见[导演上下文](director.md)。
 
@@ -27,8 +27,16 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 推荐草稿或用户画像。调用方拥有业务阈值、最终约束校验、降级与提交权限。
 
 同一请求中的问题独立求值；第二题不会自动看到第一题的输出。[离线导演内核](director.md)
-已按“两张一组”递推编排：选择一个合法 `pair_id`，由应用更新已选前缀后再调用下一步，不能把
+已按“两张一组”递推编排：在同一个 Choice 中联合选择合法 pair 和软角色，由应用更新已选前缀后再调用下一步，不能把
 独立的两个单卡 Choice 当作有条件依赖的二卡选择。模型不持有本项目的跨请求会话状态。
+
+三策略共用 `recommendation/director/policy.py` 的屏目标／证据／角色指令与 `screen_policy`
+状态。纯 Jev 从保守 brief 开始：明确意图存在时 `follow_intent`，否则 `browse`，不推断心理状态。
+最多 16 个合法 pair 展开为 64 个 pair / role 选项，再加 `none_suitable`，仍是每步一次调用；
+角色为 `anchor / complement / exploration / open`，不新增硬配额。混合模式审查／修补同时携带
+当前 pair 的 intent / role、剩余草稿与失效引用，以判断对整屏的增量价值。指令内整屏自检没有
+新增模型调用；本地 `screen_review` 只检查规范化标题完全重复，不能认证语义质量。调用数、
+截止时间和输入字节预算不变；拒选继续走有因回退。独立过滤不使用该编排策略，合同不变。
 
 ## 已实现功能
 
@@ -39,6 +47,7 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | 有界 HTTP 请求 | 已实现 | 总 deadline、有限重试、明确错误原因、取消传播 |
 | 独立配置 | 已实现 | 默认关闭；只保存凭据环境变量名，不保存实际 key |
 | 三策略导演调用者 | 已实现 | `PairComposer` 逐对决策，混合模式审查／修补；Agent-only 编排不调用 Jev |
+| 共享屏目标与角色 | 已实现 | `screen_policy` 区分事实／假设／未知；一次 pair / role 联合选择或保留职责的局部修补，不新增语义质量保证 |
 | 独立过滤与运行时 | 已实现 | 独立 shadow / enforce、真实标签审计与延期重审；运行时共享并发闸与熔断 |
 | 图形界面设置与服务探测 | 未提供 | 首版仅配置文件、`config-show` 和开发者接口 |
 | 线上质量 / 中文效果 / 时延保证 | 未验证 | 离线 fixture 不等于真实模型验收；本轮未调用付费 API |
@@ -51,6 +60,7 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 |---|---|
 | `DecisionRequest` | `request_id`、`purpose`、`question_schema_version`、JSON `state`、具名 `questions` 和可选 `deadline_monotonic` |
 | `DecisionPurpose` | `FILTER` / `CHOOSE_PAIR` / `AUDIT_DRAFT` / `REPAIR_PAIR`，仅用于归因，不自动实现对应业务流程或阈值 |
+| 导演 `DecisionRequest.state.screen_policy` | 带 brief、证据强度、已选／剩余角色和可用主题摘要；是调用方的软编排合同，不授予 provider 修改准入、计划或数据库的权限 |
 | `DecisionRequest.input_digest` | 对 purpose / schema / state / questions 做 canonical JSON SHA-256；不包含请求 ID 和 deadline。模型归因独立保存，不可仅凭此摘要跨模型复用结果 |
 | `DecisionProvider.evaluate(request)` | 异步返回 `DecisionEvidence`；provider 不拥有业务副作用 |
 | `ChoiceQuestion` | `instructions` + `criteria`（选项 ID → 描述）；答案必须属于本次合法选项，最多 255 项 |

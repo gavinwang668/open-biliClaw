@@ -8,8 +8,10 @@ from typing import Annotated, Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
+from .policy import PairRole, ScreenBrief, ScreenReview, pair_role_choices
+
 COMPOSITION_SCHEMA_VERSION: Final = "pair-composition.v1"
-PAIR_QUESTION_VERSION: Final = "director-choose-pair.v2"
+PAIR_QUESTION_VERSION: Final = "director-choose-pair.v3"
 PAIR_POLICY_VERSION: Final = "topic-quota-pairs.v1"
 
 _Ref = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")]
@@ -147,6 +149,9 @@ class CompositionSession(_FrozenModel):
     profile_context: dict[str, JsonValue] = Field(default_factory=dict)
     fast_profile_context: dict[str, JsonValue] = Field(default_factory=dict)
     recent_screens: tuple[RecentScreen, ...] = Field(default=(), max_length=3)
+    # Authoritative store aggregate, not an inference from the bounded prompt
+    # history. None means an offline caller cannot prove full event coverage.
+    latest_preference_revision: _Revision | None = None
 
     @property
     def profile_digest(self) -> str:
@@ -154,7 +159,9 @@ class CompositionSession(_FrozenModel):
 
     def prompt_context(self, *, fast: bool = False) -> dict[str, JsonValue]:
         """One projection used by all models; fast calls omit historical summaries."""
-        data = self.model_dump(mode="json", exclude={"fast_profile_context"})
+        data = self.model_dump(
+            mode="json", exclude={"fast_profile_context", "latest_preference_revision"}
+        )
         data["context_schema_version"] = "director-context.v1"
         if fast:
             data["profile_context"] = self.fast_profile_context or self.profile_context
@@ -170,6 +177,11 @@ class CompositionSession(_FrozenModel):
     def _unique_events(self) -> Self:
         if len({event.event_ref for event in self.real_feedback}) != len(self.real_feedback):
             raise ValueError("duplicate feedback event")
+        if (
+            self.latest_preference_revision is not None
+            and self.latest_preference_revision > self.state_revision
+        ):
+            raise ValueError("preference watermark exceeds observed state")
         return self
 
 
@@ -233,6 +245,9 @@ class PairTrace(_FrozenModel):
     selected_refs: tuple[_Ref, ...] = Field(min_length=1, max_length=2)
     origin: Literal["decision", "deterministic"]
     reason_code: _Key
+    role: PairRole = "open"
+    intent: str = Field(default="", max_length=240)
+    selected_option_id: str | None = Field(default=None, max_length=128)
     decision_request_id: str | None = None
     decision_input_digest: str | None = None
     evidence_json: str | None = None
@@ -245,6 +260,18 @@ class PairTrace(_FrozenModel):
             raise ValueError("reserved abstention alternative ID")
         if self.selected_refs not in tuple(option.card_refs for option in self.alternatives):
             raise ValueError("selected cards are not an offered alternative")
+        if self.selected_option_id is not None:
+            choice = pair_role_choices(self.alternatives).get(self.selected_option_id)
+            if (
+                choice is None
+                or choice[0].card_refs != self.selected_refs
+                or choice[1] != self.role
+            ):
+                raise ValueError("selected role must bind to the exact offered pair choice")
+        elif self.role != "open":
+            raise ValueError("an assigned role needs joint-choice attribution")
+        if self.origin == "deterministic" and self.selected_option_id is not None:
+            raise ValueError("deterministic fallback cannot claim a model role choice")
         if len(set(self.prefix_refs)) != len(self.prefix_refs):
             raise ValueError("duplicate prefix card")
         if any(set(self.prefix_refs) & set(option.card_refs) for option in self.alternatives):
@@ -276,6 +303,8 @@ class ScreenProposal(_FrozenModel):
     pairs: tuple[PairTrace, ...]
     provider_calls: int = Field(ge=0, le=10)
     reason_code: _Key
+    brief: ScreenBrief | None = None
+    screen_review: ScreenReview | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:

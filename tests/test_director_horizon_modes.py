@@ -38,6 +38,7 @@ from openbiliclaw.recommendation.director.models import (
     digest,
 )
 from openbiliclaw.recommendation.director.planner import HorizonPlanner
+from openbiliclaw.recommendation.director.policy import DIRECTOR_POLICY_VERSION
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -112,6 +113,7 @@ def _horizon(request: CompositionRequest, screens: int = 3) -> HorizonPlan:
         stream_ref=request.session.stream_ref,
         configuration_revision=request.session.configuration_revision,
         planning_state_revision=request.session.state_revision,
+        planning_policy_version=DIRECTOR_POLICY_VERSION,
         planning_feedback_cursor=request.session.feedback_cursor,
         planning_explicit_intent=request.session.explicit_intent,
         planning_input_digest=request.input_digest,

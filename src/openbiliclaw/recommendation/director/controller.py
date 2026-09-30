@@ -16,6 +16,7 @@ from .horizon_models import (
     freeze_request,
 )
 from .models import CompositionRequest, ScreenProposal, digest
+from .policy import DIRECTOR_POLICY_VERSION, build_screen_brief, review_screen
 from .proposer import largest_feasible_count
 from .repair import DraftRepairer
 
@@ -29,15 +30,25 @@ def plan_needs_replanning(
     """Whether the slow path must replace this horizon before its next execution.
 
     A new explicit direction invalidates both Agent modes. Hybrid can audit
-    smaller real-feedback changes locally; pure Agent cannot. Expected exposure
-    acknowledgements alone do not discard a multi-screen plan.
+    smaller feedback changes locally. Pure Agent preserves a plan for a fully
+    explained window of exposure/weak-click events, not for missing evidence.
     """
+    if horizon.planning_policy_version != DIRECTOR_POLICY_VERSION:
+        return True
     if horizon.planning_explicit_intent != request.session.explicit_intent:
         return True
     if horizon.planning_profile_digest != request.session.profile_digest:
         return True
     if strategy != "agent_only":
         return False
+    watermark = request.session.latest_preference_revision
+    if watermark is not None:
+        # SQLite computes this across all stored feedback in the same snapshot;
+        # a burst of ACKs/clicks cannot hide a prior explicit preference change.
+        return (
+            request.session.state_revision < horizon.planning_state_revision
+            or watermark > horizon.planning_state_revision
+        )
     if (
         horizon.planning_state_revision == request.session.state_revision
         and horizon.planning_feedback_cursor == request.session.feedback_cursor
@@ -48,10 +59,16 @@ def plan_needs_replanning(
         for event in request.session.real_feedback
         if event.event_ref not in horizon.planning_feedback_event_refs
     )
-    # Presentation of the preceding committed screen is expected while a
-    # multi-screen plan executes; it is not a positive/negative preference. If
-    # the bounded history cannot explain a state change, conservatively replan.
-    return not new_events or any(event.kind != "presented" for event in new_events)
+    # One non-noop receipt advances the state once, even when it contains many
+    # card events. Cursors may jump or stay unchanged for late-ingested events;
+    # their numeric distance does not count receipts. Truncated history cannot
+    # establish that all intervening changes were merely weak clicks/ACKs.
+    revision_delta = request.session.state_revision - horizon.planning_state_revision
+    return (
+        revision_delta != len(new_events)
+        or not new_events
+        or any(event.kind not in {"presented", "click"} for event in new_events)
+    )
 
 
 class DirectorController:
@@ -196,6 +213,8 @@ class DirectorController:
                 "plan_revision": updated.revision,
                 "screen_id": screen.screen_id,
                 "screen_revision": screen.revision,
+                "brief": screen.brief or build_screen_brief(frozen),
+                "screen_review": review_screen(frozen.cards, screen.card_refs),
             }
         )
         return DirectorResult(
@@ -233,10 +252,14 @@ class DirectorController:
                     selected_refs=pair.selected_refs,
                     origin=pair.origin,
                     reason_code=pair.reason_code,
+                    role=pair.role,
+                    intent=pair.intent,
                     evidence_json=pair.evidence_json,
                 )
                 for pair in proposal.pairs
             ),
             provider_calls=proposal.provider_calls,
             reason_code=reason or proposal.reason_code,
+            brief=proposal.brief,
+            screen_review=proposal.screen_review,
         )

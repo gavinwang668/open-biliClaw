@@ -12,6 +12,7 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .models import CompositionCard, CompositionRequest, digest
+from .policy import PairRole, ScreenBrief, ScreenReview  # noqa: TC001 - Pydantic runtime types
 
 DirectorStrategy = Literal["jev_recurrent", "agent_jev", "agent_only"]
 _Ref = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")]
@@ -29,6 +30,7 @@ class PlannedPair(_Model):
 
     card_refs: tuple[_Ref, ...] = Field(min_length=1, max_length=2)
     intent: str = Field(default="", max_length=240)
+    role: PairRole = "open"
 
     @model_validator(mode="after")
     def _distinct(self) -> Self:
@@ -46,6 +48,7 @@ class ScreenDraft(_Model):
     direction: str = Field(min_length=1, max_length=500)
     target_count: int = Field(ge=1, le=20)
     pairs: tuple[PlannedPair, ...] = Field(max_length=10)
+    brief: ScreenBrief | None = None
 
     @property
     def card_refs(self) -> tuple[str, ...]:
@@ -75,6 +78,7 @@ class HorizonPlan(_Model):
     planning_feedback_event_refs: tuple[_Key, ...] = Field(default=(), max_length=8)
     planning_explicit_intent: str = Field(default="", max_length=500)
     planning_profile_digest: str = Field(default="", max_length=64)
+    planning_policy_version: str = Field(default="", max_length=64)
     planning_input_digest: _Key
     candidate_set_ref: _Key
     feature_schema_version: _Key
@@ -119,6 +123,8 @@ class DirectorPair(_Model):
     selected_refs: tuple[_Ref, ...] = Field(min_length=1, max_length=2)
     origin: Literal["agent", "decision", "deterministic"]
     reason_code: _Key
+    role: PairRole = "open"
+    intent: str = Field(default="", max_length=240)
     audit_evidence_json: str | None = None
     evidence_json: str | None = None
 
@@ -163,6 +169,8 @@ class DirectorProposal(_Model):
     pairs: tuple[DirectorPair, ...]
     provider_calls: int = Field(ge=0, le=10)
     reason_code: _Key
+    brief: ScreenBrief | None = None
+    screen_review: ScreenReview | None = None
     plan_id: _Ref | None = None
     plan_revision: int | None = Field(default=None, ge=0)
     screen_id: _Ref | None = None

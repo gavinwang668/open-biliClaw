@@ -1,10 +1,26 @@
 # 推荐导演实施进度
 
-更新：2026-09-30。最新工作分支：`feat/director-context`，基于 `feat/jev-decision-provider` 的 `3f7f3bfd`。
+更新：2026-09-30。最新工作分支：`feat/director-screen-policy`，基于 `feat/director-context` 的 `e86105b1`。
 
 架构依据：[三模式方案](2026-09-26-director-jev-modes.md)、[基础规格](2026-08-31-recommendation-director-spec.md)。
 
-## 当前增量：画像与短期会话上下文（2026-09-30）
+## 当前增量：共享屏幕编排策略（2026-09-30）
+
+- 三模式共享 `policy.py`：证据分层 → 屏幕任务 → 软角色 → 两卡增量价值 → 整屏自检 → 可撤销计划。每屏 brief 记录目标、已有证据引用、未知点和描述性失效条件；每对记录 role / intent。不是模型长篇推理日志。
+- Agent 一次调用输出具体多屏计划和上述决策结果；验证枚举、来源引用和候选约束。旧格式缺 brief 时保守补齐且明确 `source=conservative`，不伪称模型判断完整。
+- 纯 Jev 用明确意图／浏览建立保守目标，一次 Choice 联合选择 pair＋role（≤64 个选项加拒选），不增加调用次数。Jev 修补看到当前职责、已选角色和剩余草稿，保留局部意图；无适当替代则请求重新规划。
+- 实际可完成数量用于短屏最后一对检查。程序仅诊断规范化后完全相同的标题，固定 `semantic_quality=not_certified`；模型整屏自检仍是同一次调用中的指令，不是独立质量认证。
+- 纯 Agent 以同事务、完整历史的偏好 revision 水位区分普通曝光／点击与需重排的反馈，避免 4+4 窗口截断引起误判。最多四个动作槽同时保护最新非点击反馈，保证 Agent 能看到重排原因；skip 仍是模糊反馈。新增部分表达式索引，不新增表／列、不改写历史。
+- 策略版本写入计划和 runtime context digest，旧策略的未来计划及在飞写入失效；已提交屏不改。三端、CLI 和 OpenClaw 共用后端，无新配置／UI／安装依赖，默认仍关闭，未修改真实配置或调用付费模型。
+
+### 本增量最终验收
+
+- 最终代码树相关回归集 **1,436 passed / 78 warnings**（143.64 秒）：`tests/test_director_*.py`、`test_pair_*.py`、`test_decision_*.py`、`test_jev_*.py`、`test_semantic_filter.py`、`test_config.py`、`test_llm_concurrency.py`、`test_openclaw_*.py`、`test_recommendation_engine.py`、`test_recommendation_proxy_headers.py`、`test_profile_views*.py`、`test_soul_profile.py`。包含真实 Chromium 的导演桌面／移动协议测试和临时 SQLite；模型调用均为离线 fixture / mock，不是实际推荐效果验收。
+- 新增验收覆盖联合 pair＋role 精确归因、三模式落库与消费后保留角色、未知证据拒绝、保守兼容输出、局部修补职责及后缀语义、缺货尾对检查、连续 ACK／点击与显式反馈水位、同卡密集点击后保留明确要求、旧策略在飞提交隔离。
+- 全仓 `ruff check src/ tests/`、变更 Python 文件格式检查、`mypy src/`（316 文件）、`git diff --check` 通过。`python scripts/replay_director_pairs.py` 离线回放成功，报告 0 次网络调用。
+- 未运行全仓所有 pytest 文件，未合入 main 或发版；不能把相关集通过写成全仓全绿。真实中文推荐质量、满意度、成本与时延仍需另行授权评测。
+
+## 上一轮增量：画像与短期会话上下文（2026-09-30）
 
 - 三种模式统一接入命名推荐画像视图：稳定偏好、近期关注、全部明确避雷；Agent 完整预算、Jev 精简预算，不使用文学人格画像或聊天记忆。
 - 最近三屏真实经历按 stream 隔离，从不可变屏快照补齐标题／主题／来源与反馈语义；保留真实曝光时间、每卡最近四条动作。生成和预加载不算曝光，点击不等于喜欢，没有操作不等于不喜欢。

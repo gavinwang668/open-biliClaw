@@ -103,6 +103,11 @@ CREATE INDEX IF NOT EXISTS idx_director_feedback_stream_created
 CREATE INDEX IF NOT EXISTS idx_director_feedback_batch_created
     ON director_feedback(
         stream_ref, json_extract(NULLIF(feedback_json, ''), '$.batch_ref'), created_at);
+CREATE INDEX IF NOT EXISTS idx_director_feedback_preference_revision
+    ON director_feedback(
+        stream_ref, CAST(json_extract(receipt_json, '$.state_revision') AS INTEGER) DESC)
+    WHERE feedback_json <> ''
+        AND json_extract(NULLIF(feedback_json, ''), '$.kind') NOT IN ('presented', 'click');
 CREATE TABLE IF NOT EXISTS director_projected_events (
     event_id INTEGER PRIMARY KEY REFERENCES events(id),
     stream_ref TEXT NOT NULL,
@@ -146,6 +151,9 @@ class SessionSnapshot(_Record):
     latest_batch_ref: str | None = None
     real_feedback: tuple[RealFeedback, ...] = ()
     recent_screens: tuple[RecentScreen, ...] = ()
+    # A durable aggregate, not additional model-facing event history. None
+    # preserves compatibility for snapshots constructed without a store read.
+    latest_preference_revision: int | None = Field(default=None, ge=0)
 
 
 class GenerationClaim(_Record):
@@ -388,21 +396,43 @@ class DirectorStore:
 
     @classmethod
     def _snapshot(cls, conn: sqlite3.Connection, row: sqlite3.Row) -> SessionSnapshot:
+        # ACK/click bursts can push a preference out of the bounded model
+        # context. This indexed durable watermark establishes whether a plan
+        # has already incorporated every stronger receipt, without loading or
+        # transmitting the complete event history. Read it in the same writer
+        # transaction as the session revision and summarized feedback.
+        preference = conn.execute(
+            "SELECT CAST(json_extract(receipt_json, '$.state_revision') AS INTEGER) "
+            "AS preference_revision, feedback_json, receipt_json, created_at, "
+            "rowid AS event_rowid FROM director_feedback "
+            "WHERE stream_ref = ? AND feedback_json <> '' "
+            "AND json_extract(NULLIF(feedback_json, ''), '$.kind') "
+            "NOT IN ('presented', 'click') "
+            "ORDER BY CAST(json_extract(receipt_json, '$.state_revision') AS INTEGER) DESC "
+            "LIMIT 1",
+            (row["stream_ref"],),
+        ).fetchone()
         # Engineering summary cap: four actual actions plus four exposures.
-        # Per-card ACK bursts must not push the newest preference change out
-        # of the model's bounded context. Persisted event history is unchanged.
+        # Protect the latest non-click preference within the four action slots:
+        # otherwise a click burst could trigger replan via the watermark while
+        # hiding its actual reason from the model. Historical rows are unchanged.
         records: list[sqlite3.Row] = []
         for presented in (False, True):
-            records.extend(
-                conn.execute(
-                    "SELECT feedback_json, receipt_json, created_at, rowid AS event_rowid "
-                    "FROM director_feedback "
-                    "WHERE stream_ref = ? AND feedback_json <> '' AND "
-                    "(json_extract(NULLIF(feedback_json, ''), '$.kind') = 'presented') = ? "
-                    "ORDER BY created_at DESC, rowid DESC LIMIT 4",
-                    (row["stream_ref"], int(presented)),
-                ).fetchall()
-            )
+            group = conn.execute(
+                "SELECT feedback_json, receipt_json, created_at, rowid AS event_rowid "
+                "FROM director_feedback "
+                "WHERE stream_ref = ? AND feedback_json <> '' AND "
+                "(json_extract(NULLIF(feedback_json, ''), '$.kind') = 'presented') = ? "
+                "ORDER BY created_at DESC, rowid DESC LIMIT 4",
+                (row["stream_ref"], int(presented)),
+            ).fetchall()
+            if (
+                not presented
+                and preference is not None
+                and all(event["event_rowid"] != preference["event_rowid"] for event in group)
+            ):
+                group = [*group[:3], preference]
+            records.extend(group)
         records.sort(key=lambda event: (event["created_at"], event["event_rowid"]))
         enriched = []
         for event in records:
@@ -425,10 +455,13 @@ class DirectorStore:
             **{
                 name: row[name]
                 for name in SessionSnapshot.model_fields
-                if name not in {"real_feedback", "recent_screens"}
+                if name not in {"real_feedback", "recent_screens", "latest_preference_revision"}
             },
             real_feedback=tuple(enriched),
             recent_screens=cls._recent_screens(conn, row["stream_ref"]),
+            latest_preference_revision=(
+                int(preference["preference_revision"]) if preference is not None else 0
+            ),
         )
 
     def session(self, stream_ref: str) -> SessionSnapshot:

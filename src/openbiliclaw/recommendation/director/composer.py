@@ -25,6 +25,15 @@ from openbiliclaw.recommendation.director.models import (
     canonical_json,
     digest,
 )
+from openbiliclaw.recommendation.director.policy import (
+    DIRECTOR_POLICY_INSTRUCTIONS,
+    PAIR_ROLE_INTENTS,
+    PairRole,
+    build_policy_context,
+    build_screen_brief,
+    pair_role_choices,
+    review_screen,
+)
 from openbiliclaw.recommendation.director.proposer import (
     largest_feasible_count,
     propose_pairs,
@@ -54,6 +63,9 @@ _PAIR_INSTRUCTIONS = (
     "Never invent watch duration or fatigue; profile hypotheses are not explicit preferences. "
     "Select none_suitable if none of the alternatives is suitable. "
     "A final alternative may contain one card when one position remains."
+    " Choose a joint card-pair and role option. Unprefixed option IDs assign an open role; "
+    "role-prefixed IDs select the same cards for the named soft role. Neither a role label "
+    "nor model confidence certifies semantic quality. " + DIRECTOR_POLICY_INSTRUCTIONS
 )
 
 
@@ -75,6 +87,7 @@ def _decision_request(
     alternatives: tuple[PairAlternative, ...],
     target_count: int,
     deadline: float,
+    selected_roles: tuple[PairRole, ...] = (),
 ) -> DecisionRequest:
     referenced = set(prefix)
     referenced.update(ref for alternative in alternatives for ref in alternative.card_refs)
@@ -83,6 +96,13 @@ def _decision_request(
         + canonical_json(list(alternative.card_refs))
         for alternative in alternatives
     }
+    for key, (alternative, role) in pair_role_choices(alternatives).items():
+        if role != "open":
+            criteria[key] = (
+                PAIR_ROLE_INTENTS[role]
+                + " Append these card refs in order: "
+                + canonical_json(list(alternative.card_refs))
+            )
     criteria[_NONE_SUITABLE] = "None of the supplied alternatives is suitable."
     # The whole frozen snapshot is bound locally, but canonical item keys and
     # excluded identities are not transmitted. Policy metadata is explicit.
@@ -102,6 +122,13 @@ def _decision_request(
             "direction_ref": request.direction_ref,
             "screen_direction": request.direction,
             "session_context": request.session.prompt_context(fast=True),
+            "screen_policy": build_policy_context(
+                request,
+                brief=build_screen_brief(request),
+                prefix=prefix,
+                target_count=target_count,
+                selected_roles=selected_roles,
+            ),
             "tentative_prefix": list(prefix),
             "prefix_digest": digest(list(prefix)),
             "target_count": target_count,
@@ -126,6 +153,8 @@ class _DecisionResult:
     selected: PairAlternative | None
     reason_code: str
     evidence_json: str | None = None
+    role: PairRole = "open"
+    selected_option_id: str | None = None
 
 
 def _read_evidence(
@@ -179,13 +208,12 @@ def _read_evidence(
         return _DecisionResult(None, "invalid_evidence", evidence_json)
     if answer.choice == _NONE_SUITABLE:
         return _DecisionResult(None, "none_suitable", evidence_json)
-    selected = next(
-        (alternative for alternative in alternatives if alternative.option_id == answer.choice),
-        None,
-    )
+    selected = pair_role_choices(alternatives).get(answer.choice)
     if selected is None:
         return _DecisionResult(None, "invalid_evidence", evidence_json)
-    return _DecisionResult(selected, "provider_selected", evidence_json)
+    return _DecisionResult(
+        selected[0], "provider_selected", evidence_json, selected[1], answer.choice
+    )
 
 
 class PairComposer:
@@ -222,7 +250,9 @@ class PairComposer:
             alternatives = propose_pairs(frozen, prefix, target_count)
             if not alternatives:
                 raise RuntimeError("pair composition invariant failed")
-            decision = _decision_request(frozen, prefix, alternatives, target_count, deadline)
+            decision = _decision_request(
+                frozen, prefix, alternatives, target_count, deadline, tuple(t.role for t in traces)
+            )
             # Snapshot before crossing the adapter seam. An injected adapter
             # may mutate its argument's nested dictionaries despite frozen=True.
             expected = DecisionRequest.model_validate(
@@ -254,6 +284,9 @@ class PairComposer:
                     selected_refs=selected.card_refs,
                     origin="decision" if result.selected is not None else "deterministic",
                     reason_code=result.reason_code,
+                    role=result.role,
+                    intent=PAIR_ROLE_INTENTS[result.role],
+                    selected_option_id=result.selected_option_id,
                     decision_request_id=expected.request_id,
                     decision_input_digest=decision_digest,
                     evidence_json=result.evidence_json,
@@ -338,4 +371,6 @@ class PairComposer:
             pairs=traces,
             provider_calls=calls,
             reason_code=reason,
+            brief=build_screen_brief(request),
+            screen_review=review_screen(request.cards, refs),
         )

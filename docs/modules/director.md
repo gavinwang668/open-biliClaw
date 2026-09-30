@@ -7,7 +7,9 @@
 ```text
 候选池 → eligibility + 个性化分数 → topic 分层 shortlist（≤40）
                        ↓
-画像视图 + 最近三屏真实经历 → DirectorRuntime / Controller
+画像视图 + 最近三屏真实经历 → 共享屏目标 / 证据 / 角色策略
+                       ↓
+              DirectorRuntime / Controller
             ┌──────────┼──────────────┐
      jev_recurrent   agent_jev      agent_only
      二卡递推选择    Agent 多屏草稿   Agent 多屏草稿
@@ -27,9 +29,9 @@
 
 | 能力 | 合同 |
 |---|---|
-| `jev_recurrent` | 每次选中一个有序二卡组合，应用追加到 prefix 后再请求下一对；奇数屏允许单卡尾部，不读取 Agent 计划 |
-| `agent_jev` | 一次 Agent 调用生成最多三屏具体卡片、配对和方向；Jev 审查未来草稿，替换中间单卡或整对，重验受影响后缀和跨屏重复 |
-| `agent_only` | 执行 Agent 的具体多屏草稿，不调用 Jev；新偏好反馈／意图变化触发重新规划，正常 presentation 不等同偏好改变 |
+| `jev_recurrent` | 一次 Choice 联合选择有序二卡组合与软角色，应用追加到 prefix 后再请求下一对；奇数屏允许单卡尾部，不读取 Agent 计划 |
+| `agent_jev` | 一次 Agent 调用生成最多三屏具体卡片、brief 和配对角色；Jev 带原 intent / role 与剩余草稿审查，替换中间单卡或整对，重验受影响后缀和跨屏重复 |
+| `agent_only` | 执行 Agent 的具体多屏草稿，不调用 Jev；持久化反馈水位证明只有曝光／弱点击新增时可保留计划，偏好反馈或意图／画像变化重排；无权威水位的离线输入遇证据缺口保守重排 |
 | 幂等与提交 | request ID、stream、state revision、反馈游标、runtime epoch、generation fence、lease 和计划 CAS；整屏成功或全部不写 |
 | NEXT / STAY | NEXT 推进体验屏序号；STAY 保留根屏方向，记录 parent / patch 链，不把换一批误算新章节 |
 | 恢复与曝光 | GET 仅恢复精确顺序，不 top-up、不请求模型；提交消费库存但不是曝光，实际可见 ACK 才推进 presentation |
@@ -37,10 +39,28 @@
 | 失败与换代 | 模型故障、非法引用、超时或预算耗尽有因回退，取消传播；配置换代使旧草稿／在飞提交失效，已提交屏仍可恢复 |
 | 独立过滤 | `discovery.semantic_filter` 借用独立 decision provider，与导演开关正交；见 [discovery](discovery.md) |
 | 画像与短期上下文 | 三策略共用推荐画像、近期关注、最近三屏实际曝光／行为和卡片语义；画像内容变化使旧 Agent 计划失效 |
+| 共享屏幕策略 | `policy.py` 统一证据区分、屏任务、内容角色、逐对增量价值和整屏自检指令；简短决策结果入 trace，不保存长篇推理过程 |
+| 有界诊断 | `screen_review` 仅报告规范化标题重复，固定 `semantic_quality=not_certified`；不是语义质量认证 |
 
 “两个两个”不是两张卡打擂台，也不是一次调用的两个独立 Choice。模型没有本项目的跨请求隐状态；应用显式递推。未来草稿不是用户行为，候选文本不是指令。
 
-会话输入的反馈摘要固定最多 8 条：最近 4 条非 `presented` 的真实动作与最近 4 条曝光确认，合并后按发生时间排序。这是工程上下文容量，不是效果阈值；完整事件仍保留在数据库。逐卡 ACK 不会挤掉刚刚的 like/dislike；新偏好让纯 Agent 重排，已被计划捕获的动作不因后续正常 ACK 再次触发重排。
+会话输入的反馈摘要固定最多 8 条：最多 4 条近期非 `presented` 真实动作与最近 4 条曝光确认。动作槽内保护按状态版本最新的非 `presented / click` 回执；它若被点击挤出最近四条，就替换动作槽中最旧的一条，保持三条最新动作加这条反馈。最后合并按实际发生时间排序，保留原类型、引用、备注与卡片语义，不增加容量或伪造事件。这样重排时模型仍能读到原因，而不只看到程序的偏好水位；保护 `skip` 不代表将其认定为不喜欢。完整事件仍在数据库，窗口是工程容量而非效果阈值；已被计划捕获的动作不因后续正常 ACK 再次触发重排。
+
+### 屏幕编排策略（2026-09-30）
+
+三模式使用同一份静态 `DIRECTOR_POLICY_INSTRUCTIONS`：**区分事实／假设／未知 → 确定本屏任务 → 分配软角色 → 比较每对的增量价值 → 整屏自检 → 根据新证据修订未来草稿**。画像是先验，不能压过当下明确意图；点击只是弱线索、skip 含义不确定、无操作不是不喜欢。负反馈先作用于该内容或用户说明的原因，不自动扩大成整个主题禁令。每张卡应独立有用，不假定用户从左到右阅读或已经学会前屏内容。
+
+`ScreenBrief`（`screen-brief.v1`）记录本屏 `task`、`objective`、最多 8 个已有事件 `evidence_refs`、最多 3 条未知点、4 条软避让项及 `revise_when`。任务限于 `follow_intent / deepen / change_angle / browse / explore / redirect`；配对 `role` 限于 `anchor / complement / exploration / open`，另有简短 `intent`。角色数量只是状态摘要，**没有固定探索比例、强制角色覆盖或新增硬配额**。`revise_when` 是计划的描述性说明，不是模型可编程的运行时触发器。
+
+- **纯 Jev**：程序无模型调用地建立保守 brief；有明确意图则 `follow_intent`，否则 `browse`，不从点击推测心理状态。每步最多 16 个合法 pair × 4 个角色，共 64 个联合选项，加一个 `none_suitable`；仍只调用一次 Choice，而非先选角色再选卡。原始 option ID 表示 `open`，带角色前缀的 ID 表示同一卡对的相应角色。拒选／故障走已有可诊断的确定性回退，不增加调用预算。
+- **Agent 预排**：一次调用输出各屏 brief 和配对角色；枚举、字段上限、已有证据引用、合法卡片与跨屏去重都验证后才形成计划。显式输出的 brief 归因 `source=agent`；兼容旧输出时，缺失 brief 用保守视图补齐、缺失角色用 `open`，不能伪称 Agent 做过完整判断。
+- **Jev 修补**：同时看到本屏 brief、当前 pair 的 `intent / role`、已选角色、剩余 pair 角色与卡片语义，以保留原职责并避免抢走后续角色所需素材。失效引用单列 `unavailable_card_refs`，不能借用新候选的同名 ref 冒充旧内容。局部替换保留原 role / intent；没有适当替代时可拒选并请求 Agent 重排，角色本身不能放松硬约束。
+
+整屏自检是**同一次模型调用中的指令**：检查重复信息、主线覆盖、独立入口及有依据的探索，最后一对比较选完后的整屏。没有新增独立审查调用，也没有算法保证语义质量。程序侧 `review_screen()` 只对选中标题做 NFKC、空白折叠与大小写归一化后报告完全相同组；它不是语义相似度检测，不自动据此否决整屏，`semantic_quality` 始终为 `not_certified`。
+
+纯 Agent 的生产路径读取 `latest_preference_revision`：Store 在同一事务中从**全部持久化的非 presented / click 回执**读取最新状态版本。水位未超过规划状态时，连续曝光／弱点击即使挤出 4+4 prompt 窗口也可保留计划；新增 like / dislike / skip / 明确要求等其它反馈或状态版本回退则重排。该水位只供程序判断，不发给模型。无权威水位的离线输入则严格要求新增事件完整解释 state revision 增量、且全为 `presented / click`，窗口截断或事件缺口保守重排。**重排不代表把 skip 或点击写成强偏好**，游标也不能单独证明发生了什么。
+
+两种 Agent 模式都在明确意图、画像摘要或 `planning_policy_version` 变化时重排。当前策略版本为 `director-screen-policy.v1`，也纳入 runtime context digest，经既有 epoch / fence 阻止旧策略的在飞提交或后台计划写入；旧计划 JSON 仍可读，缺版本的未来计划不复用，已提交屏不重写。
 
 ### 推荐画像 + 会话短期 context（2026-09-30）
 
@@ -49,30 +69,34 @@
 - `profile_context.stable`：有效画像中的兴趣／领域、认知风格、核心特质、价值观、需求、内容深度／时长／节奏偏好、使用场景偏好、探索开放度、平台偏好和全部明确避雷。
 - `profile_context.recent`：当前阶段、最新觉察、未被用户否定的洞察及探索假设。保留假设置信度／确认状态；这些不是明确要求，不凭空推断知识水平、观看时长或疲劳。
 - `recent_screens`：同一 stream 最近三张**有实际曝光确认或交互**的屏，按提交先后排列。每张保留屏方向；仅保留实际确认曝光或有交互的卡片，携带原位置、标题、主题、风格、来源、曝光时间、近期行为与备注。纯生成／预加载、未触达卡片不算经历。每屏最多读取 80 条近期动作，每卡保留最近 4 条；曝光 ACK 独立读取，不被动作挤掉。窗口容量不代表完整行为历史。
-- `real_feedback`：上述 4+4 最新事件附时间及对应卡片语义，内容来自不可变批次，而不是可能已经改动的候选缓存；事件不只剩裸 ID。历史引用不是新候选。
+- `real_feedback`：上述最多 4 条动作（保护最新非点击反馈）+ 4 条最新曝光确认，附实际时间及对应卡片语义；内容来自不可变批次，而不是可能已经改动的候选缓存，事件不只剩裸 ID。历史引用不是新候选。
 - 原有本次明确意图、本屏方向、已选前缀、合法组合及状态版本仍保留。只看到未操作的曝光不能视为不喜欢，点击不能当喜欢；只有交互而没有 ACK 时标记行为，不虚构 ACK。
 
 所有画像序列化统一走 `soul.profile_views.build_director_profile_view()`，不传自由文本文学人格画像、聊天历史或核心记忆。Agent 慢路径保留最多 32 个兴趣、12 个领域、6 条近期信息；Jev 快路径压到 12／6／3，并省略历史卡摘要但保留标题、主题和行为。明确避雷不截断。`planning_profile_digest` 绑定慢路径视图，下一次请求发现画像变化会重排；历史已提交屏不改写，仍保留最新避雷复查。
 
 Agent 将该投影中的 `profile_context` 提到 user input 顶层首字段，并把 `stable` 放在 `recent` 前；其余易变屏幕状态随后序列化，避免状态摘要提前破坏稳定前缀。system prompt 固定，不重复注入画像；这只是缓存友好的输入顺序，不保证提供商实际命中缓存。
 
-上下文 schema 为 `director-context.v1`／`director-profile.v1`，Jev pair／audit／repair question 升为 v2；模型输入上限扩为 Jev 64,000、Agent 96,000 UTF-8 字节（工程预算，非 token / 质量标定）。超限明确回退，不能通过删除负偏好冒充成功。没有新增 UI／CLI 参数、依赖或远端调用入口；已有四表面和 OpenClaw 自动使用后端相同上下文。当前不补采 watch duration／完成率，也没有自动长期导演笔记。
+上下文 schema 为 `director-context.v1`／`director-profile.v1`，当前 Jev pair／audit／repair question 为 v3；模型输入上限保持 Jev 64,000、Agent 96,000 UTF-8 字节（工程预算，非 token / 质量标定）。超限明确回退，不能通过删除负偏好冒充成功。没有新增 UI／CLI 参数、依赖或远端调用入口；已有四表面和 OpenClaw 自动使用后端相同上下文。当前不补采 watch duration／完成率，也没有自动长期导演笔记。
 
 ## 公共 API
 
 | 接口 | 职责 |
 |---|---|
-| `PairComposer.prepare_next(request)` | 纯内核：冻结输入、精确配额、合法 pair 枚举、逐对证据校验、tentative 提案 |
-| `HorizonPlanner.plan(request, ...)` | 一次有界 LLM 调用产出 `HorizonPlan`；只接受已有卡片 refs，验证所有屏及跨屏唯一性 |
+| `PairComposer.prepare_next(request)` | 纯内核：冻结输入、精确配额、合法 pair / role 联合选择、逐对证据校验、tentative 提案 |
+| `HorizonPlanner.plan(request, ...)` | 一次有界 LLM 调用产出带 brief / roles / policy version 的 `HorizonPlan`；只接受已有证据和卡片 refs，验证所有屏及跨屏唯一性 |
 | `DirectorController.prepare_next(request, strategy, horizon)` | 三策略统一提案；不持久化、不曝光、不偷偷启动规划 |
-| `DraftRepairer.repair(request, horizon)` | 草稿审查和局部修改，保存两阶段证据、补丁前后版本和状态绑定 |
+| `DraftRepairer.repair(request, horizon)` | 携带当前及剩余角色的草稿审查／局部修改，保存 intent、两阶段证据、补丁前后版本和状态绑定 |
 | `DirectorRuntime.generate(profile, stream_ref, request_id, intent, ...)` | 准备候选、补齐缺失计划、执行、提交、滚动预排 |
 | `DirectorRuntime.restore(stream_ref)` / `aclose()` | 精确恢复；关闭本实例的计划任务和共用 decision provider |
 | `DirectorStore.begin/commit` | 短 SQLite 事务，模型调用不占数据库锁；提交前复查库存、已看、scope、特征指纹和版本 |
 | `DirectorStore.present/feedback` | 幂等曝光和反馈投影；batch/item 错配拒绝，历史屏反馈不能改写历史屏 |
 | `DirectorStore.save_plan/load_plan` | 未提交计划的 TTL / CAS；空计划 tombstone 防止旧任务复活已消费草稿 |
-| `DirectorStore.session` | 同一短事务读取状态、4+4 语义反馈和最近三屏经历，不写曝光、不请求模型 |
+| `DirectorStore.session` | 同一短事务读取状态、4+4 语义反馈、最近三屏经历及完整历史偏好水位，不写曝光、不请求模型 |
 | `CompositionSession.prompt_context(fast=False)` | 向 Agent / Jev 提供对应精度的画像和会话经历，历史卡不进入可选候选列表 |
+| `build_screen_brief(request)` / `validate_brief(brief, request)` | 无调用保守起点／验证事件引用来源；不证明模型目标正确 |
+| `build_policy_context(request, *, brief, ...)` | 三模式共用屏目标、事件证据强度、已选／剩余角色和候选供给摘要 |
+| `pair_role_choices(alternatives)` | 把 ≤16 个合法 pair 展开为 ≤64 个 pair / role 选项，不改变硬可行性 |
+| `review_screen(cards, refs)` | 仅返回规范化标题重复诊断；不认证语义质量、不产生数据库副作用 |
 
 `requested_strategy` 与 `realized_strategy` 分开；确定性回退不伪装 Agent-only。`SESSION_STEP` / `SESSION_STAY` 不虚构 plan ID；`PLAN_SLOT` / `STAY_PATCH` 绑定真实来源。已提交屏不能原地修补。
 
@@ -86,7 +110,7 @@ Agent 将该投影中的 `profile_context` 提到 user input 顶层首字段，�
 
 字段取值见 [配置](config.md) 和 `config.example.toml`。`director.strategy` 为三策略之一，`director.mode` 独立控制启用／影子运行。只使用 Agent-only 且关闭过滤时无需 Jev 凭据。Agent 使用现有 LLMService，接收推荐画像视图、个性化 shortlist、明确意图和最近经历，不序列化完整 Soul，不注入 personality/core memory。前台规划走交互调用，后台预排走有截止时间的维护调用。
 
-`shadow` 运行并留存导演提案，实际提交同一安全 shortlist 的确定性屏；**不是旧 MMR 的严格不干预实验**，不能据此证明 uplift。`off` 保持旧生产路径。40 张 shortlist、20 张目标、16 个 pair 备选、256 次探测及上述输入／调用预算都是工程上限，不是实测效果阈值。
+`shadow` 运行并留存导演提案，实际提交同一安全 shortlist 的确定性屏；**不是旧 MMR 的严格不干预实验**，不能据此证明 uplift。`off` 保持旧生产路径。40 张 shortlist、20 张目标、16 个 pair 备选（最多展开 64 个角色联合选项）、256 次探测及上述输入／调用预算都是工程上限，不是实测效果阈值。
 
 ```bash
 openbiliclaw config-show
@@ -104,6 +128,6 @@ Git / Docker / 桌面包无需新增依赖或下载模型；显式启用外部 J
 
 ## 验证与记录
 
-`python scripts/replay_director_pairs.py` 演示离线递推和拒选回退。测试覆盖原生 parser/mock HTTP、三策略、真实 SQLite、运行时/API、客户端协议；最终结果见 [实施验收](../plans/2026-09-26-director-implementation-progress.md)。本地批次 trace 保存提案、证据、降级原因和来源，可能含有限候选／反馈文字，不是匿名遥测。真实中文质量、满意度、误拒、成本与时延仍需经授权实测；本轮未调用付费服务。
+`python scripts/replay_director_pairs.py` 演示离线递推和拒选回退。测试覆盖原生 parser/mock HTTP、三策略、真实 SQLite、运行时/API、客户端协议；最终结果见 [实施验收](../plans/2026-09-26-director-implementation-progress.md)。本地批次 trace 保存提案、brief、每对 role / intent、`screen_review`、证据、降级原因和来源，可能含有限候选／反馈文字，不是匿名遥测。新增决策字段存在原有 JSON 载荷中，不增加表／列，仅增加偏好水位查询索引。真实中文质量、满意度、误拒、成本与时延仍需经授权实测；本轮未调用付费服务。
 
 设计来源：[三模式合同](../plans/2026-09-26-director-jev-modes.md)、[原始规格](../plans/2026-08-31-recommendation-director-spec.md)、[Jev 官方研究](../plans/2026-09-26-jev-provider-research.md)。

@@ -27,6 +27,7 @@ from .models import (
     digest,
 )
 from .planner import HorizonPlanner
+from .policy import DIRECTOR_POLICY_VERSION
 from .store import (
     BatchInstance,
     DirectorStore,
@@ -79,6 +80,7 @@ class DirectorRuntime:
                 "filter": asdict(config.discovery.semantic_filter),
                 "planner_route": asdict(config.llm),
                 "source_policy": asdict(config.sources),
+                "screen_policy_version": DIRECTOR_POLICY_VERSION,
             }
         )
         self.store = DirectorStore(database)
@@ -206,6 +208,7 @@ class DirectorRuntime:
                 explicit_intent=explicit_intent,
                 real_feedback=session.real_feedback,
                 recent_screens=session.recent_screens,
+                latest_preference_revision=session.latest_preference_revision,
                 profile_context=json.loads(json.dumps(build_director_profile_view(profile))),
                 fast_profile_context=json.loads(
                     json.dumps(build_director_profile_view(profile, fast=True))

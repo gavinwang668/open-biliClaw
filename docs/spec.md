@@ -295,9 +295,10 @@ legacy outbox → immutable claimed batches → DB commit → acknowledge only t
 
 optional Director (default off; separate decision credentials):
   profile view + latest 3 experienced screens + bounded shortlist
-                                        ├→ recurrent Jev pairs
-                                        ├→ Agent horizon + Jev local repairs
-                                        └→ Agent-only horizon (no Jev orchestration)
+    → shared screen policy (brief / evidence / soft roles)
+      ├→ recurrent Jev pairs
+      ├→ Agent horizon + Jev local repairs
+      └→ Agent-only horizon (no Jev orchestration)
     → tentative screen → fresh eligibility + state/fence/plan CAS → atomic commit
     → immutable batch → visible ACK / exact click & feedback → future drafts
   independent discovery semantic filter → shared bounded decision provider → Jev
@@ -412,6 +413,9 @@ pool maintenance → isolated maintenance DB worker → ≤50 mutations/transact
 
 独立 `decision/` 与 `[llm]` 凭据和路由隔离。默认关闭的 `[director]` 接通 Jev 逐对、
 Agent+Jev 修补、Agent-only 三策略，`[discovery.semantic_filter]` 独立控制过滤。
+三策略共用屏 brief／事件证据／软角色策略：先定本屏任务，再比较每对的增量价值和整屏覆盖。
+Jev 每步一次联合选择 pair + role；Agent 一次输出具体多屏目标，修补带上原角色与剩余草稿。
+角色不是固定比例或硬配额，整屏自检是模型指令；程序仅报告规范化标题重复，不认证语义质量。
 最多 40 张 shortlist、20 张屏、3 屏预排是工程上限；模型提案经 fresh eligibility / fencing / CAS
 后整屏提交，实际可见 ACK 才计曝光，点击与明确反馈精确关联批次。三端和 CLI 接通协议，
 模式设置使用 TOML，未增加图形探测或安装依赖；未实测真实模型质量。见
