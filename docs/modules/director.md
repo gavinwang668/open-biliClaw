@@ -128,6 +128,17 @@ Git / Docker / 桌面包无需新增依赖或下载模型；显式启用外部 J
 
 ## 验证与记录
 
-`python scripts/replay_director_pairs.py` 演示离线递推和拒选回退。测试覆盖原生 parser/mock HTTP、三策略、真实 SQLite、运行时/API、客户端协议；最终结果见 [实施验收](../plans/2026-09-26-director-implementation-progress.md)。本地批次 trace 保存提案、brief、每对 role / intent、`screen_review`、证据、降级原因和来源，可能含有限候选／反馈文字，不是匿名遥测。新增决策字段存在原有 JSON 载荷中，不增加表／列，仅增加偏好水位查询索引。真实中文质量、满意度、误拒、成本与时延仍需经授权实测；本轮未调用付费服务。
+`python scripts/replay_director_pairs.py` 演示离线递推和拒选回退。测试覆盖原生 parser/mock HTTP、三策略、真实 SQLite、运行时/API、客户端协议；最终结果见 [实施验收](../plans/2026-09-26-director-implementation-progress.md)。本地批次 trace 保存提案、brief、每对 role / intent、`screen_review`、证据、降级原因和来源，可能含有限候选／反馈文字，不是匿名遥测。新增决策字段存在原有 JSON 载荷中，不增加表／列，仅增加偏好水位查询索引。实现阶段未调用付费服务；后续获授权的 Agent 真实试跑遇服务失败，没有有效计划，不能认证中文质量、满意度、误拒、成本或时延。
+
+`scripts/run_director_effect_eval.py` 是独立的开发者评测入口，不是产品 CLI，也不启用导演。必须显式传 `--real`；读取指定项目的现有推荐路由，只在测试进程内固定一个已配置实例、关闭跨模型 fallback，使用临时 memory 与合成画像／候选／历史，不读写真实推荐库存、曝光或画像。默认比较旧 planner prompt 与新策略（同一当前校验器），不是运行完整旧版本或生产 MMR。`--instance` 只能选择既有推荐链中的实例；`--case`、`--horizon`、`--repeats` 控制测试范围，最多两次重复、每调用最多 60 秒。
+
+```bash
+PYTHONPATH=src python scripts/run_director_effect_eval.py --real \
+  --config-root /absolute/path/to/configured/project \
+  --output artifacts/director-effect-eval/new-run.json \
+  --budget-seconds 20
+```
+
+脚本保留输入、预注册标签、模型最终正文、调用时延／成功用量和错误类／HTTP 状态；不记录密钥、端点、原始 HTTP 对象、异常正文或模型思维链。记录的是 service 调用，不等于底层 HTTP 次数；失败调用用量可能不可得，不能据此汇总完整费用。服务不可用、超时或迟到时立即停止剩余比较并标记 `stopped_early`，不让上一条件的冷却影响下一条件的效果归因。非法结构不计质量分，不以兜底冒充 Agent 输出。候选高分入门重复项是刻意设置的压力场景，风格元数据也可见；即使跑通，也只说明模型是否使用给定上下文，不能直接推导真实满意度。首次试跑及未完成项目见实施记录。
 
 设计来源：[三模式合同](../plans/2026-09-26-director-jev-modes.md)、[原始规格](../plans/2026-08-31-recommendation-director-spec.md)、[Jev 官方研究](../plans/2026-09-26-jev-provider-research.md)。

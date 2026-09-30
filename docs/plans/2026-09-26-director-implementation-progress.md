@@ -1,8 +1,43 @@
 # 推荐导演实施进度
 
-更新：2026-09-30。最新工作分支：`feat/director-screen-policy`，基于 `feat/director-context` 的 `e86105b1`。
+更新：2026-09-30。最新评测分支：`test/director-effect-eval`，基于屏策略实现 `4ead2946`；生产实现分支为 `feat/director-screen-policy`。
 
 架构依据：[三模式方案](2026-09-26-director-jev-modes.md)、[基础规格](2026-08-31-recommendation-director-spec.md)。
+
+## Agent 真实调用试跑（2026-09-30）
+
+**结果：没有获得有效 Agent 计划，不能下编排质量结论。** 用户明确选择先看 Agent，未测试缺少 `TYPESAFE_API_KEY` 的 Jev。没有修改生产实现、真实配置、画像、库存或曝光；默认导演仍关闭，未合入 main／发布。
+
+### 试跑记录
+
+只使用既有推荐链里的模型，在测试进程内分别固定实例；两模型结果不能混作同模型 A/B。每轮输入都是合成的同一画像、24 张中文候选、6 卡目标，先验证明确工程需求场景。下列数字是 service／planner 层经过时间，不是首 token 延迟或线上 SLA。
+
+| 模型与条件 | 屏数 / 预算 | 结果 | 用时 |
+|---|---|---|---|
+| deepseek-v4-flash，新策略首次 | 3 / 20 秒 | provider unavailable；此轮只记录顶层错误类，不能追认具体 HTTP 原因 | 0.555 秒 |
+| deepseek-v4-flash，新策略诊断 | 3 / 20 秒 | HTTP 429 | 0.688 秒 |
+| sensenova-6.8-flash-lite，新策略 | 3 / 20 秒 | planner timeout，没有结果 | 20.003 秒 |
+| sensenova-6.8-flash-lite，新策略长预算诊断 | 3 / 60 秒 | LLMResponseError，没有有效正文 | 51.656 秒 |
+| sensenova-6.8-flash-lite，旧 prompt 单屏诊断 | 1 / 60 秒 | HTTP 429 | 31.898 秒 |
+| 同进程随后新策略单屏 | 1 / 60 秒 | 上次 429 后 registry 本地冷却短路，**不是一次新远端模型结果** | 0.005 秒 |
+
+原始、未重写的合成输入与结果：
+
+- [主模型首次](../../artifacts/director-effect-eval/agent-policy-smoke-20s.json) 与 [429 诊断](../../artifacts/director-effect-eval/agent-policy-smoke-diagnostic.json)。
+- [备用模型 20 秒](../../artifacts/director-effect-eval/sensenova-smoke-20s.json) 与 [60 秒](../../artifacts/director-effect-eval/sensenova-smoke-60s.json)。
+- [单屏新旧条件诊断](../../artifacts/director-effect-eval/sensenova-single-screen-60s.json)，其中新条件的本地短路必须排除在远端模型质量比较之外。
+
+`LLMResponseError` 在适配器里既可能表示纯空正文，也可能是仅有 reasoning 而没有最终正文；这次该轮未记录二者区别，**不能断言推理耗尽 token 或具体 finish reason**。适配器可能执行格式兼容／瞬时错误重试，故 service 调用数不等于 HTTP 请求数；没有完整失败用量与费用记录。没有任何 `plan_valid=true`，也没有把 deterministic baseline 的卡片算成 Agent 输出。
+
+### 已留下的评测合同与下一次入口
+
+- `scripts/director_effect_cases.py`：预注册三类场景——明确要求工程落地；“标题太夸张”的局部负反馈；单次点击与无操作曝光。使用生产命名画像视图，24 张候选固定，标签不进入模型输入。
+- 原始指标为任务支持、语义重复、夸张风格、已有兴趣覆盖和有依据探索；不合成“质量总分”。弱点击是否引发虚构疲劳／掌握程度仍需检查简短 brief，不能从数量推断。
+- 旧条件仅替换 `e86105b1` 的 planner 静态 prompt，并删除新的 `screen_policy` 输入块；当前校验器、其他画像／历史／候选相同。此为 prompt 对照，**不是旧二进制／完整旧推荐算法对照**；deterministic pair baseline 也不是原生产 MMR。
+- `scripts/run_director_effect_eval.py` 显式联网 opt-in、限定现有模型路由、输出文件不可覆盖、最多两次重复／60 秒预算、临时 memory；checkpoint 保留失败。发现冷却污染后，已把脚本改为服务故障立即停止余下比较；保留上面的原始失败记录，不重新打接口绕过限流。
+- 新增离线评测保护测试 19 项；连同 horizon modes、screen policy、policy planner 定向集共 **111 passed**（8.67 秒）。全仓 `ruff check src/ tests/`（另含新脚本）、新文件格式检查与 `git diff --check` 通过；未重跑全仓 pytest，不将 mock 回归当成效果证明。脚本不自动改模型、关闭思考或提高生产预算。四表面、配置、架构接线、依赖和安装流程均不变。
+
+服务恢复后按[模块文档的显式命令](../modules/director.md#验证与记录)重新跑三场景同模型配对比较。局部负反馈、弱点击与后续屏质量这次**尚未获得真实模型结果**；不能用前面 1,436 项 mock／协议测试替代。先恢复可用模型服务并核验可用正文，再评价策略；当前失败不足以归因于导演策略本身。
 
 ## 当前增量：共享屏幕编排策略（2026-09-30）
 
