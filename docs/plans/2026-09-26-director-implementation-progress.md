@@ -1,8 +1,22 @@
 # 推荐导演实施进度
 
-更新：2026-10-01。当前优化分支：`fix/director-horizon-completion`，独立 worktree，基于 CLI 评测 `5419f168`；前轮评测分支为 `test/director-codex-luna`，生产屏策略实现为 `4ead2946` / `feat/director-screen-policy`。未合入 main／发布，未改用户配置。
+更新：2026-10-01。当前通道修复分支：`fix/director-cli-stream-recovery`，独立 worktree，基于覆盖优化 `a1ff1797` / `fix/director-horizon-completion`；前轮 CLI 评测为 `5419f168` / `test/director-codex-luna`，生产屏策略实现为 `4ead2946` / `feat/director-screen-policy`。未合入 main／发布，未改用户配置。
 
 架构依据：[三模式方案](2026-09-26-director-jev-modes.md)、[基础规格](2026-08-31-recommendation-director-spec.md)。
+
+## 临时 CLI 的重连恢复修复（2026-10-01）
+
+上轮只能观察到错误计数，缺少时序，故没有接受那些输出。本轮按 diagnosing-bugs 建立秒级服务边界回归，再作一次真实脱敏探针：
+
+- 最小测试 `test_reconnection_notice_before_valid_final_does_not_discard_completed_turn` 原实现明确失败：即使通知后有新答案、完成事件及匹配文件，仍抛 `cli_turn_failed`。移除通知则通过。
+- [真实探针事件序列](../../artifacts/director-effect-eval/luna-stream-recovery-probe.json) 为 thread → 初始化诊断 item → turn → **重连 2/5** → JSON 答案 → completed。该答案屏形为 6＋4＋2，说明有最终 JSON，但也说明它不能直接通过覆盖校验。对应 [未修改成功规则的调用记录](../../artifacts/director-effect-eval/luna-stream-recovery-probe-run.json) 在 24.880 秒被旧规则拒收。
+- 已确认的主因是适配器把**任何顶层 error** 都当作整轮失败。现在只识别有界编号重连通知与显式 WebSocket→HTTPS 回退通知，要求通知后出现新最终答案、单个生命周期、终态位于最后、退出码为 0 且新临时文件完全匹配。未知错误、`turn.failed`、陈旧答案、工具事件、重复轮次和不完整结果继续拒绝。CR/LF 注入与格式边界均有回归。
+- [第一次复测](../../artifacts/director-effect-eval/luna-stream-recovery-matrix.json) 的工程场景在 17.837 秒通过通道、被 planner 正确拒绝：`c02/c03` 同时列在选中 pairs 和 omissions，pair intent 还写着“不选”。风格场景在 37.188 秒仍有一类未识别的通知（5 个 error 中 4 个为编号重连）；根据本机 CLI 二进制确认的通知文本，后续补齐显式 HTTPS 回退识别，但没有该次第五条通知的正文，不能断言其身份。该轮弱点击未运行。失败／非法计划记录没有删除或改成成功。
+- [最终复测](../../artifacts/director-effect-eval/luna-stream-recovery-final.json) 保持同模型、同输入与 60 秒预算，首个工程场景在 **60.013 秒**触发 `planner_timeout`，CLI 进程已取消并回收；后两个场景未调用。这是实际截止时间到达，不是解析器拒收，也不能据此确定等待发生在哪个网络阶段。本轮没有通过生产校验的真实计划，不能宣称三场景、模型质量或时延已经验收。
+
+本修复验收：最终相关回归集 **257 passed**（7.00 秒），覆盖适配器、评测入口、多屏规划／覆盖与运行时；包含真实 planner 加 mock CLI 的恢复边界，不是模型质量分。`ruff check src/ tests/`（另含适配器和评测入口）、变更 Python 格式检查、`mypy src/`（317 文件）及 `git diff --check` 通过；未重跑全仓 pytest。编号重连与 HTTPS 回退均先建立失败测试再修复，未知错误／不完整成功／覆盖不合法继续拒绝。
+
+该修复只改开发者评测适配器与测试，**未改生产 planner、提示词、策略版本或覆盖合同**；不替模型删掉矛盾卡片，不把程序修正后的输出当作原模型效果。临时探针脚本已清理，只保留不含错误正文／推理的诊断证据。官方文档只确认[事件类型和最终文件机制](https://learn.chatgpt.com/docs/non-interactive-mode)，通知识别是本机版本兼容规则，不能推广为“所有 error 都可忽略”。
 
 ## 多屏覆盖与短尾保护优化（2026-10-01）
 

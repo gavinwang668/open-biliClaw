@@ -87,6 +87,35 @@ _EVENT_TYPES = frozenset(
 )
 # Diagnostic output bounds only; not provider throughput or quality thresholds.
 _MAX_DIAGNOSTIC_EVENT_COUNT = 10_000
+# Locally observed CLI progress text, not an OpenAI wire-protocol guarantee.
+# Accept only this bounded notice, and only with independently verified success
+# later in the same turn. Unrecognized error variants still fail closed.
+_RECONNECT_NOTICE = re.compile(r"Reconnecting\.\.\. ([1-9][0-9]?)/([1-9][0-9]?)(?:[ :;(][^\r\n]*)?")
+_HTTPS_FALLBACK_NOTICE = "Falling back from WebSockets to HTTPS transport."
+
+
+def _reconnect_progress(event: dict[str, Any]) -> tuple[int, int] | None:
+    message = event.get("message")
+    if event.get("type") != "error" or not isinstance(message, str) or len(message) > 4096:
+        return None
+    match = _RECONNECT_NOTICE.fullmatch(message)
+    if match is None:
+        return None
+    attempt, limit = (int(value) for value in match.groups())
+    # Engineering recognition bound, not a change to the CLI retry budget.
+    return (attempt, limit) if attempt <= limit <= 10 else None
+
+
+def _is_https_fallback(event: dict[str, Any]) -> bool:
+    message = event.get("message")
+    return (
+        event.get("type") == "error"
+        and isinstance(message, str)
+        and len(message) <= 4096
+        and "\n" not in message
+        and "\r" not in message
+        and (message == _HTTPS_FALLBACK_NOTICE or message.startswith(_HTTPS_FALLBACK_NOTICE + " "))
+    )
 
 
 class CodexCLIError(RuntimeError):
@@ -114,6 +143,8 @@ def _safe_diagnostics(stdout: bytes, stderr: bytes) -> dict[str, Any]:
     event_types: dict[str, int] = {}
     markers: set[str] = set()
     counts_capped = False
+    reconnect_notices = 0
+    https_fallback_notices = 0
 
     def count(kind: str) -> None:
         nonlocal counts_capped
@@ -141,6 +172,12 @@ def _safe_diagnostics(stdout: bytes, stderr: bytes) -> dict[str, Any]:
         count(kind if isinstance(kind, str) and kind in _EVENT_TYPES else "unknown")
         if isinstance(kind, str) and kind in {"error", "turn.failed"}:
             inspect_error(_error_payload_text(event))
+            if _reconnect_progress(event) is not None:
+                reconnect_notices = min(reconnect_notices + 1, _MAX_DIAGNOSTIC_EVENT_COUNT)
+            if _is_https_fallback(event):
+                https_fallback_notices = min(
+                    https_fallback_notices + 1, _MAX_DIAGNOSTIC_EVENT_COUNT
+                )
         if kind in ("item.started", "item.updated", "item.completed"):
             item = event.get("item")
             if isinstance(item, dict):
@@ -154,6 +191,8 @@ def _safe_diagnostics(stdout: bytes, stderr: bytes) -> dict[str, Any]:
         "event_types": dict(sorted(event_types.items())),
         "event_type_counts_capped": counts_capped,
         "error_markers": [marker for marker in _ERROR_MARKERS if marker in markers],
+        "reconnect_notices": reconnect_notices,
+        "https_fallback_notices": https_fallback_notices,
     }
 
 
@@ -161,6 +200,9 @@ def _parse_events(stdout: bytes) -> tuple[str, dict[str, int], int]:
     final_messages: list[str] = []
     usage: dict[str, int] = {}
     completed = 0
+    thread_started = False
+    turn_started = False
+    needs_fresh_final = False
     event_count = 0
     try:
         for line in stdout.decode("utf-8").splitlines():
@@ -171,8 +213,26 @@ def _parse_events(stdout: bytes) -> tuple[str, dict[str, int], int]:
                 raise CodexCLIError("invalid_cli_event")
             event_count += 1
             kind = event.get("type")
-            if kind in {"error", "turn.failed"}:
+            if kind == "turn.failed":
                 raise CodexCLIError("cli_turn_failed")
+            if kind == "error":
+                recognized = _reconnect_progress(event) is not None or _is_https_fallback(event)
+                if completed or not turn_started or not recognized:
+                    raise CodexCLIError("cli_turn_failed")
+                needs_fresh_final = True
+                continue
+            if completed:
+                raise CodexCLIError("event_after_cli_completion")
+            if kind == "thread.started":
+                if thread_started or turn_started:
+                    raise CodexCLIError("invalid_cli_lifecycle")
+                thread_started = True
+                continue
+            if kind == "turn.started":
+                if not thread_started or turn_started:
+                    raise CodexCLIError("invalid_cli_lifecycle")
+                turn_started = True
+                continue
             if kind in {"item.started", "item.updated", "item.completed"}:
                 item = event.get("item")
                 if not isinstance(item, dict) or item.get("type") not in {
@@ -186,11 +246,16 @@ def _parse_events(stdout: bytes) -> tuple[str, dict[str, int], int]:
                     and item.get("type") == "agent_message"
                     and item.get("phase") in {None, "final_answer"}
                 ):
+                    if not turn_started:
+                        raise CodexCLIError("invalid_cli_lifecycle")
                     content = item.get("text")
                     if not isinstance(content, str) or not content.strip():
                         raise CodexCLIError("empty_cli_message")
                     final_messages.append(content)
+                    needs_fresh_final = False
             elif kind == "turn.completed":
+                if not turn_started:
+                    raise CodexCLIError("invalid_cli_lifecycle")
                 completed += 1
                 raw_usage = event.get("usage", {})
                 if not isinstance(raw_usage, dict):
@@ -208,12 +273,14 @@ def _parse_events(stdout: bytes) -> tuple[str, dict[str, int], int]:
                     and type(value) is int
                     and value >= 0
                 }
-            elif kind not in {"thread.started", "turn.started"}:
+            else:
                 raise CodexCLIError("unknown_cli_event")
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise CodexCLIError("invalid_cli_jsonl") from exc
     if completed != 1 or not final_messages:
         raise CodexCLIError("missing_or_duplicate_cli_completion")
+    if needs_fresh_final:
+        raise CodexCLIError("missing_final_after_cli_reconnect")
     return final_messages[-1], usage, event_count
 
 
@@ -322,10 +389,12 @@ class CodexCLIService:
                 item_types=diagnostics["item_types"],
                 event_types=diagnostics["event_types"],
                 event_type_counts_capped=diagnostics["event_type_counts_capped"],
+                reconnect_notices=diagnostics["reconnect_notices"],
+                https_fallback_notices=diagnostics["https_fallback_notices"],
             )
-            # New CLI emits recoverable diagnostic error items as well as
-            # fatal turn.failed/error events. Only the latter invalidate the
-            # turn; still require turn.completed and a matching final file.
+            # Error items are diagnostic; a specifically recognized reconnect
+            # notice can recover only with a later final and terminal success.
+            # Unknown errors / turn.failed remain fatal, including after success.
             record["recoverable_diagnostic_present"] = "error" in diagnostics["item_types"]
             if proc.returncode != 0:
                 record["error_markers"] = diagnostics["error_markers"]
@@ -342,6 +411,11 @@ class CodexCLIService:
             ):
                 raise CodexCLIError("cli_final_message_mismatch")
             record.update(event_count=event_count, completed=True)
+            record["stream_recovered"] = (
+                diagnostics["reconnect_notices"] + diagnostics["https_fallback_notices"] > 0
+            )
+            if record["stream_recovered"]:
+                record["error_markers"] = diagnostics["error_markers"]
             return LLMResponse(
                 content=content,
                 model=self.model,

@@ -88,6 +88,48 @@ async def test_only_final_content_and_usage_are_returned(transport, monkeypatch)
     assert response.tool_calls is None
 
 
+async def test_reconnection_notice_before_valid_final_does_not_discard_completed_turn(
+    transport, monkeypatch
+):
+    events = _complete_events()
+    events.insert(2, {"type": "error", "message": "Reconnecting... 1/5"})
+    _install_process(transport, monkeypatch, FakeProcess(_jsonl(*events)))
+    response = await _request(transport.CodexCLIService())
+    assert response.content == '{"screens":[]}'
+    assert response.usage["output_tokens"] == 30
+
+
+async def test_explicit_websocket_fallback_before_fresh_final_can_recover(transport, monkeypatch):
+    events = _complete_events()
+    events.insert(
+        2,
+        {"type": "error", "message": "Falling back from WebSockets to HTTPS transport. "},
+    )
+    _install_process(transport, monkeypatch, FakeProcess(_jsonl(*events)))
+    service = transport.CodexCLIService()
+    response = await _request(service)
+    assert response.content == '{"screens":[]}'
+    assert service.records[0]["https_fallback_notices"] == 1
+    assert service.records[0]["stream_recovered"] is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Falling back from WebSockets to HTTPS transport.PRIVATE",
+        "Falling back from WebSockets to HTTPS transport.\rPRIVATE",
+        "Falling back from WebSockets to HTTPS transport. \nPRIVATE",
+        "Falling back from WebSockets to HTTPS transport. " + "x" * 4096,
+    ],
+)
+async def test_malformed_https_fallback_is_not_recovery(transport, monkeypatch, message):
+    events = _complete_events()
+    events.insert(2, {"type": "error", "message": message})
+    _install_process(transport, monkeypatch, FakeProcess(_jsonl(*events)))
+    with pytest.raises(transport.CodexCLIError, match="^cli_turn_failed$"):
+        await _request(transport.CodexCLIService())
+
+
 def _install_process(transport, monkeypatch, process, *, final_text='{"screens":[]}'):
     captured = {}
 
@@ -308,7 +350,12 @@ async def test_exactly_one_completion_and_a_final_answer_are_required(
     else:
         events[3]["item"]["phase"] = "commentary"
     _install_process(transport, monkeypatch, FakeProcess(_jsonl(*events)))
-    with pytest.raises(transport.CodexCLIError, match="^missing_or_duplicate_cli_completion$"):
+    expected = (
+        "event_after_cli_completion"
+        if failure == "two_completions"
+        else "missing_or_duplicate_cli_completion"
+    )
+    with pytest.raises(transport.CodexCLIError, match=f"^{expected}$"):
         await _request(transport.CodexCLIService())
 
 

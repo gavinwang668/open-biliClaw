@@ -43,6 +43,7 @@
 | 共享屏幕策略 | `policy.py` 统一证据区分、屏任务、内容角色、逐对增量价值和整屏自检指令；简短决策结果入 trace，不保存长篇推理过程 |
 | 有界诊断 | `screen_review` 仅报告规范化标题重复，固定 `semantic_quality=not_certified`；不是语义质量认证 |
 | 预排覆盖 | Agent 以请求屏数为目标；仅末屏可短，必须说明未用候选并通过剩余容量检查；语义短尾在执行／修补时不自动补满 |
+| 临时 CLI 评测 | 编号重连通知不自动等于整轮失败；必须有重连后的新最终答案、唯一终态及匹配文件，随后仍走完整 planner 校验 |
 
 “两个两个”不是两张卡打擂台，也不是一次调用的两个独立 Choice。模型没有本项目的跨请求隐状态；应用显式递推。未来草稿不是用户行为，候选文本不是指令。
 
@@ -117,6 +118,7 @@ Agent 将该投影中的 `profile_context` 提到 user input 顶层首字段，�
 | `build_policy_context(request, *, brief, ...)` | 三模式共用屏目标、事件证据强度、已选／剩余角色和候选供给摘要 |
 | `pair_role_choices(alternatives)` | 把 ≤16 个合法 pair 展开为 ≤64 个 pair / role 选项，不改变硬可行性 |
 | `review_screen(cards, refs)` | 仅返回规范化标题重复诊断；不认证语义质量、不产生数据库副作用 |
+| `scripts.director_codex_transport.CodexCLIService.complete_structured_task(...)` | 仅合成评测的临时通道；验证单轮事件生命周期、重连后新答案与最终文件，不是生产 provider |
 
 `requested_strategy` 与 `realized_strategy` 分开；确定性回退不伪装 Agent-only。`SESSION_STEP` / `SESSION_STAY` 不虚构 plan ID；`PLAN_SLOT` / `STAY_PATCH` 绑定真实来源。已提交屏不能原地修补。
 
@@ -173,6 +175,8 @@ PYTHONPATH=src python scripts/run_director_effect_eval.py --real \
 
 该 macOS 路径只是此次本机实例，其他环境应指定其实际二进制。适配器使用临时空 cwd、`--ignore-user-config`、`--ephemeral`、只读权限、禁用工具／插件／MCP／浏览及 hooks；生产 JSON 指令通过 `model_instructions_file` 传入，输入走 stdin。CLI 自行使用既有登录并正常维护认证／模型缓存，脚本不复制认证材料、不修改用户配置。取消时终止并回收该 CLI 进程组。
 
-只接收唯一成功 `turn.completed` 且与 `--output-last-message` 文件一致的最终正文；拒绝工具事件、致命 error／turn.failed、非零退出、未知事件和不完整输出。新版 CLI 的恢复性 `item.type=error` 仅计诊断标记，不保存原文；它不能代替成功终态。CLI 不提供本评测所需的 temperature／max_tokens 精确控制，记录明确标为未施加；模型身份记录来自 `--model`，不伪称 JSONL 回传了服务端模型名。时延包含启动／CLI 附加上下文，tokens 是 CLI 报告值，不可与生产 HTTP 成本／延迟混算。实现依据[官方非交互文档](https://learn.chatgpt.com/docs/non-interactive-mode)与[配置文档](https://learn.chatgpt.com/docs/config-file/config-reference)，并以本机 `exec --help` 验证可用参数。
+只接收单个 thread／turn 的唯一成功 `turn.completed`，且最终正文与本次临时 `--output-last-message` 文件一致。拒绝工具事件、`turn.failed`、非零退出、未知／格式错误事件、重复生命周期和终态之后的任何事件。`item.type=error` 仅计诊断标记；顶层 `error` 只在已识别的 `Reconnecting... N/M` 编号通知或明确的 `Falling back from WebSockets to HTTPS transport.` 通知下可继续读取，且必须处于进行中的 turn、编号合法（识别上限 M≤10、消息≤4096 字符且无 CR/LF 为工程防御边界），最后一次通知之后必须出现新的最终答案。其它 error 一律拒绝，不能用重连前的旧答案或仅一个完成事件救活。该识别规则基于本机 CLI 事件／版本兼容验证，**不是官方保证所有 error 均可恢复**。
+
+记录只增加脱敏的 `reconnect_notices`／`https_fallback_notices`／`stream_recovered` 和有限错误标记，不保存错误正文、端点、密钥或推理。通道成功也不等于计划成功：正文仍须通过生产 planner 的 JSON、引用、配额和多屏覆盖检查；本轮没有放宽这些规则，也没有新增应用侧重试或修改 CLI 重试预算。CLI 不提供本评测所需的 temperature／max_tokens 精确控制，记录明确标为未施加；模型身份来自 `--model`，不伪称 JSONL 回传了服务端模型名。时延包含启动／CLI 重连和附加上下文，tokens 是 CLI 报告值，不与生产 HTTP 成本／延迟混算。事件类型与最终文件机制参照[官方非交互文档](https://learn.chatgpt.com/docs/non-interactive-mode)，配置参照[配置文档](https://learn.chatgpt.com/docs/config-file/config-reference)，本机 `exec --help` 验证可用参数。
 
 设计来源：[三模式合同](../plans/2026-09-26-director-jev-modes.md)、[原始规格](../plans/2026-08-31-recommendation-director-spec.md)、[Jev 官方研究](../plans/2026-09-26-jev-provider-research.md)。
