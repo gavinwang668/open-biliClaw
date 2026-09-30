@@ -1,12 +1,55 @@
 # 推荐导演实施进度
 
-更新：2026-09-30。最新评测分支：`test/director-effect-eval`，基于屏策略实现 `4ead2946`；生产实现分支为 `feat/director-screen-policy`。
+更新：2026-09-30。最新评测分支：`test/director-codex-luna`，基于前轮评测 `1cccee24`，生产屏策略实现为 `4ead2946` / `feat/director-screen-policy`。
 
 架构依据：[三模式方案](2026-09-26-director-jev-modes.md)、[基础规格](2026-08-31-recommendation-director-spec.md)。
 
+## Codex CLI / GPT-6 Luna 合成场景实测（2026-09-30）
+
+**结论：临时 CLI 通道已跑通，三场景新旧 prompt 共六次均通过真实生产 planner 校验；首屏行为符合预期，但多屏预排与默认时延预算尚未达标。** 这不是线上发布、真实用户实验或 Jev 验收。
+
+### 运行条件与原始记录
+
+- 用户明确要求临时使用 Codex CLI / `gpt-6-luna`。最终使用本机应用自带 `codex-cli 0.155.0-alpha.16.3`，每次显式 `--model gpt-6-luna` / `low`，不更改模型；JSONL 未回传服务端模型标识，记录注明模型归因来自 CLI flag。
+- 沿用上一轮预注册画像、24 张合成中文候选与三类反馈；每屏目标 6 卡、最多预排 3 屏、单次 60 秒诊断预算。每条件每场景一次，调用顺序跨场景交错，不声称统计显著性。
+- 新旧两条件都经当前 HorizonPlanner 的引用／结构／约束验证。旧条件只替换旧静态 prompt 并移除 `screen_policy` 块，仍不是完整旧生产版本。旧结果的 `source=conservative` brief 和 `role=open` 是兼容归一化，不能当成旧模型自行给出的证据判断。
+- 结果：[六次对照原始 JSON](../../artifacts/director-effect-eval/luna-matrix-60s.json)。时延包含 CLI 启动与附加上下文；temperature／max_tokens 未在 CLI 上强制，CLI token 用量不换算 API 费用，也不与上一轮两家 HTTP 供应商混算。
+
+| 场景 | 旧 prompt 首屏 / 后续 | 新策略首屏 / 后续 | 旧 / 新总耗时 |
+|---|---|---|---|
+| 明确要 Agent 工程落地 | 6/6 工程内容；共 3 屏（6/6/2 卡），第三屏全是户外装备，与本次方向不符 | 6/6 工程内容，含徒步笔记助手的关联探索；只生成 1 屏 | 13.379 / 22.138 秒 |
+| 只反感夸张标题 | 0 张夸张卡、6 张 AI 内容；共 3 屏（6/6/2 卡），以后续屏覆盖户外 | 0 张夸张卡，4 张纯 AI＋1 张 AI/户外桥接＋1 张户外；只生成 1 屏 | 11.908 / 11.488 秒 |
+| 单次点击／无操作曝光 | 首屏 6 张 AI 内容，后续保留户外；共 3 屏（6/6/2 卡） | 4 张纯 AI＋1 张桥接＋1 张户外；brief 明确点击不等于喜欢／读完、未操作不等于不喜欢；只生成 1 屏 | 17.428 / 13.637 秒 |
+
+所有六次有效计划都没有未知／重复引用，按预注册的两个入门语义重复组也没有重复。新策略三次均有真实生成的 brief／角色，显式指出未知点。旧策略同样通过了首屏贴题和局部风格避让检查，不能据此说新策略带来全面提升。两个兴趣同屏呈现是产品差异，不自动等于用户更满意；桥接卡不算两个独立兴趣入口。
+
+### 一屏具体长什么样
+
+明确要求工程落地时，新策略实际输出：
+
+| 配对角色 | 两张合成卡 | 本对职责 |
+|---|---|---|
+| anchor | `c07` 工单助手实现笔记 + `c08` 工具调用重复执行复盘 | 实现与可靠性 |
+| complement | `c11` 本地助手容器部署 + `c13` trace 定位失败步骤 | 运行与排查 |
+| exploration | `c14` 修改数据前确认 + `c20` 徒步笔记可追问助手 | 权限边界与关联应用；角色是软描述，不是硬配额 |
+
+### 需要继续改进，但本轮未擅自改生产逻辑
+
+1. **预排长度不足。** 新策略三次都只给 6 卡一屏，虽满足“最多三屏”的当前合同，却没有验证用户期望的提前多屏编排／摊薄调用成本。应明确期望屏数、何时合法缩短以及供给不足说明，不能只靠上限暗示模型多排；也不能机械凑满导致旧方案中的跑题。
+2. **慢路径预算仍需标定。** 60 秒诊断下新策略为 11.488–22.138 秒；其中一次超过现有 20 秒默认预算，且另一次 20 秒 smoke 确实超时。不能将 CLI 启动时延当线上模型 SLA，也不能据此直接提高生产预算。
+3. **证据还很小。** 每格仅一次、候选与历史是合成且风格元数据可见；没有真实历史的反事实回放、真实连续消费、线上满意度或 Jev 修补／过滤结果。后续应扩充真实形态的候选样本与重复轮次，再讨论效果收益。
+
+### 失败与兼容记录不隐藏
+
+- PATH 首选独立 CLI `0.146.0`：[首次失败](../../artifacts/director-effect-eval/luna-smoke-20s.json) 6.449 秒；[诊断](../../artifacts/director-effect-eval/luna-smoke-diagnostic.json) 12.465 秒，安全标记为 `not supported` / `stream disconnected`，当时模型缓存无 GPT-6 Luna。没有静默换模型；选择现有应用自带版本后，其模型缓存包含 GPT-6 Luna。
+- 新版 CLI [20 秒 smoke](../../artifacts/director-effect-eval/luna-bundled-smoke-20s.json) 超时且进程组已回收。两轮 [60 秒 smoke](../../artifacts/director-effect-eval/luna-bundled-smoke-60s.json)／[事件诊断](../../artifacts/director-effect-eval/luna-bundled-event-diagnostic.json) 分别在 15.617／14.602 秒 exit 0，但因夹带恢复性 `item.type=error` 被早期适配器拒绝，不能当模型失败或成功效果样本。
+- 修正临时适配器后，恢复性 error item 只记诊断、不保存原文；仍须 exit 0、唯一 turn.completed、最终文件与最终消息一致、没有工具事件，才进入生产 planner 校验。最终六次都有恢复性诊断标记，均保留在原始记录。
+- 未修改 OpenBiliClaw 用户配置、真实画像／库存／曝光，未切换生产路由、合入 main／发布；CLI 自行正常维护认证／模型缓存。新增入口与复跑命令见[模块文档](../modules/director.md#验证与记录)。
+- 最终离线定向集 **153 passed**（14.81 秒）：CLI transport、effect cases／runner、horizon modes、screen policy、policy planner。全仓 `ruff check src/ tests/`（含评测脚本）、变更文件格式与 `git diff --check` 通过。未重跑全仓 pytest；这些测试数字不是模型质量分。仅开发者评测脚本／测试／记录改变，没有生产接口、四表面、配置字段、依赖或安装器变化。
+
 ## Agent 真实调用试跑（2026-09-30）
 
-**结果：没有获得有效 Agent 计划，不能下编排质量结论。** 用户明确选择先看 Agent，未测试缺少 `TYPESAFE_API_KEY` 的 Jev。没有修改生产实现、真实配置、画像、库存或曝光；默认导演仍关闭，未合入 main／发布。
+以下是前轮配置模型的历史记录，后续 CLI 结果见上节。**该轮没有获得有效 Agent 计划，不能下编排质量结论。** 用户明确选择先看 Agent，未测试缺少 `TYPESAFE_API_KEY` 的 Jev。没有修改生产实现、真实配置、画像、库存或曝光；默认导演仍关闭，未合入 main／发布。
 
 ### 试跑记录
 

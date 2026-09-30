@@ -136,28 +136,58 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("bounded eval requires 1..2 repeats and <=60 seconds per call")
     if args.output.exists():
         raise ValueError("output exists; use a new artifact path")
-    os.environ["OPENBILICLAW_PROJECT_ROOT"] = str(args.config_root.resolve())
-    config = copy.deepcopy(load_config())
-    # Local memory-only route pin: changing model on failure would confound A/B.
-    overrides = module_overrides_from_config(config)
-    recommendation = overrides.get("recommendation")
-    route = (
-        list(recommendation.chain)
-        if recommendation is not None and recommendation.custom_chain
-        else list(config.llm.default_chain)
-    )
-    if not route:
-        route = [config.llm.default_provider]
-    selected = args.instance or route[0]
-    if selected not in route:
-        raise ValueError("test instance must already belong to the recommendation route")
-    if selected not in config.llm.instances or not config.llm.instances[selected].enabled:
-        raise ValueError("configured primary recommendation instance is unavailable")
-    config.llm.instances = {selected: config.llm.instances[selected]}
-    config.llm.default_chain = [selected]
-    config.llm.default_provider = selected
-    config.llm.fallback_provider = ""
-    registry = build_llm_registry(config)
+    transport = getattr(args, "transport", "configured")
+    cli_service = None
+    if transport == "codex-cli":
+        from director_codex_transport import CodexCLIService
+
+        if args.instance:
+            raise ValueError("--instance is only used with configured transport")
+        cli_service = CodexCLIService(binary=getattr(args, "codex_binary", "codex"))
+        route_metadata = {
+            "instance": "temporary-codex-cli",
+            "model": cli_service.model,
+            "reasoning_effort": cli_service.reasoning_effort,
+            "fallback_enabled": False,
+            "model_verification": "explicit_cli_flag_not_server_echo",
+            "cli_version": subprocess.check_output(
+                [cli_service.binary, "--version"], text=True
+            ).strip(),
+            "cli_binary": cli_service.binary,
+        }
+        production_budget = None  # No real application configuration is read.
+    else:
+        if args.config_root is None:
+            raise ValueError("--config-root is required for configured transport")
+        os.environ["OPENBILICLAW_PROJECT_ROOT"] = str(args.config_root.resolve())
+        config = copy.deepcopy(load_config())
+        # Local memory-only route pin: changing model on failure would confound A/B.
+        overrides = module_overrides_from_config(config)
+        recommendation = overrides.get("recommendation")
+        route = (
+            list(recommendation.chain)
+            if recommendation is not None and recommendation.custom_chain
+            else list(config.llm.default_chain)
+        )
+        if not route:
+            route = [config.llm.default_provider]
+        selected = args.instance or route[0]
+        if selected not in route:
+            raise ValueError("test instance must already belong to the recommendation route")
+        if selected not in config.llm.instances or not config.llm.instances[selected].enabled:
+            raise ValueError("configured primary recommendation instance is unavailable")
+        config.llm.instances = {selected: config.llm.instances[selected]}
+        config.llm.default_chain = [selected]
+        config.llm.default_provider = selected
+        config.llm.fallback_provider = ""
+        registry = build_llm_registry(config)
+        route_metadata = {
+            "instance": selected,
+            "model": config.llm.instances[selected].model,
+            "reasoning_effort": config.llm.instances[selected].reasoning_effort,
+            "fallback_enabled": False,
+        }
+        production_budget = config.director.planning_budget_seconds
     old_prompt = _legacy_prompt(args.legacy_ref)
     cases = [case for case in build_cases() if not args.case or case.case_id == args.case]
     if not cases:
@@ -180,14 +210,12 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         "jev_tested": False,
         "wire_attempts_instrumented": False,
         "cost_totals_complete": False,
-        "route": {
-            "instance": selected,
-            "model": config.llm.instances[selected].model,
-            "reasoning_effort": config.llm.instances[selected].reasoning_effort,
-            "fallback_enabled": False,
-        },
+        "transport": transport,
+        "route": route_metadata,
+        "max_tokens_and_temperature_enforced": transport != "codex-cli",
+        "cli_latency_includes_startup": transport == "codex-cli",
         "planning_budget_seconds": args.budget_seconds,
-        "production_planning_budget_seconds": config.director.planning_budget_seconds,
+        "production_planning_budget_seconds": production_budget,
         "legacy_ref": args.legacy_ref,
         "comparison": "Old planner prompt (without screen_policy block) vs new policy, same current validator and synthetic inputs; deterministic pair baseline is NOT production MMR.",
         "repeats": args.repeats,
@@ -206,10 +234,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     _save(args.output, report)
     with tempfile.TemporaryDirectory(prefix="director-effect-eval-") as temp:
-        memory = MemoryManager(Path(temp))
-        service = LLMService(
+        service = cli_service or LLMService(
             registry=registry,
-            memory=memory,
+            memory=MemoryManager(Path(temp)),
             module_overrides={
                 "recommendation": ModuleOverride(chain=(selected,), custom_chain=True)
             },
@@ -259,6 +286,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                         "elapsed_seconds": round(time.monotonic() - started, 3),
                         "plan_valid": planning.plan is not None,
                     }
+                    if cli_service is not None:
+                        entry["cli_transport"] = copy.deepcopy(cli_service.records[-1])
                     if planning.plan is not None:
                         screens = planning.plan.screens
                         refs = tuple(ref for screen in screens for ref in screen.card_refs)
@@ -317,7 +346,9 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--real", action="store_true")
-    parser.add_argument("--config-root", type=Path, required=True)
+    parser.add_argument("--config-root", type=Path)
+    parser.add_argument("--transport", choices=("configured", "codex-cli"), default="configured")
+    parser.add_argument("--codex-binary", default="codex")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", default="")
     parser.add_argument("--instance", default="")

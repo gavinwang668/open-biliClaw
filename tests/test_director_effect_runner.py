@@ -7,6 +7,7 @@ import copy
 import hashlib
 import importlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -259,3 +260,126 @@ async def test_failed_calls_are_not_scored_as_success_and_real_config_stays_unch
         assert "screens" not in result
     assert "CONFIG_SECRET" not in args.output.read_text(encoding="utf-8")
     assert not args.config_root.exists()
+
+
+async def test_codex_cli_runs_real_planner_without_business_config_or_http_registry(
+    runner, monkeypatch, tmp_path
+):
+    transport = importlib.import_module("director_codex_transport")
+    binary = str(tmp_path / "explicit-bundled-codex")
+    args = _args(
+        tmp_path,
+        transport="codex-cli",
+        codex_binary=binary,
+        config_root=None,
+    )
+    services = []
+    cli_invocations = []
+    planner_calls = []
+    fixed_output = json.dumps(
+        {
+            "screens": [
+                {
+                    "direction": "合成测试屏幕，不代表模型效果",
+                    "pairs": [
+                        {"card_refs": ["c01", "c02"], "role": "anchor", "intent": "合成主线"},
+                        {"card_refs": ["c03", "c04"], "role": "complement", "intent": "合成补充"},
+                        {"card_refs": ["c05", "c06"], "role": "exploration", "intent": "合成探索"},
+                    ],
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+    class FakeCLIService:
+        def __init__(self, *, binary):
+            self.binary = binary
+            self.model = "gpt-6-luna"
+            self.reasoning_effort = "low"
+            self.records = []
+            services.append(self)
+
+        async def complete_structured_task(self, **kwargs):
+            planner_calls.append(kwargs)
+            self.records.append({"completed": True, "tools_allowed": False, "event_count": 4})
+            return LLMResponse(
+                content=fixed_output,
+                model=self.model,
+                provider="codex_cli",
+                instance_id="temporary-codex-cli",
+                usage={"input_tokens": 100, "output_tokens": 30},
+            )
+
+    def forbidden_config_or_http(*args, **kwargs):
+        pytest.fail("CLI evaluation must not load business config, memory, or HTTP providers")
+
+    def fake_check_output(command, **kwargs):
+        cli_invocations.append(command)
+        if command == [binary, "--version"]:
+            return "codex-cli fixture-version\n"
+        assert command == ["git", "rev-parse", "HEAD"]
+        return "synthetic-code-sha\n"
+
+    for name in ("load_config", "build_llm_registry", "MemoryManager", "LLMService"):
+        monkeypatch.setattr(runner, name, forbidden_config_or_http)
+    monkeypatch.setattr(transport, "CodexCLIService", FakeCLIService)
+    monkeypatch.setattr(runner, "_legacy_prompt", lambda ref: "STATIC OLD SYSTEM")
+    monkeypatch.setattr(runner.subprocess, "check_output", fake_check_output)
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", "UNCHANGED_EXISTING_ROOT")
+    report = await runner.run(args)
+    assert os.environ["OPENBILICLAW_PROJECT_ROOT"] == "UNCHANGED_EXISTING_ROOT"
+    assert len(services) == 1 and services[0].binary == binary
+    assert cli_invocations == [[binary, "--version"], ["git", "rev-parse", "HEAD"]]
+    assert report["transport"] == "codex-cli"
+    assert report["route"] == {
+        "instance": "temporary-codex-cli",
+        "model": "gpt-6-luna",
+        "reasoning_effort": "low",
+        "fallback_enabled": False,
+        "model_verification": "explicit_cli_flag_not_server_echo",
+        "cli_version": "codex-cli fixture-version",
+        "cli_binary": binary,
+    }
+    assert report["production_planning_budget_seconds"] is None
+    assert report["max_tokens_and_temperature_enforced"] is False
+    assert report["cli_latency_includes_startup"] is True
+    assert report["online_user_satisfaction_test"] is False
+    assert report["jev_tested"] is False
+    assert "stopped_early" not in report
+    baseline, old, new = report["results"]
+    assert baseline["network_calls"] == 0
+    assert [old["condition"], new["condition"]] == ["legacy_prompt", "screen_policy"]
+    assert len(planner_calls) == 2
+    assert planner_calls[0]["system_instruction"] == "STATIC OLD SYSTEM"
+    assert "screen_policy" not in json.loads(planner_calls[0]["user_input"])
+    assert "screen_policy" in json.loads(planner_calls[1]["user_input"])
+    for result in (old, new):
+        assert result["plan_valid"] is True
+        assert result["first_screen_metrics"]["valid_selection"] is True
+        assert result["first_screen_metrics"]["selected_count"] == 6
+        assert len(result["screens"]) == 1
+        assert len(result["screens"][0]["pairs"]) == 3
+        assert result["cli_transport"] == {
+            "completed": True,
+            "tools_allowed": False,
+            "event_count": 4,
+        }
+        assert result["calls"][0]["raw_response"] == fixed_output
+        assert result["calls"][0]["provider"] == "codex_cli"
+    assert json.loads(args.output.read_text(encoding="utf-8")) == json.loads(json.dumps(report))
+
+
+async def test_codex_cli_rejects_business_instance_selector_before_external_calls(
+    runner, monkeypatch, tmp_path
+):
+    args = _args(tmp_path, transport="codex-cli", instance="configured-primary")
+
+    def forbidden_call(*args, **kwargs):
+        pytest.fail("invalid CLI configuration must not load config or invoke a command")
+
+    monkeypatch.setattr(runner, "load_config", forbidden_call)
+    monkeypatch.setattr(runner.subprocess, "check_output", forbidden_call)
+    with pytest.raises(ValueError, match="--instance is only used with configured transport"):
+        await runner.run(args)
+    assert not args.output.exists()
