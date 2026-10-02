@@ -193,7 +193,7 @@ async def test_recovered_transport_does_not_make_invalid_planner_output_valid(
     assert service.records[0]["stream_recovered"] is True
     assert result.plan is None
     assert result.reason_code == "invalid_planner_output"
-    assert result.calls == 1
+    assert result.calls == len(service.records) == 2
 
 
 async def test_recovered_valid_plan_crosses_actual_planner_boundary(transport, monkeypatch):
@@ -223,4 +223,4 @@ async def test_recovered_six_four_two_draft_still_fails_horizon_coverage(transpo
     assert service.records[0]["completed"] is True
     assert result.plan is None
     assert result.reason_code == "invalid_planner_output"
-    assert result.calls == 1
+    assert result.calls == len(service.records) == 2

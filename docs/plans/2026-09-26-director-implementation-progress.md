@@ -1,8 +1,56 @@
 # 推荐导演实施进度
 
-更新：2026-10-01。当前通道修复分支：`fix/director-cli-stream-recovery`，独立 worktree，基于覆盖优化 `a1ff1797` / `fix/director-horizon-completion`；前轮 CLI 评测为 `5419f168` / `test/director-codex-luna`，生产屏策略实现为 `4ead2946` / `feat/director-screen-policy`。未合入 main／发布，未改用户配置。
+更新：2026-10-02。当前真实验收修复分支：`fix/director-real-e2e-1002`，独立 worktree，基于通道修复 `d4691044` / `fix/director-cli-stream-recovery`；此前覆盖优化为 `a1ff1797` / `fix/director-horizon-completion`，CLI 评测为 `5419f168` / `test/director-codex-luna`，生产屏策略实现为 `4ead2946` / `feat/director-screen-policy`。未合入 main／发布，未改用户配置。
 
 架构依据：[三模式方案](2026-09-26-director-jev-modes.md)、[基础规格](2026-08-31-recommendation-director-spec.md)。
+
+## 真实请求与隔离数据端到端验收（2026-10-02）
+
+**结论：结构修复已落地，真实请求已执行，但不能签署完整 Agent / Jev 端到端通过。** 合成三场景通过生产结构校验，真实库存可产出有效 Agent 首屏；稳定的多屏供给、默认时限、语义去重仍未验收。以下保留所有失败，不用确定性回退、离线 fixture 或调大预算替代真实成功。
+
+### 修复内容
+
+- 按 diagnosing-bugs 先重现实际非法输出：重复选卡、把“不选”卡放进 pairs、选中与遗漏交叉，以及 6＋2 漏掉仍可用的一卡。v3 改为先判断有用供给、再排完整屏与合法短尾；当前明确意图贯穿未来屏，独立入口不等于无关内容。
+- Agent 模型边界改用 `c0..` 请求内短编号，严格映射回 canonical 身份；只翻译所选／遗漏，不改证据、文本、顺序或重复。未知编号仍拒绝，没有按猜测找相似卡或本地补卡。
+- `HorizonPlanner.plan(..., max_validation_retries=1)` 仅对非法 JSON／结构／引用／覆盖尝试一次模型纠正。原输入冻结、固定诊断与已知短编号回馈、总共至多两次调用，共用原 deadline；网络失败、超时、晚到和超大输出不重试。成功用量累加，默认 20 秒未改。按 codebase-design 将这些细节封装在 planner seam，不传播到调用方或存储协议。
+- 新增 `run_director_live_e2e.py`：源 SQLite 只读 online backup、白名单真实 memory 副本、生产 HTTP handler / SQLite / Soul / DirectorRuntime、真实 loopback TCP 与已登录 Luna CLI。仅临时进程启用 `agent_only/enforce`；反馈只写私有副本。关闭 ASGI lifespan，明确不验 discovery、长期学习、启动恢复或 Jev；报告不保存真实画像、候选、模型正文或异常正文。
+- 验收器也建立红测试并修正：无 future／空 tombstone 不能声称持久化成功；必须重启后真正消费 cached NEXT；HTTP 实际交付须与提交批次、卡序和推荐 ID 一致；STAY 对全部前屏去重。首屏没有 future 时单列 `first_plan_has_no_future_screen`，不能误怪弱点击，更不能算完整验收通过。
+
+### 真实 Luna 合成场景
+
+固定 `gpt-6-luna / low`、24 张合成候选、目标每屏 6 卡／3 屏、60 秒诊断预算。输入和模型均未替换成 mock，但内容／画像为合成案例，不是线上满意度实验。
+
+| 场景 | 最终屏形 | 规划总时长 / 调用数 | 结论 |
+|---|---|---|---|
+| 明确工程需求 | 6＋3 | 43.483 秒 / 2 | 首答漏三卡，模型纠正后选齐 9 张实践内容，没有纯户外填充 |
+| 局部反感夸张标题 | 6＋6＋4 | 19.538 秒 / 1 | 避开三张夸张卡，仍保留 AI；但屏目标与部分户外 pair 角色不完全吻合，note 错写总数 |
+| 一次弱点击 | 6＋6＋6 | 29.867 秒 / 1 | 没把点击写成喜欢／读完，保留户外；第二屏仍有一组预注册 RAG 同质重复 |
+
+[最终单臂矩阵](../../artifacts/director-effect-eval/luna-e2e-1002-final-matrix.json)三次均通过原生产 validator，但不是语义全绿。另一次[短编号首测](../../artifacts/director-effect-eval/luna-e2e-1002-short-refs-repair.json)在 19.020 秒一次生成合法 6＋3，note 却写 7 张／6＋1，说明自然语言计数仍不能作为权威结果。逐屏旧 `valid_selection` 包含满 target 长度，合法短尾可能为 false；结构结论看 `plan_valid` 和 `planning_completion`，新报告已加说明，不回改历史指标。
+
+中间探针也保留：[v2 基线](../../artifacts/director-effect-eval/luna-e2e-1002-baseline.json)、[早期 v3](../../artifacts/director-effect-eval/luna-e2e-1002-policy-v3.json)、[medium 诊断](../../artifacts/director-effect-eval/luna-e2e-1002-medium.json)、[供给先行首测](../../artifacts/director-effect-eval/luna-e2e-1002-supply-first.json)。medium 没解决结构问题，默认仍为 low；这些跨时间、部分不同 wrapper 的探针不是严格因果 A/B。
+
+### 真实画像／库存与 HTTP
+
+源库存本轮 shortlist 40 张，命名画像包含 32 个兴趣／131 个明确避雷。生产配置仍是 director off；API 写操作全在只读备份后的临时数据库，不修改真实库存、曝光或画像。
+
+- 修复前 [20 秒](../../artifacts/director-effect-eval/live-e2e-1002-20s.json)超时，回退被判失败；[60 秒](../../artifacts/director-effect-eval/live-e2e-1002-60s.json)返回未知编号与选中／遗漏交叉，仍被严格拒绝。
+- 修复后 [60 秒六卡屏](../../artifacts/director-effect-eval/live-e2e-1002-final-60s.json)两次规划各得到合法单屏（4 张、6 张），完成实际交付、精确恢复／幂等重放、子集 ACK 和点击幂等。第一份计划本来就没有未来屏，因此无法验收 cached NEXT；当时脚本误报弱点击丢计划，已用上述固定原因修正，原报告不重写。
+- 修复后 [默认 20 秒](../../artifacts/director-effect-eval/live-e2e-1002-final-20s.json)首答 13.486 秒生成有效 5 卡屏；下一轮模型先给空屏，再在共享 20 秒预算内纠正超时，明确回退。后台预排调用在报告单独标记，不藏进前台延迟或当成额外纠错。
+- [每屏两卡探针](../../artifacts/director-effect-eval/live-e2e-1002-pairs-60s.json)首轮遇 CLI 重连／未知错误，适配器拒绝而不是采纳可能的部分答案。没有因此放宽 CLI 成功合同。
+- [最终两卡屏复测](../../artifacts/director-effect-eval/live-e2e-1002-final-pairs-60s.json)首次漏解释三张候选；模型纠正后给出 4＋2，而目标是每屏 2 张，仍被严格拒绝。两次分别 13.037／18.132 秒，不是传输超时；保留失败，未增加第三次纠正或事后拆屏。
+- Playwright 使用真实桌面 `/web/` 和移动 `/m/`、无路由 mock：显示同一批十张、刷新恢复、实际可见 ACK 与一次点赞已在隔离 SQLite 查证。该批真实归属是 `deterministic`，原因为 `planner_timeout`（2 次调用），**只是回退路径及页面接线验证，不是 Agent 多屏成功**。首次生成未结束时手点“加载更多”得到 409，原生成完成后正常显示。截图只保存在忽略目录 `output/playwright/`，不提交真实推荐文字；[浏览器服务报告](../../artifacts/director-effect-eval/live-e2e-1002-browser.json) `passed=null` 不代表自动通过。
+
+完整严格脚本要求：NEXT1→可见 ACK／点击→cached NEXT2→明确反馈→fresh NEXT3→非空未来计划持久化→重启精确恢复→cached NEXT4→STAY，并要求五屏均为 Agent、无重复。没有走完的步骤不能用离线测试补签。Jev 凭据仍未配置，纯 Jev、混合修补与独立过滤的真实服务验收均未执行。
+
+浏览器追加点了移动端“换一批”：真实提交 `STAY`，体验序号保持 1，但仍为超时回退的十卡屏；[脱敏观察记录](../../artifacts/director-effect-eval/live-e2e-1002-browser-observations.json)与服务模型调用报告分开，不伪造自动 pass。浏览器及临时服务均已结束，私有副本按生命周期清理。
+
+### 代码验证与交付边界
+
+- 最终相关集 **1018 passed / 48 warnings**（105.03 秒）：`PYTHONPATH=src pytest tests/test_director_*.py tests/test_pair_*.py tests/test_decision_*.py tests/test_jev_*.py tests/test_semantic_filter.py -q --disable-warnings --maxfail=3`。包括真实 loopback HTTP／SQLite 加明确 fake 模型的验收器红绿回归，不把这 1018 项当成真实模型质量得分。
+- 全仓 `ruff check src/ tests/` 加三份评测脚本通过；`mypy src/` 加三脚本共 321 个源文件通过，变更 Python 格式检查通过。没有新增配置字段、依赖、数据库列、安装流程或用户界面实现。
+- 完整仓库 pytest 运行 856.33 秒后主动停止以收束到相关回归：当时 **3037 passed / 2 skipped**，约 28%，不是全仓通过，不与相关集叠加报数。
+- 真正未通过的是模型供给／结构稳定性与时延，不是把 HTTP 200 或有卡片当作成功就能消除的问题。保留原 20 秒及严格合同、没有默认启用导演、没有改真实偏好以凑通过。需要后续更稳定的模型输出与 Jev 本机凭据才能完成剩余真实模式验收。
 
 ## 临时 CLI 的重连恢复修复（2026-10-01）
 

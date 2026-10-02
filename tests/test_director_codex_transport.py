@@ -22,6 +22,11 @@ def _jsonl(*events):
     return "\n".join(json.dumps(event, ensure_ascii=False) for event in events).encode()
 
 
+def test_eval_wrapper_does_not_mislabel_real_snapshot_data_as_synthetic(transport):
+    assert "synthetic" not in transport._WRAPPER
+    assert "Use only the supplied data" in transport._WRAPPER
+
+
 def _complete_events():
     return [
         {"type": "thread.started", "thread_id": "not-retained-thread-id"},

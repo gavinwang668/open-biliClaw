@@ -155,6 +155,16 @@ def test_legacy_persisted_policy_plan_is_readable_but_invalidated(strategy):
     assert plan_needs_replanning(request, restored, strategy=strategy)
 
 
+@pytest.mark.parametrize("strategy", ["agent_jev", "agent_only"])
+def test_v2_future_plan_is_readable_but_replanned_for_live_output_clarifications(strategy):
+    request = _request()
+    data = _horizon(request).model_dump(mode="json")
+    data["planning_policy_version"] = "director-screen-policy.v2"
+    restored = HorizonPlan.model_validate_json(json.dumps(data))
+    assert restored.planning_policy_version == "director-screen-policy.v2"
+    assert plan_needs_replanning(request, restored, strategy=strategy)
+
+
 def test_title_duplicate_diagnostic_never_certifies_semantics_or_relaxes_constraints():
     request = _request(target=2)
     cards = (

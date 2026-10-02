@@ -170,11 +170,32 @@ async def test_pair_question_golden_binds_static_instructions_and_exact_dynamic_
     # option ordering; excludes runtime request identity/deadline. Deliberate
     # prompt/transport changes require reviewing this golden and schema version.
     assert (
-        decision.input_digest == "a3912e18ea40a4b34ce81fd6552c18a8d5879520268e5903311319b589053d31"
+        decision.input_digest == "867e09f8bbbe86f1cd673278efdd8fe3530a31608fb3d10af9c22cb58cab0fb5"
     )
-    # Only the shared policy version changed (v2 fences old Agent plans); Jev
-    # question schema/instructions/options stay byte-for-byte compatible here.
+    # v3 changes the policy namespace and shared steps 2/3, making independent
+    # choices obey explicit intent. Restore precisely those fields to prove
+    # schema, options, remaining instructions and dynamic context did not drift.
     old = decision.model_dump(mode="python")
+    instruction = old["questions"]["pair"]["instructions"]
+    prefix, rest = instruction.split("2. Decide the screen's task:", 1)
+    _, suffix = rest.split("4. Choose each pair", 1)
+    old["questions"]["pair"]["instructions"] = (
+        prefix
+        + """2. Decide the screen's task: follow an explicit intent, deepen, change angle,
+browse, explore a related direction, or redirect when the user asks. If evidence
+is weak, keep independently useful browsing choices; do not invent a storyline.
+3. Assign useful roles from actual candidate supply: anchor directly serves
+the task, complement adds a distinct case/method/limitation/perspective,
+exploration offers a justified bridge to a new interest, open preserves an
+independent browsing choice. No fixed exploration ratio or forced role coverage.
+4. Choose each pair"""
+        + suffix
+    )
+    old["state"]["screen_policy"]["version"] = "director-screen-policy.v2"
+    assert (
+        DecisionRequest.model_validate(old).input_digest
+        == "a3912e18ea40a4b34ce81fd6552c18a8d5879520268e5903311319b589053d31"
+    )
     old["state"]["screen_policy"]["version"] = "director-screen-policy.v1"
     assert (
         DecisionRequest.model_validate(old).input_digest

@@ -268,15 +268,16 @@ async def test_failed_calls_are_not_scored_as_success_and_real_config_stays_unch
     for result in results[1:]:
         assert result["plan_valid"] is False
         assert result["reason"] in {"planner_unavailable", "invalid_planner_output"}
-        assert len(result["calls"]) == 1
+        assert len(result["calls"]) == (1 if failure == "exception" else 2)
         assert "first_screen_metrics" not in result
         assert "screens" not in result
     assert "CONFIG_SECRET" not in args.output.read_text(encoding="utf-8")
     assert not args.config_root.exists()
 
 
+@pytest.mark.parametrize("effort", ["low", "medium"])
 async def test_codex_cli_runs_real_planner_without_business_config_or_http_registry(
-    runner, monkeypatch, tmp_path
+    runner, monkeypatch, tmp_path, effort
 ):
     transport = importlib.import_module("director_codex_transport")
     binary = str(tmp_path / "explicit-bundled-codex")
@@ -284,6 +285,7 @@ async def test_codex_cli_runs_real_planner_without_business_config_or_http_regis
         tmp_path,
         transport="codex-cli",
         codex_binary=binary,
+        codex_reasoning_effort=effort,
         config_root=None,
     )
     services = []
@@ -296,9 +298,9 @@ async def test_codex_cli_runs_real_planner_without_business_config_or_http_regis
                 {
                     "direction": "合成测试屏幕，不代表模型效果",
                     "pairs": [
-                        {"card_refs": ["c01", "c02"], "role": "anchor", "intent": "合成主线"},
-                        {"card_refs": ["c03", "c04"], "role": "complement", "intent": "合成补充"},
-                        {"card_refs": ["c05", "c06"], "role": "exploration", "intent": "合成探索"},
+                        {"card_refs": ["c0", "c1"], "role": "anchor", "intent": "合成主线"},
+                        {"card_refs": ["c2", "c3"], "role": "complement", "intent": "合成补充"},
+                        {"card_refs": ["c4", "c5"], "role": "exploration", "intent": "合成探索"},
                     ],
                 }
             ],
@@ -307,10 +309,10 @@ async def test_codex_cli_runs_real_planner_without_business_config_or_http_regis
     )
 
     class FakeCLIService:
-        def __init__(self, *, binary):
+        def __init__(self, *, binary, reasoning_effort="low"):
             self.binary = binary
             self.model = "gpt-6-luna"
-            self.reasoning_effort = "low"
+            self.reasoning_effort = reasoning_effort
             self.records = []
             services.append(self)
 
@@ -348,7 +350,7 @@ async def test_codex_cli_runs_real_planner_without_business_config_or_http_regis
     assert report["route"] == {
         "instance": "temporary-codex-cli",
         "model": "gpt-6-luna",
-        "reasoning_effort": "low",
+        "reasoning_effort": effort,
         "fallback_enabled": False,
         "model_verification": "explicit_cli_flag_not_server_echo",
         "cli_version": "codex-cli fixture-version",
@@ -360,7 +362,8 @@ async def test_codex_cli_runs_real_planner_without_business_config_or_http_regis
     assert report["online_user_satisfaction_test"] is False
     assert report["jev_tested"] is False
     assert report["evaluation_design"] == "current_policy_single_arm"
-    assert report["policy_version"] == runner.DIRECTOR_POLICY_VERSION == "director-screen-policy.v2"
+    assert "legally approved short tail" in report["selection_metric_note"]
+    assert report["policy_version"] == runner.DIRECTOR_POLICY_VERSION == "director-screen-policy.v3"
     assert "not a concurrent A/B" in report["comparison"]
     assert "frozen v1 reports separately" in report["comparison"]
     assert "legacy_ref" not in report
@@ -381,6 +384,7 @@ async def test_codex_cli_runs_real_planner_without_business_config_or_http_regis
             "tools_allowed": False,
             "event_count": 4,
         }
+        assert result["cli_transport_attempts"] == [result["cli_transport"]]
         assert result["calls"][0]["raw_response"] == fixed_output
         assert result["calls"][0]["provider"] == "codex_cli"
         assert result["planning_completion"]["reason"] == "target_reached"
@@ -400,6 +404,21 @@ async def test_codex_cli_rejects_business_instance_selector_before_external_call
     monkeypatch.setattr(runner, "load_config", forbidden_call)
     monkeypatch.setattr(runner.subprocess, "check_output", forbidden_call)
     with pytest.raises(ValueError, match="--instance is only used with configured transport"):
+        await runner.run(args)
+    assert not args.output.exists()
+
+
+@pytest.mark.parametrize("transport,effort", [("configured", "medium"), ("codex-cli", "invalid")])
+async def test_cli_effort_guard_runs_before_external_calls(
+    runner, monkeypatch, tmp_path, transport, effort
+):
+    def forbidden_call(*args, **kwargs):
+        pytest.fail("invalid effort must fail before configuration or external calls")
+
+    monkeypatch.setattr(runner, "load_config", forbidden_call)
+    monkeypatch.setattr(runner.subprocess, "check_output", forbidden_call)
+    args = _args(tmp_path, transport=transport, codex_reasoning_effort=effort)
+    with pytest.raises(ValueError, match="reasoning effort|reasoning-effort"):
         await runner.run(args)
     assert not args.output.exists()
 

@@ -136,17 +136,17 @@ async def test_invalid_or_unsupported_brief_never_becomes_plan(field, value) -> 
     result = await HorizonPlanner(llm).plan(request, horizon_screens=1)
     assert result.plan is None
     assert result.reason_code == "invalid_planner_output"
-    assert result.calls == len(llm.calls) == 1
+    assert result.calls == len(llm.calls) == 2
 
 
-async def test_unknown_pair_role_is_rejected_without_a_second_model_call() -> None:
+async def test_unknown_pair_role_still_fails_after_one_bounded_model_correction() -> None:
     request = _request()
     output = _output(request)
     output["screens"][0]["pairs"][0]["role"] = "guaranteed_click"
     llm = _LLM(canonical_json(output))
     result = await HorizonPlanner(llm).plan(request, horizon_screens=1)
     assert result.plan is None and result.reason_code == "invalid_planner_output"
-    assert len(llm.calls) == 1
+    assert result.calls == len(llm.calls) == 2
 
 
 async def test_missing_legacy_brief_and_role_get_honest_conservative_defaults() -> None:
@@ -224,6 +224,64 @@ async def test_multi_screen_target_is_separate_from_single_screen_policy() -> No
     assert len(llm.calls) == 1
 
 
+async def test_live_failure_prompt_contract_scopes_open_roles_and_checks_selected_counts() -> None:
+    """Prompt contract only; live selection quality needs separate model evidence."""
+    request = _request()
+    llm = _LLM(_planner_output(request))
+    assert (await HorizonPlanner(llm).plan(request)).plan is not None
+    prompt = " ".join(llm.calls[0]["system_instruction"].split())
+    shared = " ".join(DIRECTOR_POLICY_INSTRUCTIONS.split())
+    assert "Independent means useful without other cards, not unrelated to the request" in shared
+    assert "Without explicit intent, stable interests may supply cross-interest variety" in shared
+    assert "Every pair in pairs is selected for display" in prompt
+    assert "Rejected or review-only pairs must never appear in screens" in prompt
+    assert "count the actual card_refs in every screen" in prompt
+    assert "target_reached if and only if" in prompt
+    assert "otherwise use supply_exhausted" in prompt
+    assert DIRECTOR_POLICY_VERSION == "director-screen-policy.v3"
+    assert len(llm.calls) == 1
+
+
+async def test_planner_prompt_decides_useful_supply_before_layout_and_serializes_it_first() -> None:
+    """Guard planning order, without claiming a model obeys the prompt."""
+    request = _request()
+    llm = _LLM(_planner_output(request))
+    assert (await HorizonPlanner(llm).plan(request)).plan is not None
+    original = llm.calls[0]["system_instruction"]
+    shape, _ = json.JSONDecoder().raw_decode(
+        original.split("Return only JSON with this shape:\n", 1)[1]
+    )
+    assert list(shape) == ["completion", "screens"]
+    prompt = " ".join(original.split())
+    assert "Decide useful supply before designing screen layouts" in prompt
+    assert "Output completion first and screens second" in prompt
+    assert "ten useful unique cards support 6 + 4, not three screens" in prompt
+    assert "No placeholder or 'not selected' pair" in prompt
+    assert "useful unique supply takes priority over the requested screen count" in prompt
+    assert "desired full-horizon target" in prompt
+    assert "satisfy it whenever useful hard-feasible supply permits" in prompt
+    assert (
+        "If that supply fills the requested horizon, use target_reached and empty omissions"
+        in prompt
+    )
+    assert len(llm.calls) == 1
+
+
+async def test_completion_first_is_a_generation_order_not_a_new_validation_requirement() -> None:
+    request = _request()
+    payload = json.loads(_planner_output(request))
+    completion_first = {"completion": payload["completion"], "screens": payload["screens"]}
+    outputs = (_planner_output(request), json.dumps(completion_first))
+    plans = []
+    for text in outputs:
+        llm = _LLM(text)
+        result = await HorizonPlanner(llm).plan(request, now_epoch=100.0)
+        assert result.plan is not None
+        assert len(llm.calls) == 1
+        plans.append(result.plan)
+    assert plans[0] == plans[1]
+
+
 @pytest.mark.parametrize("audit_omissions", [True, False])
 async def test_semantic_short_tail_needs_audited_unused_supply(audit_omissions: bool) -> None:
     request = _request()
@@ -247,7 +305,7 @@ async def test_semantic_short_tail_needs_audited_unused_supply(audit_omissions: 
     }
     llm = _LLM(canonical_json(output))
     result = await HorizonPlanner(llm).plan(request)
-    assert len(llm.calls) == 1
+    assert result.calls == len(llm.calls) == (1 if audit_omissions else 2)
     if not audit_omissions:
         assert result.plan is None and result.reason_code == "invalid_planner_output"
         return

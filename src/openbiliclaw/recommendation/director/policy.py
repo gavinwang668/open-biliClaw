@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from .models import CompositionCard, CompositionRequest, PairAlternative
 
-DIRECTOR_POLICY_VERSION = "director-screen-policy.v2"
+DIRECTOR_POLICY_VERSION = "director-screen-policy.v3"
 PairRole = Literal["anchor", "complement", "exploration", "open"]
 PAIR_ROLE_INTENTS: dict[PairRole, str] = {
     "anchor": "Directly serve the screen objective with independently useful entries.",
@@ -43,11 +43,15 @@ exposure is not consumption, and no action is not dislike. Never infer fatigue,
 mastery, completion or viewing duration from these records.
 2. Decide the screen's task: follow an explicit intent, deepen, change angle,
 browse, explore a related direction, or redirect when the user asks. If evidence
-is weak, keep independently useful browsing choices; do not invent a storyline.
+is weak, keep independently useful choices within the current explicit intent
+when present; do not invent a storyline. Without explicit intent, stable interests
+may supply cross-interest variety. Weak feedback does not cancel an explicit request.
 3. Assign useful roles from actual candidate supply: anchor directly serves
 the task, complement adds a distinct case/method/limitation/perspective,
-exploration offers a justified bridge to a new interest, open preserves an
-independent browsing choice. No fixed exploration ratio or forced role coverage.
+exploration offers a justified bridge and open preserves an independent choice,
+both within the current explicit intent when present. Independent means useful
+without other cards, not unrelated to the request. No fixed exploration ratio
+or forced role coverage; do not fill an open role with off-intent content.
 4. Choose each pair for its marginal contribution to the selected draft, not
 two isolated high scores. Avoid paraphrase duplicates and leave suitable supply
 for remaining roles. Two cards may complement each other but must each stand

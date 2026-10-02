@@ -18,6 +18,8 @@ optional Director (default off; separate decision credentials):
       ├→ recurrent Jev pairs
       ├→ Agent horizon + Jev local repairs
       └→ Agent-only horizon (no Jev orchestration)
+         Agent plan → local short refs / canonical restore → strict validation
+                    → at most one correction within original deadline
     → tentative screen → fresh eligibility + state/fence/plan CAS → atomic commit
     → immutable batch → visible ACK / exact click & feedback → future drafts
   independent discovery semantic filter → shared bounded decision provider → Jev
@@ -346,7 +348,7 @@ Web durable turn 只在成功 completion CAS 后交接认知与成功事件；�
 
 ### Recommendation Engine (`recommendation/`)
 - 推荐排序与朋友式推荐表达生成；统一从候选池读取
-- `recommendation/director/` 默认关闭；启用后提供 Jev 二卡递推、Agent 多屏草稿 + Jev 局部修补、纯 Agent 预排。`policy.py` 将画像、最近三屏真实经历与 ≤40 张个性化候选转为共用的屏目标／证据／软角色上下文：Jev 一次选择 pair + role，Agent 一次给出最多三屏 brief 和具体配对。`horizon_coverage.py` 统一目标覆盖与合法提前结束：多屏草稿 → 未用候选说明／剩余硬可扩展性校验 → 初始 completion 留痕；修补保留原职责及语义短尾，不机械补满。校验并原子提交 ≤20 张的不可变屏，真实可见 ACK 和精确反馈影响后续草稿。服务失败明确回退，配置／策略换代使旧计划失效；没有固定探索配额，局部硬可行性与标题重复诊断不代表语义质量或全局最优认证。详见[运行时合同](modules/director.md)。
+- `recommendation/director/` 默认关闭；启用后提供 Jev 二卡递推、Agent 多屏草稿 + Jev 局部修补、纯 Agent 预排。`policy.py` 将画像、最近三屏真实经历与 ≤40 张个性化候选转为共用的屏目标／证据／软角色上下文：Jev 一次选择 pair + role，Agent 先判断有用供给，再规划最多三屏 brief 和具体配对。`planner_refs.py` 仅在 Agent seam 使用 `c0..` 短引用，还原所选／遗漏而不改 evidence refs；`horizon_coverage.py` 统一目标覆盖与合法提前结束，保留初始 completion。首次非法 JSON／结构／引用／覆盖可在原总 deadline 内纠正一次（总调用 ≤2，已知用量累计），网络／超时不因此重试；修补保留原职责及语义短尾，不机械补满。校验并原子提交 ≤20 张的不可变屏，真实可见 ACK 和精确反馈影响后续草稿。服务失败明确回退，配置／策略换代使旧计划失效；没有固定探索配额，局部硬可行性与标题重复诊断不代表语义质量或全局最优认证。隔离验收脚本通过只读生产数据快照与真实 loopback HTTP／Luna 调用检查该链路，不启动发现／长期学习／恢复／Jev，不向源数据写入。详见[运行时合同](modules/director.md)。
 - 文案生成与 admitted backlog 解耦：canonical `copy_ready` 使用全部 serve gate 但不套 topic 展示窗口。正数水位生成量为 `max(copy_ready_target-copy_ready, min(pool_target-available, admitted_pending_available))`，再受全部 pending 与单批上限钳制；锁内先领取能净增 topic 展示窗口的行，公开目标达到后只维持 copy-ready 水位。serve/feedback/delight/maintenance 只发非阻塞 refill 通知，provider 工作由 coordinator 承担并在 expression lock 内复核缺口。`0` 是 legacy drain-all 回滚，任何模式都不放松非空文案硬门。
 - 惊喜队列 `GET /api/delight/pending-batch` 的完整阈值和候选读取在 FastAPI 线程池执行，避免手机刷新时占住主 API 事件循环、拖住独立推荐进程的转发响应；队列筛选和返回结构不变。
 - 惊喜推荐复用普通推荐的 copy-ready 与 canonical `seen_items` 状态门：`pool_expression / pool_topic_label` 未同时生成，或身份已经看过时，候选不进入惊喜打分、动态阈值样本、计数或 pending 出口。正式文案就绪后才复用 Evo 的 `relevance_score` 打分，并由条件写入原子同步 `delight_reason / delight_hook`；pending API、CLI 与 runtime stream 继续校验精确快照。evaluator 的内部 `relevance_reason` 永不作为惊喜状态或 UI 推荐理由；旧版错写快照在正式文案就绪后由后台 backfill 修复。普通推荐只在高分行已被 profile-aware 惊喜打分并同步快照后让出该行。移动 Web、桌面 Web 与插件的“×”统一调用 `dismiss`：它不是临时隐藏，而是把 canonical identity 写入 `seen_items` 后永久消费该惊喜。

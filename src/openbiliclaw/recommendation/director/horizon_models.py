@@ -122,7 +122,7 @@ class HorizonPlan(_Model):
 class PlanningResult(_Model):
     plan: HorizonPlan | None = None
     reason_code: _Key
-    calls: int = Field(ge=0, le=1)
+    calls: int = Field(ge=0, le=2)
 
 
 class DirectorPair(_Model):

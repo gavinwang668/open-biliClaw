@@ -42,13 +42,15 @@ from openbiliclaw.recommendation.director.planner import HorizonPlanner  # noqa:
 from openbiliclaw.recommendation.director.policy import DIRECTOR_POLICY_VERSION  # noqa: E402
 
 if TYPE_CHECKING:
+    from director_codex_transport import CodexCLIService
+
     from openbiliclaw.llm.base import LLMResponse
 
 
 class RecordingLLM:
     """Record actual transport outputs without replacing or judging the model."""
 
-    def __init__(self, service: LLMService) -> None:
+    def __init__(self, service: LLMService | CodexCLIService) -> None:
         self.service = service
         self.calls: list[dict[str, Any]] = []
 
@@ -122,13 +124,20 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     if conditions != ["screen_policy"]:
         raise ValueError("current single-arm evaluation only accepts --conditions screen_policy")
     transport = getattr(args, "transport", "configured")
+    effort = getattr(args, "codex_reasoning_effort", "low")
+    if effort not in {"low", "medium"}:
+        raise ValueError("CLI evaluation reasoning effort must be low or medium")
+    if transport != "codex-cli" and effort != "low":
+        raise ValueError("--codex-reasoning-effort only applies to codex-cli transport")
     cli_service = None
     if transport == "codex-cli":
         from director_codex_transport import CodexCLIService
 
         if args.instance:
             raise ValueError("--instance is only used with configured transport")
-        cli_service = CodexCLIService(binary=getattr(args, "codex_binary", "codex"))
+        cli_service = CodexCLIService(
+            binary=getattr(args, "codex_binary", "codex"), reasoning_effort=effort
+        )
         route_metadata = {
             "instance": "temporary-codex-cli",
             "model": cli_service.model,
@@ -202,6 +211,11 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         "comparison": "Current policy with its strict completion contract only. Compare frozen v1 reports separately; this is not a concurrent A/B. The deterministic pair baseline is NOT production MMR.",
         "repeats": args.repeats,
         "horizon_screens": args.horizon,
+        "selection_metric_note": (
+            "Per-screen valid_selection includes matching target_count; a legally approved "
+            "short tail may be false. plan_valid and planning_completion report the actual "
+            "production contract. Semantic quality is not certified."
+        ),
         "cases": [
             {
                 "case_id": c.case_id,
@@ -250,6 +264,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                         flush=True,
                     )
                     recorder = RecordingLLM(service)
+                    cli_record_start = len(cli_service.records) if cli_service is not None else 0
                     started = time.monotonic()
                     planning = await HorizonPlanner(recorder).plan(
                         case.request,
@@ -266,7 +281,12 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
                         "plan_valid": planning.plan is not None,
                     }
                     if cli_service is not None:
-                        entry["cli_transport"] = copy.deepcopy(cli_service.records[-1])
+                        attempts = copy.deepcopy(cli_service.records[cli_record_start:])
+                        entry["cli_transport_attempts"] = attempts
+                        # Legacy field names the last attempt only. Retain every
+                        # validation-correction call separately, never hide cost.
+                        if attempts:
+                            entry["cli_transport"] = attempts[-1]
                     if planning.plan is not None:
                         screens = planning.plan.screens
                         refs = tuple(ref for screen in screens for ref in screen.card_refs)
@@ -333,6 +353,7 @@ def main() -> None:
     parser.add_argument("--config-root", type=Path)
     parser.add_argument("--transport", choices=("configured", "codex-cli"), default="configured")
     parser.add_argument("--codex-binary", default="codex")
+    parser.add_argument("--codex-reasoning-effort", choices=("low", "medium"), default="low")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", default="")
     parser.add_argument("--instance", default="")

@@ -709,10 +709,11 @@ async def test_planner_makes_one_real_structured_call_with_static_prompt_and_con
     ],
 )
 async def test_invalid_planner_output_never_becomes_cached_plan(content: str) -> None:
-    result = await HorizonPlanner(_LLM(content)).plan(_request(), now_epoch=100.0)
+    llm = _LLM(content)
+    result = await HorizonPlanner(llm).plan(_request(), now_epoch=100.0)
     assert result.plan is None
     assert result.reason_code == "invalid_planner_output"
-    assert result.calls == 1
+    assert result.calls == len(llm.calls) == 2
 
 
 async def test_planner_does_not_relax_hard_minimum_on_shortage() -> None:

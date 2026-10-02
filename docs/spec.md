@@ -299,6 +299,8 @@ optional Director (default off; separate decision credentials):
       ├→ recurrent Jev pairs
       ├→ Agent horizon + Jev local repairs
       └→ Agent-only horizon (no Jev orchestration)
+         Agent plan → local short refs / canonical restore → strict validation
+                    → at most one correction within original deadline
     → tentative screen → fresh eligibility + state/fence/plan CAS → atomic commit
     → immutable batch → visible ACK / exact click & feedback → future drafts
   independent discovery semantic filter → shared bounded decision provider → Jev
@@ -414,7 +416,10 @@ pool maintenance → isolated maintenance DB worker → ≤50 mutations/transact
 独立 `decision/` 与 `[llm]` 凭据和路由隔离。默认关闭的 `[director]` 接通 Jev 逐对、
 Agent+Jev 修补、Agent-only 三策略，`[discovery.semantic_filter]` 独立控制过滤。
 三策略共用屏 brief／事件证据／软角色策略：先定本屏任务，再比较每对的增量价值和整屏覆盖。
-Jev 每步一次联合选择 pair + role；Agent 一次输出具体多屏目标，修补带上原角色与剩余草稿。
+Jev 每步一次联合选择 pair + role；Agent 先判断有用供给，再规划具体多屏目标，修补带上原角色与剩余草稿。
+Agent 模型 seam 使用本次 `c0..` 短引用，只还原所选／遗漏，不翻译证据引用；所有既有校验仍执行。
+首次 JSON／结构／引用／覆盖不合法时至多纠正一次，总调用 ≤2，共用原默认 20 秒 deadline；
+用量累计、网络／超时不重试，无新配置、不提高生产预算。生成建议 completion 在先，旧 JSON 键顺序仍兼容。
 Agent 预排 → 目标覆盖／合法短尾校验 → 初始 completion 留痕；修补不机械补满语义短尾。
 提前停排必须说明遗漏候选并通过剩余硬可行性检查；仅给定前缀的验证，不证明语义质量或全局最优。
 角色不是固定比例或硬配额，整屏自检是模型指令；程序仅报告规范化标题重复，不认证语义质量。
@@ -422,6 +427,10 @@ Agent 预排 → 目标覆盖／合法短尾校验 → 初始 completion 留痕�
 后整屏提交，实际可见 ACK 才计曝光，点击与明确反馈精确关联批次。三端和 CLI 接通协议，
 模式设置使用 TOML，未增加图形探测或安装依赖；未实测真实模型质量。见
 [决策模块](modules/decision.md)、[导演运行时](modules/director.md)及[设计](plans/2026-09-26-director-jev-modes.md)。
+
+可选 `run_director_live_e2e.py --real` 用源库只读 backup 与白名单 memory 副本，经真实 loopback TCP
+HTTP／SQLite／Soul／Luna 验收；测试反馈只写临时副本，报告只留安全结构数据。关闭 ASGI lifespan，
+不覆盖 discovery、长期学习、后台恢复或 Jev；`--serve` 仅供临时浏览器检查，启动成功不代表验收通过。
 
 应用内 Tailnet 的产品边界是“让电脑端应用本身成为一个 tailnet 节点”，而不是要求电脑全局
 开启 Tailscale。`[tailnet].enabled=false` 保持默认；开启时 CLI / 桌面入口在 uvicorn 外层托管

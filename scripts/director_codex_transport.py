@@ -1,4 +1,4 @@
-"""Temporary Codex CLI transport for synthetic director evaluation only.
+"""Temporary Codex CLI transport for isolated director evaluation only.
 
 No production route, user config, auth import, candidate lookup or model tools.
 Saved CLI authentication is handled by Codex itself. CLI overhead and token
@@ -45,7 +45,7 @@ _DISABLED_FEATURES = (
     "goals",
 )
 _WRAPPER = (
-    "This is a self-contained synthetic recommendation evaluation. "
+    "This is a self-contained recommendation evaluation. "
     "Use only the supplied data. Do not use tools, files, browsing or external knowledge. "
     "Return only the requested final JSON, without commentary or reasoning transcripts."
 )
