@@ -1,5 +1,13 @@
 # 后端 API
 
+## Jev 完整候选评估配置
+
+`GET/PUT /api/config` 支持 `discovery.eval_scorer="jev"` 及
+`discovery.jev_evaluation` 的预算 / 受控词表。只读 `discovery.jev_provider` 报告
+provider 准备情况，不返回凭据。保存前校验启用状态、固定版本、凭据和多模态 / 预过滤
+冲突，失败不得写配置或留下表面成功的旧路由。运行时的完整评估器由共享独立 decision
+provider 提供；单条 / 批量 / 旧池恢复均使用它，聊天、搜索与推荐表达保持原有 LLM 路由。
+
 ## 概述
 
 `src/openbiliclaw/api/` 暴露本地 FastAPI 契约，并把 UI 请求编排到 durable storage、Soul、Dialogue 与 runtime。本文记录配置、迁移、推荐和对话等公开端点；通用鉴权见 [api-auth.md](api-auth.md)，初始化端点见 [init.md](init.md)。

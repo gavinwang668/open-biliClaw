@@ -273,7 +273,9 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     )
     director_runtime = (
         build_director_runtime(config, database, recommendation_engine, llm_service)
-        if director_mode != "off" or filter_mode != "off"
+        if director_mode != "off"
+        or filter_mode != "off"
+        or getattr(config.discovery, "eval_scorer", "llm") == "jev"
         else None
     )
 
@@ -286,7 +288,12 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
     )
     discovery_cfg = getattr(config, "discovery", None)
     semantic_filter_options: dict[str, Any] = (
-        {"semantic_filter": director_runtime.semantic_filter} if director_runtime else {}
+        {
+            "semantic_filter": director_runtime.semantic_filter,
+            "jev_evaluator": director_runtime.jev_evaluator,
+        }
+        if director_runtime
+        else {}
     )
 
     discovery_engine = ContentDiscoveryEngine(
@@ -298,6 +305,8 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         eval_scorer=str(getattr(discovery_cfg, "eval_scorer", "llm")),
         **semantic_filter_options,
     )
+    if getattr(discovery_cfg, "eval_scorer", "llm") == "jev":
+        recommendation_engine.bind_content_evaluator(discovery_engine)
     search_strategy = SearchStrategy(
         llm_service=llm_service,
         bilibili_client=bilibili_client,

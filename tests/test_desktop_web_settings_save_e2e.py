@@ -361,6 +361,52 @@ def test_advanced_evaluator_mode_defaults_to_agent_and_round_trips(
     assert stub.saved_payloads[0]["discovery"]["eval_scorer"] == "shadow"
 
 
+def test_jev_evaluator_selection_saves_and_survives_reload(
+    settings_save_server: tuple[str, SettingsSaveStub],
+    chromium_page: Page,
+) -> None:
+    """Real UI assets round-trip the mode against an isolated config fixture."""
+    base_url, stub = settings_save_server
+    with stub.lock:
+        stub.config["discovery"]["jev_provider"] = {
+            "enabled": True,
+            "ready": True,
+            "model": "jev-1.13.0",
+            "api_key_env": "TYPESAFE_API_KEY",
+            "reason": "本机配置就绪（未联网验证）",
+        }
+    page = chromium_page
+    page.goto(f"{base_url}/web/")
+    page.get_by_role("button", name="设置", exact=True).click()
+    page.get_by_role("tab", name="高级功能").click()
+    mode = page.get_by_role("combobox", name="候选评估器", exact=True)
+    expect(mode.locator('option[value="jev"]')).to_have_js_property("disabled", False)
+    mode.select_option("jev")
+    page.get_by_role("button", name="保存配置").click()
+    expect(page.locator("#settingsSaveMsg")).to_have_text("配置已保存，正在后台应用…")
+    assert stub.saved_payloads[-1]["discovery"]["eval_scorer"] == "jev"
+
+    page.reload()
+    page.get_by_role("button", name="设置", exact=True).click()
+    page.get_by_role("tab", name="高级功能").click()
+    expect(page.get_by_role("combobox", name="候选评估器", exact=True)).to_have_value("jev")
+    expect(page.get_by_text("仅文本，不支持封面图片。", exact=False)).to_be_visible()
+
+
+def test_jev_evaluator_option_disabled_without_provider_readiness(
+    settings_save_server: tuple[str, SettingsSaveStub],
+    chromium_page: Page,
+) -> None:
+    base_url, _ = settings_save_server
+    page = chromium_page
+    page.goto(f"{base_url}/web/")
+    page.get_by_role("button", name="设置", exact=True).click()
+    page.get_by_role("tab", name="高级功能").click()
+    mode = page.get_by_role("combobox", name="候选评估器", exact=True)
+    expect(mode).to_have_value("llm")
+    expect(mode.locator('option[value="jev"]')).to_have_js_property("disabled", True)
+
+
 def test_external_runtime_config_event_rehydrates_settings(
     settings_save_server: tuple[str, SettingsSaveStub],
     chromium_page: Page,

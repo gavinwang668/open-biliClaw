@@ -28,6 +28,7 @@ skills = build_agent_skills(adapter)
 
 - 多源推荐：推荐、换一批、追加、平台范围、排除项；内容使用 `item_key/content_id/source_platform`，同时保留 `bvid/up_name` 兼容字段。
 - 推荐导演：可配置 Jev 逐对编排、Agent 提前编排 + Jev 修补、纯 Agent 提前编排；共用整屏提交、恢复与实际呈现确认合同，独立 Jev 过滤也接入 bootstrap。
+- 完整候选评估：`discovery.eval_scorer="jev"` 复用同一纯文本 Jev evaluator，含旧推荐池补评；不要求开启导演，不隐式回退 LLM。需在宿主后端进程配置 provider 与环境变量凭据，失败保持待评估。
 - 反馈与主动发现：推荐反馈、惊喜卡片的 view/like/dislike/dismiss/chat、兴趣和避雷探针的 confirm/reject/defer/chat。
 - 画像与对话：画像摘要、完整 overlay 编辑状态、确定性编辑、带 durable `turn_id` 的 Socratic chat 和历史读取。
 - 运行态：runtime status、activity feed、平台库存可用量、账号同步。

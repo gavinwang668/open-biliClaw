@@ -10625,6 +10625,13 @@ ${cardFeedbackBarHtml()}`;
 
       const discovery = config.discovery || {};
       setSelect("evalScorer", discovery.eval_scorer || "llm");
+      const jevProvider = discovery.jev_provider || {};
+      const jevOption = $("#evalScorer")?.querySelector('option[value="jev"]');
+      if (jevOption) jevOption.disabled = jevProvider.ready !== true;
+      const jevStatus = $("#jevEvaluatorStatus");
+      if (jevStatus) {
+        jevStatus.textContent = `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "需在 TOML 启用 provider 并设置后端环境变量。"} 环境变量名：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}（只在后端设置，不在页面填写 Key）。`;
+      }
       setSelect("keywordGenerationMode", discovery.keyword_generation_mode || "hybrid");
       const multimodalEvaluation = $("#multimodalEvaluationEnabled");
       if (multimodalEvaluation) multimodalEvaluation.checked = discovery.multimodal_evaluation_enabled === true;

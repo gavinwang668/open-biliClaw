@@ -25,6 +25,11 @@ optional Director (default off; separate decision credentials):
   independent discovery semantic filter → shared bounded decision provider → Jev
     → evidence audit → soft defer / full LLM review; never a chat-LLM fallback
 
+candidate full evaluator (settings switch; LLM default):
+  named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
+    Jev: controlled taxonomy / IP + exact temporal excerpts + dual byte guards
+  → shared metadata validation / separate cache → admission / legacy pool recovery
+
 LAN clients ─ HTTP（默认）────────────→ IPv4 0.0.0.0 + IPv6 [::] listeners → one uvicorn / FastAPI app
 public clients ─ HTTPS（可选）→ Caddy :443 ─ shared-loopback HTTP ─────────────────────────────┤
 trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose HTTP ───────────────────────┘
@@ -517,9 +522,12 @@ flowchart LR
 自建 HTTP client 遵循现有海外网络策略。
 
 `RuntimeContext` 显式配置 `DirectorRuntime`，在同一实例内共享有界队列／并发／熔断的 decision provider，
-供编排与独立发现过滤借用；重载切换 epoch，关闭旧任务和 provider。模型只返回证据，
+供编排、独立发现过滤或纯 Jev 完整评估借用；重载切换 epoch，关闭旧任务和 provider。模型只返回证据，
 没有提交权限。三端增加屏身份和真实可见确认，不新增模式设置控件；TOML 为配置入口。
-`agent_only` + 过滤 off 不创建 Jev client、不读取其凭据。详见[模块文档](modules/decision.md)。
+`agent_only` + 过滤 off + 非 Jev 完整评估不创建 Jev client、不读取其凭据。
+完整评估新增设置页切换，凭据仍为 TOML/env；Jev 原生仅文本，不补生成式元数据，
+未知明确保留，错误不会回退 LLM。API、CLI、OpenClaw 与旧池补评共用此选择。
+详见[模块文档](modules/decision.md)和[评估合同](modules/discovery.md)。
 
 ### LLM Providers (`llm/`)
 - 统一的多模型接口（OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty）

@@ -1,5 +1,12 @@
 # 桌面 Web（Desktop Web UI）
 
+## 完整候选评估器选项
+
+高级设置新增 `eval_scorer=jev`（纯文本 / 受控分类实验模式），显示独立 provider readiness
+及与封面评估不兼容的说明；保存仍由后端统一校验，不在页面持有或输入 Jev key。
+未知主题 / IP 不由 LLM 补全。插件高级设置和移动设置提供相同模式入口，CLI 展示同一配置。
+服务凭据仍由 TOML/env 预配置，界面切换不代表已通过真实模型质量验收。
+
 ## 概述
 
 `src/openbiliclaw/web/desktop/` 是桌面 Web 单页应用（`/web`，入口

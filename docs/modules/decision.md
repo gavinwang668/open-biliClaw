@@ -1,13 +1,13 @@
 # 独立决策 Provider
 
 > `src/openbiliclaw/decision/` 提供 typed decision 的基础契约和 Jev 适配器。
-> 默认关闭，已由导演运行时与独立 discovery 语义过滤调用。
+> 默认关闭，已由导演运行时、独立 discovery 语义过滤和可选完整评估器调用。
 > 与聊天 LLM 路由和凭据隔离；模型只产出证据，不拥有数据库提交权限。
 
 ## 模块边界
 
 ```text
-导演 / 独立过滤 / 显式开发调用
+导演 / 独立过滤 / 完整候选评估（EVALUATE）/ 显式开发调用
   → DecisionRequest（状态、具名问题、purpose、schema 版本、deadline）
   → DecisionProvider.evaluate
   → Jev HTTP adapter
@@ -49,7 +49,8 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | 三策略导演调用者 | 已实现 | `PairComposer` 逐对决策，混合模式审查／修补；Agent-only 编排不调用 Jev |
 | 共享屏目标与角色 | 已实现 | `screen_policy` 区分事实／假设／未知；一次 pair / role 联合选择或保留职责的局部修补，不新增语义质量保证 |
 | 独立过滤与运行时 | 已实现 | 独立 shadow / enforce、真实标签审计与延期重审；运行时共享并发闸与熔断 |
-| 图形界面设置与服务探测 | 未提供 | 首版仅配置文件、`config-show` 和开发者接口 |
+| 完整候选评估 | 已实现，实验性 | purpose=`EVALUATE`，纯文本受控分类；不隐式调用 LLM，详见 discovery |
+| 图形界面设置与服务探测 | 部分提供 | 完整评估模式在三端设置页可切换；provider 凭据仍由 TOML/env 配置，不提供付费探测 |
 | 线上质量 / 中文效果 / 时延保证 | 未验证 | 离线 fixture 不等于真实模型验收；本轮未调用付费 API |
 
 ## 公共 API

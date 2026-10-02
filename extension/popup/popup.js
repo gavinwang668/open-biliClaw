@@ -10933,6 +10933,13 @@ function bindSettings() {
     setVal("cfgExploreRefreshMinutes", cfg.scheduler?.explore_refresh_minutes);
     setVal("cfgDiscoveryLimit", cfg.scheduler?.discovery_limit);
     setVal("cfgEvalScorer", cfg.discovery?.eval_scorer || "llm");
+    const jevProvider = cfg.discovery?.jev_provider || {};
+    const jevOption = document.getElementById("cfgEvalScorer")?.querySelector('option[value="jev"]');
+    if (jevOption) jevOption.disabled = jevProvider.ready !== true;
+    const jevStatus = document.getElementById("cfgJevEvaluatorStatus");
+    if (jevStatus) {
+      jevStatus.textContent = `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "需在 TOML 启用 provider 并设置后端环境变量。"} 环境变量名：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}（只在后端设置，不在页面填写 Key）。`;
+    }
     setVal("cfgKeywordGenerationMode", cfg.discovery?.keyword_generation_mode || "hybrid");
     const visualProfile = document.getElementById("cfgVisualProfileEnabled");
     if (visualProfile) visualProfile.checked = cfg.discovery?.visual_profile_enabled === true;

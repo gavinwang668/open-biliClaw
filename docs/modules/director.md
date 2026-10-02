@@ -142,7 +142,9 @@ Agent 将该投影中的 `profile_context` 提到 user input 顶层首字段，�
 
 ## 配置与四表面
 
-字段取值见 [配置](config.md) 和 `config.example.toml`。`director.strategy` 为三策略之一，`director.mode` 独立控制启用／影子运行。只使用 Agent-only 且关闭过滤时无需 Jev 凭据。Agent 使用现有 LLMService，接收推荐画像视图、个性化 shortlist、明确意图和最近经历，不序列化完整 Soul，不注入 personality/core memory。前台规划走交互调用，后台预排走有截止时间的维护调用。
+字段取值见 [配置](config.md) 和 `config.example.toml`。`director.strategy` 为三策略之一，`director.mode` 独立控制启用／影子运行。只使用 Agent-only、关闭过滤且完整评估未选 Jev 时无需 Jev 凭据。Agent 使用现有 LLMService，接收推荐画像视图、个性化 shortlist、明确意图和最近经历，不序列化完整 Soul，不注入 personality/core memory。前台规划走交互调用，后台预排走有截止时间的维护调用。
+
+完整候选评估选择 `discovery.eval_scorer="jev"` 时，即使导演与过滤均为 off，也构建共享有界 provider 并注入发现评估及旧推荐池回填；关闭 runtime 时统一释放。候选评估器可在三种 Web 设置中切换，与下述导演模式的 TOML 配置是不同入口；参见[发现模块](discovery.md#纯-jev-完整评估可选2026-10-02)。
 
 `shadow` 运行并留存导演提案，实际提交同一安全 shortlist 的确定性屏；**不是旧 MMR 的严格不干预实验**，不能据此证明 uplift。`off` 保持旧生产路径。40 张 shortlist、20 张目标、16 个 pair 备选（最多展开 64 个角色联合选项）、256 次探测及上述输入／调用预算都是工程上限，不是实测效果阈值。
 

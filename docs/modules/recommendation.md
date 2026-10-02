@@ -1,5 +1,12 @@
 # 推荐引擎
 
+## 可切换完整评估器的旧池补评
+
+`RecommendationEngine.bind_content_evaluator()` 可注入共享发现评估器；纯 Jev 模式下
+旧池 `_classify_batch()` 通过 `evaluate_cached_content_batch()` 更新完整元数据，不再
+直调 LLM。失败项不覆盖既有缓存、不计为完成。单纯切换设置不会重算全部历史推荐。
+Jev 的受控分类与模板理由不替代推荐表达，表达生成仍使用独立 LLM 路由。
+
 > 从 discovery 缓存中挑出最值得推的内容，并逐步生成像朋友一样的推荐表达。
 
 runtime 使用公开 `drain_pending_expression_copy(profile, limit<=60, max_extra_requests=6)` 作为 copy-only 入口：pending 达 8 条立即执行，1–7 条从首次通知起固定等待最多 3 秒；provider 每批最多 30 条、fan-out 2，malformed/partial batch 默认最多额外拆分请求 6 次。分类完成只通过 `set_copy_pending_callback()` 通知，不 inline 等待 copy。OpenClaw direct one-shot 是受限例外，调用 `limit=4, max_extra_requests=0`，持久化首 batch 的有效 subset 并将剩余行留作下一请求。参数来自 2026-07-12 生产日志校准。

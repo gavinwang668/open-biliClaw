@@ -29,7 +29,7 @@ import unicodedata
 import uuid
 from collections.abc import Mapping
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, NoReturn, TypedDict, cast
@@ -124,6 +124,8 @@ from openbiliclaw.api.models import (
     InitStatusOut,
     InsightFeedbackIn,
     InsightFeedbackResponse,
+    JevEvaluationConfigOut,
+    JevProviderReadinessOut,
     LinuxdoLoginStateIn,
     LinuxdoLoginStateResponse,
     LinuxdoSourceConfigOut,
@@ -19609,6 +19611,33 @@ def create_app(
         else:
             tailnet_state = str(tailnet_status.get("event") or "pending_restart")
 
+        from openbiliclaw.config import ConfigError
+        from openbiliclaw.decision.registry import validate_decision_provider_credentials
+
+        jev_settings = cfg.decision.providers.jev
+        jev_ready = False
+        jev_reason = "请在 TOML 的 [decision.providers.jev] 设置 enabled = true，并重启后端。"
+        if jev_settings.enabled:
+            try:
+                validate_decision_provider_credentials(cfg.decision)
+            except ConfigError:
+                jev_reason = (
+                    "后端环境变量未配置或凭据格式无效；请设置 api_key_env 指向的变量并重启。"
+                )
+            else:
+                jev_ready = True
+                jev_reason = (
+                    "本机配置就绪（未联网验证）；纯文本、受控分类，评分尚未按当前模型校准。"
+                )
+        if cfg.discovery.semantic_filter.mode != "off":
+            jev_ready = False
+            jev_reason = (
+                "请先在 TOML 将 discovery.semantic_filter.mode 设为 off 并重启，避免重复评估。"
+            )
+        if jev_settings.model in {"jev-latest", "jev-preview"}:
+            jev_ready = False
+            jev_reason = "完整评估需要固定 Jev 模型版本；请在 TOML 替换 latest/preview 并重启。"
+
         return ConfigResponse(
             language=cfg.language,
             data_dir=cfg.data_dir,
@@ -19912,6 +19941,14 @@ def create_app(
                 admission_min_score=cfg.discovery.admission_min_score,
                 eval_prefilter_mode=cfg.discovery.eval_prefilter_mode,
                 eval_scorer=cfg.discovery.eval_scorer,
+                jev_evaluation=JevEvaluationConfigOut(**asdict(cfg.discovery.jev_evaluation)),
+                jev_provider=JevProviderReadinessOut(
+                    enabled=jev_settings.enabled,
+                    model=jev_settings.model,
+                    api_key_env=jev_settings.api_key_env,
+                    ready=jev_ready,
+                    reason=jev_reason,
+                ),
                 candidate_eval_concurrency=cfg.discovery.candidate_eval_concurrency,
                 multimodal_evaluation_enabled=cfg.discovery.multimodal_evaluation_enabled,
                 visual_profile_enabled=cfg.discovery.visual_profile_enabled,
@@ -21347,6 +21384,8 @@ def create_app(
             _MIN_COPY_READY_TARGET_COUNT,
             _MIN_EVAL_MAX_WAIT_SECONDS,
             _MIN_EVAL_MIN_BATCH_SIZE,
+            ConfigError,
+            ConfigIssue,
             _collect_config_issues,
             _default_config_path,
             _normalize_extension_disconnect_grace,
@@ -21356,6 +21395,8 @@ def create_app(
             _normalize_scheduler_int,
             _normalize_source_incremental_hours,
             _validate_auto_update_check_interval,
+            build_jev_evaluation_config,
+            decision_routes_enabled,
             load_config,
             normalize_outbound_proxy,
             normalize_outbound_proxy_mode,
@@ -22848,12 +22889,24 @@ def create_app(
                     cfg.discovery.eval_prefilter_mode = eval_prefilter_mode
                 if "eval_scorer" in ddata:
                     eval_scorer = str(ddata["eval_scorer"] or "").strip().lower()
-                    if eval_scorer not in {"llm", "shadow", "learned"}:
+                    if eval_scorer not in {"llm", "shadow", "learned", "jev"}:
                         raise HTTPException(
                             status_code=422,
-                            detail="discovery.eval_scorer must be llm, shadow, or learned",
+                            detail="discovery.eval_scorer must be llm, shadow, learned, or jev",
                         )
                     cfg.discovery.eval_scorer = eval_scorer
+                if "jev_evaluation" in ddata:
+                    raw_jev_evaluation = ddata["jev_evaluation"]
+                    if not isinstance(raw_jev_evaluation, dict):
+                        raise HTTPException(
+                            status_code=422, detail="discovery.jev_evaluation must be an object"
+                        )
+                    try:
+                        cfg.discovery.jev_evaluation = build_jev_evaluation_config(
+                            {**asdict(cfg.discovery.jev_evaluation), **raw_jev_evaluation}
+                        )
+                    except ConfigError as exc:
+                        raise HTTPException(status_code=422, detail=str(exc)) from exc
                 for key, (default, min_value, max_value) in discovery_int_limits.items():
                     if key in ddata:
                         setattr(
@@ -23007,6 +23060,22 @@ def create_app(
             setattr(subsection, target[2], "")
 
         issues = _validate_llm_buildable(cfg, _collect_config_issues(cfg))
+        if decision_routes_enabled(cfg):
+            from openbiliclaw.decision.registry import validate_decision_provider_credentials
+
+            try:
+                validate_decision_provider_credentials(cfg.decision)
+            except ConfigError:
+                issues.append(
+                    ConfigIssue(
+                        field="decision.providers.jev.api_key_env",
+                        message=(
+                            "Jev 路由需要有效的后端环境变量凭据；"
+                            "请配置后重启，不要在配置页面填写 Key。"
+                        ),
+                        severity="blocking",
+                    )
+                )
         posture_issue = _posture_gate_enforce_issue(cfg, getattr(ctx, "database", None))
         if posture_issue is not None:
             issues.append(posture_issue)

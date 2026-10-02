@@ -183,7 +183,7 @@ _DEFAULT_CANDIDATE_EVAL_CONCURRENCY = 3
 _MIN_ADMISSION_MIN_SCORE = 0.50
 _DEFAULT_EVAL_PREFILTER_MODE = "shadow"
 _SUPPORTED_EVAL_PREFILTER_MODES = {"off", "shadow", "enforce"}
-_SUPPORTED_EVAL_SCORER_MODES = {"llm", "shadow", "learned"}
+_SUPPORTED_EVAL_SCORER_MODES = {"llm", "shadow", "learned", "jev"}
 _DEFAULT_MULTIMODAL_BATCH_SIZE = 8
 _DEFAULT_MULTIMODAL_IMAGE_MAX_PX = 384
 _DEFAULT_MULTIMODAL_IMAGE_QUALITY = 72
@@ -504,6 +504,42 @@ class SemanticFilterConfig:
     max_candidates_per_cycle: int = 30
     max_calls_per_cycle: int = 1
     decision_budget_seconds: float = 2.0
+
+
+@dataclass
+class JevEvaluationConfig:
+    """Pure typed evaluator vocabulary and conservative UTF-8 wire budgets.
+
+    These byte guards are engineering headroom, not tokenizer measurements or
+    quality calibration. Unknown is adapter-owned and never a configurable label.
+    """
+
+    topic_labels: list[str] = field(
+        default_factory=lambda: [
+            "科技",
+            "编程",
+            "科学",
+            "游戏",
+            "影视",
+            "音乐",
+            "动漫",
+            "生活",
+            "美食",
+            "旅行",
+            "运动",
+            "财经",
+            "教育",
+            "历史",
+            "社会",
+            "艺术",
+            "其他",
+        ]
+    )
+    franchise_labels: list[str] = field(default_factory=list)
+    max_state_question_bytes: int = 24000
+    max_request_bytes: int = 48000
+    max_calls: int = 32
+    budget_seconds: float = 30.0
 
 
 @dataclass
@@ -1213,9 +1249,11 @@ class DiscoveryConfig:
     # would-be filtered candidates without suppressing LLM evaluation.
     eval_prefilter_mode: str = _DEFAULT_EVAL_PREFILTER_MODE
     # Evaluator relevance backend: "llm" (default), "shadow" (LLM authoritative
-    # with learned-vs-LLM audit), or "learned" (learned relevance with LLM metadata).
+    # with learned-vs-LLM audit), "learned" (learned relevance with LLM metadata),
+    # or "jev" (pure text-only typed full evaluation with controlled metadata).
     eval_scorer: str = "llm"
     semantic_filter: SemanticFilterConfig = field(default_factory=SemanticFilterConfig)
+    jev_evaluation: JevEvaluationConfig = field(default_factory=JevEvaluationConfig)
     # Optional cover-image evaluation. Kept off by default because it changes
     # LLM cost/latency and requires a vision-capable evaluation model.
     multimodal_evaluation_enabled: bool = False
@@ -3125,10 +3163,76 @@ def _build_semantic_filter_config(raw: object) -> SemanticFilterConfig:
     )
 
 
+def build_jev_evaluation_config(raw: object) -> JevEvaluationConfig:
+    """Parse evaluator settings strictly; do not silently trim or discard context."""
+    config = JevEvaluationConfig(
+        **_strict_route_table(raw, JevEvaluationConfig, "discovery.jev_evaluation")
+    )
+    validate_jev_evaluation_config(config)
+    return config
+
+
+def _jev_evaluation_config_issues(evaluation: JevEvaluationConfig) -> list[ConfigIssue]:
+    issues: list[ConfigIssue] = []
+    prefix = "discovery.jev_evaluation"
+
+    def add(name: str, message: str) -> None:
+        issues.append(ConfigIssue(field=f"{prefix}.{name}", message=message, severity="blocking"))
+
+    def valid_label(label: object) -> bool:
+        if not isinstance(label, str) or not label.strip() or label != label.strip():
+            return False
+        if label.casefold() == "unknown" or any(ord(char) < 32 for char in label):
+            return False
+        try:
+            return len(label.encode("utf-8")) <= 80
+        except UnicodeEncodeError:
+            return False
+
+    for name in ("topic_labels", "franchise_labels"):
+        labels = getattr(evaluation, name)
+        if (
+            not isinstance(labels, list)
+            or len(labels) > 254
+            or not all(valid_label(label) for label in labels)
+        ):
+            add(name, "必须为至多 254 个非空标签，每项最多 80 UTF-8 字节；unknown 为保留结果。")
+        elif len(set(labels)) != len(labels):
+            add(name, "标签不能重复；不会自动截断或合并。")
+    for name, low, high in (
+        ("max_state_question_bytes", 256, 24000),
+        ("max_request_bytes", 256, 48000),
+        ("max_calls", 1, 64),
+    ):
+        value = getattr(evaluation, name)
+        if type(value) is not int or not low <= value <= high:
+            add(name, f"必须为 {low}..{high} 的整数。")
+    if (
+        type(evaluation.max_request_bytes) is int
+        and type(evaluation.max_state_question_bytes) is int
+        and evaluation.max_request_bytes < evaluation.max_state_question_bytes
+    ):
+        add("max_request_bytes", "不能小于 max_state_question_bytes。")
+    budget = evaluation.budget_seconds
+    if type(budget) not in (int, float) or not 0.01 <= budget <= 120:
+        add("budget_seconds", "必须为 0.01..120 的有限数值。")
+    return issues
+
+
+def validate_jev_evaluation_config(config: JevEvaluationConfig) -> None:
+    """Validate direct adapter injection as strictly as persisted configuration."""
+    issues = _jev_evaluation_config_issues(config)
+    if issues:
+        issue = issues[0]
+        raise ConfigError(f"{issue.field}: {issue.message}")
+
+
 def decision_routes_enabled(config: Config) -> bool:
     """Whether runtime must construct the independent decision provider."""
-    return config.discovery.semantic_filter.mode != "off" or (
-        config.director.mode != "off" and config.director.strategy != "agent_only"
+    return (
+        config.discovery.eval_scorer == "jev"
+        or config.discovery.semantic_filter.mode != "off"
+        or (config.director.mode != "off" and config.director.strategy != "agent_only")
     )
 
 
@@ -3189,7 +3293,27 @@ def _director_route_issues(config: Config) -> list[ConfigIssue]:
         if config.discovery.eval_prefilter_mode == "enforce":
             add(f"{prefix}.mode", "Jev 与 embedding 预过滤不能同时 enforce。")
     if decision_routes_enabled(config) and not config.decision.providers.jev.enabled:
-        add("decision.providers.jev.enabled", "启用 Jev 编排或过滤路由时必须显式启用 provider。")
+        add(
+            "decision.providers.jev.enabled",
+            "启用 Jev 评估、编排或过滤路由时必须显式启用 provider。",
+        )
+    issues.extend(_jev_evaluation_config_issues(config.discovery.jev_evaluation))
+    if config.discovery.eval_scorer == "jev":
+        if config.decision.providers.jev.model in {"jev-latest", "jev-preview"}:
+            add(
+                "decision.providers.jev.model",
+                "完整 Jev 评估必须使用固定模型版本；latest/preview 会使缓存与质量校准身份漂移。",
+            )
+        if config.discovery.multimodal_evaluation_enabled:
+            add(
+                "discovery.multimodal_evaluation_enabled",
+                "纯 Jev 评估仅支持文本；请关闭候选封面 LLM 评估。",
+            )
+        if filtering.mode != "off":
+            add(
+                "discovery.semantic_filter.mode",
+                "完整 Jev 评估与 Jev 预过滤不能同时启用；请设为 off。",
+            )
     return issues
 
 
@@ -3212,6 +3336,7 @@ def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
     """
     return DiscoveryConfig(
         semantic_filter=_build_semantic_filter_config(discovery_raw.get("semantic_filter", {})),
+        jev_evaluation=build_jev_evaluation_config(discovery_raw.get("jev_evaluation", {})),
         unified_keyword_planner_enabled=_coerce_bool(
             discovery_raw.get("unified_keyword_planner_enabled"),
             default=_DEFAULT_UNIFIED_KEYWORD_PLANNER_ENABLED,
@@ -5196,7 +5321,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         issues.append(
             ConfigIssue(
                 field="discovery.eval_scorer",
-                message='`discovery.eval_scorer` 仅支持: "llm", "shadow", "learned"。',
+                message='`discovery.eval_scorer` 仅支持: "llm", "shadow", "learned", "jev"。',
                 severity="blocking",
             )
         )
@@ -6009,6 +6134,14 @@ def _render_config_toml(
         f"max_candidates_per_cycle = {config.discovery.semantic_filter.max_candidates_per_cycle}",
         f"max_calls_per_cycle = {config.discovery.semantic_filter.max_calls_per_cycle}",
         f"decision_budget_seconds = {config.discovery.semantic_filter.decision_budget_seconds}",
+        "",
+        "[discovery.jev_evaluation]",
+        f"topic_labels = {_toml_str_list(config.discovery.jev_evaluation.topic_labels)}",
+        f"franchise_labels = {_toml_str_list(config.discovery.jev_evaluation.franchise_labels)}",
+        f"max_state_question_bytes = {config.discovery.jev_evaluation.max_state_question_bytes}",
+        f"max_request_bytes = {config.discovery.jev_evaluation.max_request_bytes}",
+        f"max_calls = {config.discovery.jev_evaluation.max_calls}",
+        f"budget_seconds = {config.discovery.jev_evaluation.budget_seconds}",
         "",
         "[decision.providers.jev]",
         f"enabled = {_toml_bool(jev.enabled)}",

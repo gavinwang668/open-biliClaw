@@ -9,7 +9,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-DecisionPurpose = Literal["FILTER", "CHOOSE_PAIR", "AUDIT_DRAFT", "REPAIR_PAIR"]
+DecisionPurpose = Literal["FILTER", "EVALUATE", "CHOOSE_PAIR", "AUDIT_DRAFT", "REPAIR_PAIR"]
 DecisionStatus = Literal["OK", "UNAVAILABLE", "INVALID"]
 # Wire rounding tolerance, not a semantic confidence or recommendation threshold.
 _WIRE_TOLERANCE = 1e-6

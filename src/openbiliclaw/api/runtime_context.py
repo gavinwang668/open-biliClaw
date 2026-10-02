@@ -556,7 +556,8 @@ class RuntimeContext:
         filter_mode = getattr(
             getattr(getattr(cfg, "discovery", None), "semantic_filter", None), "mode", "off"
         )
-        if mode == "off" and filter_mode == "off":
+        eval_scorer = getattr(getattr(cfg, "discovery", None), "eval_scorer", "llm")
+        if mode == "off" and filter_mode == "off" and eval_scorer != "jev":
             return
         from openbiliclaw.recommendation.director.runtime import build_director_runtime
 
@@ -571,6 +572,22 @@ class RuntimeContext:
         controller_discovery = getattr(self.runtime_controller, "discovery_engine", None)
         if controller_discovery is not None and self.director_runtime is not None:
             controller_discovery._semantic_filter = self.director_runtime.semantic_filter
+        if eval_scorer == "jev" and self.director_runtime is not None:
+            from openbiliclaw.discovery.engine import ContentDiscoveryEngine
+
+            evaluator = self.director_runtime.jev_evaluator
+            if evaluator is None:
+                raise ValueError("configured Jev full evaluator was not constructed")
+            if self.discovery_engine is None:
+                self.discovery_engine = ContentDiscoveryEngine(
+                    database=self.database, eval_scorer="jev", jev_evaluator=evaluator
+                )
+            for discovery in (self.discovery_engine, controller_discovery):
+                if discovery is not None:
+                    discovery._eval_scorer = "jev"
+                    discovery._jev_evaluator = evaluator
+                    discovery.multimodal_evaluation_enabled = False
+            self.recommendation_engine.bind_content_evaluator(self.discovery_engine)
 
     def _request_config_reload(self, new_config: Any) -> Any:
         """Reload hook for the M7 ``update_config`` tool.
@@ -1218,7 +1235,10 @@ class RuntimeContext:
             eval_prefilter_mode=str(getattr(discovery_cfg, "eval_prefilter_mode", "shadow")),
             eval_scorer=str(getattr(discovery_cfg, "eval_scorer", "llm")),
             semantic_filter=new_director_runtime.semantic_filter if new_director_runtime else None,
+            jev_evaluator=new_director_runtime.jev_evaluator if new_director_runtime else None,
         )
+        if getattr(discovery_cfg, "eval_scorer", "llm") == "jev":
+            new_recommendation_engine.bind_content_evaluator(new_discovery_engine)
         search_strategy = SearchStrategy(
             llm_service=new_llm_service,
             bilibili_client=new_bilibili_client,

@@ -46,7 +46,7 @@ from openbiliclaw.sources.platforms import normalize_source_platform, source_fam
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping
 
-    from openbiliclaw.discovery.engine import DiscoveredContent
+    from openbiliclaw.discovery.engine import ContentDiscoveryEngine, DiscoveredContent
     from openbiliclaw.llm.base import LLMResponse
     from openbiliclaw.recommendation.curator import PoolCurator
     from openbiliclaw.runtime.serve_outbox import ServeOutbox
@@ -499,8 +499,10 @@ class RecommendationEngine:
         serve_snapshot_store: ServeSnapshotStore | None = None,
         serve_outbox: ServeOutbox | None = None,
         reply_style: str = "",
+        content_evaluator: ContentDiscoveryEngine | None = None,
     ) -> None:
         self._llm = llm
+        self._content_evaluator = content_evaluator
         self._database = database
         self._curator = curator
         self._embedding_service = embedding_service
@@ -2047,6 +2049,10 @@ class RecommendationEngine:
                 batch_size=batch_size,
             )
 
+    def bind_content_evaluator(self, evaluator: ContentDiscoveryEngine) -> None:
+        """Route legacy metadata recovery through the selected full evaluator."""
+        self._content_evaluator = evaluator
+
     async def _classify_pool_backlog_locked(
         self,
         *,
@@ -2083,6 +2089,13 @@ class RecommendationEngine:
             # Persist results back to the pool.
             persisted: list[DiscoveredContent] = []
             for item in batch:
+                if (
+                    getattr(self, "_content_evaluator", None) is not None
+                    and item.relevance_reason == "evaluation_response_missing"
+                ):
+                    # Failed Jev calls are not zero labels and cannot overwrite
+                    # older pool metadata or count as a completed evaluation.
+                    continue
                 # Use topic_group as topic_key when the original is empty —
                 # diversity tokens fall back to topic_key, so this is critical.
                 if not item.topic_key and item.topic_group:
@@ -2208,6 +2221,10 @@ class RecommendationEngine:
         Mutates each item in-place: sets relevance/classification fields,
         including the temporal evaluation used by the shared eligibility gate.
         """
+        evaluator = getattr(self, "_content_evaluator", None)
+        if evaluator is not None:
+            await evaluator.evaluate_cached_content_batch(batch, profile)
+            return
         from openbiliclaw.llm.prompts import (
             build_batch_content_evaluation_prompt,
             content_evaluation_clock,

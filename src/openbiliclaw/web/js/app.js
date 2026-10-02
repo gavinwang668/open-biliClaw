@@ -132,7 +132,7 @@ function renderStatusBar() {
   settings.id = "mobile-settings-button";
   settings.className = "badge-btn";
   settings.type = "button";
-  settings.setAttribute("aria-label", "打开保存与同步设置");
+  settings.setAttribute("aria-label", "打开保存与候选评估设置");
   settings.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5v.2h-4v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1-2.8-2.8.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3v-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1 2.8-2.8.1.1a1.7 1.7 0 0 0 1.8.3 1.7 1.7 0 0 0 1-1.5V3h4v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1 2.8 2.8-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1h.2v4h-.2a1.7 1.7 0 0 0-1.4 1z"/></svg>';
   settings.addEventListener("click", () => { void openMobileSettings(settings); });
   right.appendChild(settings);
@@ -161,7 +161,7 @@ async function openMobileSettings(opener) {
   const overlay = document.createElement("section");
   overlay.id = "mobile-settings-overlay";
   overlay.className = "mobile-settings-overlay";
-  overlay.setAttribute("aria-label", "保存与同步设置");
+  overlay.setAttribute("aria-label", "保存与候选评估设置");
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
   overlay.tabIndex = -1;
@@ -169,7 +169,7 @@ async function openMobileSettings(opener) {
   card.className = "mobile-settings-card";
   card.innerHTML = `
     <div class="mobile-settings-head">
-      <div><p class="eyebrow">Settings</p><h2>保存与同步</h2></div>
+      <div><p class="eyebrow">Settings</p><h2>保存与候选评估</h2></div>
       <button class="mobile-settings-close" type="button" aria-label="关闭设置">×</button>
     </div>
     <label class="mobile-settings-field" for="mobile-saved-auto-sync">
@@ -177,6 +177,15 @@ async function openMobileSettings(opener) {
       <span>保存时自动同步到对应平台</span>
     </label>
     <p class="mobile-settings-hint">默认关闭。收藏和稍后再看始终先保存在本地；关闭时仍可在列表页手动同步。</p>
+    <label class="mobile-settings-field" for="mobile-eval-scorer">候选评估器</label>
+    <select id="mobile-eval-scorer" aria-describedby="mobile-eval-scorer-hint">
+      <option value="llm">Agent（默认）</option>
+      <option value="jev">Jev（完整评估，纯文本）</option>
+      <option value="shadow">Shadow（校准观察）</option>
+      <option value="learned">Learned（仅相关性，实验性）</option>
+    </select>
+    <p class="mobile-settings-hint" id="mobile-eval-scorer-hint">Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知，评分未经当前模型质量校准。上下文按保守字节预算拆批，不删除关键画像。Shadow 与 Learned 仍调用 LLM 生成元数据；切换不会重算已有推荐。</p>
+    <p class="mobile-settings-hint" id="mobile-jev-status" role="status" aria-live="polite"></p>
     <p class="mobile-settings-status" aria-live="polite"></p>
     <button class="mobile-settings-retry btn btn-outline" type="button" hidden>重试加载</button>
     <div class="mobile-settings-actions"><button class="mobile-settings-save btn btn-brand" type="button">保存设置</button></div>`;
@@ -184,11 +193,14 @@ async function openMobileSettings(opener) {
   document.body.append(overlay);
   const close = card.querySelector(".mobile-settings-close");
   const toggle = card.querySelector("#mobile-saved-auto-sync");
+  const evaluator = card.querySelector("#mobile-eval-scorer");
+  const jevStatus = card.querySelector("#mobile-jev-status");
   const save = card.querySelector(".mobile-settings-save");
   const retry = card.querySelector(".mobile-settings-retry");
   const status = card.querySelector(".mobile-settings-status");
   save.disabled = true;
   toggle.disabled = true;
+  evaluator.disabled = true;
   let focusController = null;
   const closeDialog = () => {
     focusController?.deactivate();
@@ -202,11 +214,13 @@ async function openMobileSettings(opener) {
   focusController.activate();
   close.addEventListener("click", closeDialog);
   let storedValue = false;
+  let storedEvaluator = "llm";
   let configLoaded = false;
   const loadConfig = async () => {
     configLoaded = false;
     save.disabled = true;
     toggle.disabled = true;
+    evaluator.disabled = true;
     retry.hidden = true;
     status.removeAttribute("role");
     status.textContent = "正在加载设置…";
@@ -214,9 +228,18 @@ async function openMobileSettings(opener) {
       const config = await fetchConfig();
       storedValue = config.saved_sync?.auto_sync_enabled === true;
       toggle.checked = storedValue;
+      storedEvaluator = config.discovery?.eval_scorer || "llm";
+      evaluator.value = storedEvaluator;
+      const jevProvider = config.discovery?.jev_provider || {};
+      const visionEnabled = config.discovery?.multimodal_evaluation_enabled === true;
+      evaluator.querySelector('option[value="jev"]').disabled = jevProvider.ready !== true || visionEnabled;
+      jevStatus.textContent = visionEnabled
+        ? "Jev 仅支持文本。请先在桌面或扩展设置关闭“候选封面参与 LLM 评估”，再刷新此页。"
+        : `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "需在 TOML 启用 provider。"} 环境变量名：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}（只在后端设置，不在页面填写 Key）。`;
       configLoaded = true;
       save.disabled = false;
       toggle.disabled = false;
+      evaluator.disabled = false;
       status.textContent = "设置已加载。";
     } catch (error) {
       status.setAttribute("role", "alert");
@@ -242,8 +265,11 @@ async function openMobileSettings(opener) {
     status.removeAttribute("role");
     status.textContent = "正在保存设置…";
     try {
-      await updateConfig({ saved_sync: { auto_sync_enabled: toggle.checked } });
+      const payload = { saved_sync: { auto_sync_enabled: toggle.checked } };
+      if (evaluator.value !== storedEvaluator) payload.discovery = { eval_scorer: evaluator.value };
+      await updateConfig(payload);
       storedValue = toggle.checked;
+      storedEvaluator = evaluator.value;
       status.textContent = "设置已保存。手动同步始终可用。";
     } catch (error) {
       status.setAttribute("role", "alert");

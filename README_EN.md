@@ -636,6 +636,11 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 ## 🏛️ Architecture Overview
 
+Full candidate evaluation: `named profile + negative evidence + candidate text → LLM (default) OR pure Jev → metadata validation / isolated cache → admission`.
+The three Web settings surfaces can select experimental, text-only Jev evaluation with controlled topic/IP vocabularies,
+explicit unknowns and dual input guards. Failures never silently invoke an LLM. Credentials still use TOML/env;
+live Chinese-content quality remains unverified. See [evaluation details](docs/modules/discovery.md).
+
 Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.
 
 Optional Director, disabled by default: `recommendation profile + latest 3 experienced screens + shortlist → shared screen objective / evidence / soft roles → recurrent Jev pairs / Agent + Jev repair / Agent-only preplanning (at most one Agent validation correction) → fresh eligibility check → atomic screen commit → actual-visibility ACK → future drafts`. Agent planning identifies useful supply first, then uses request-local short refs restored before strict validation. Horizon coverage, legal short tails and early-stop reasons remain validated; one correction shares the original planning deadline, and repair does not mechanically fill semantic shortfalls. All three modes use the same policy to organize focused, complementary, independently useful choices, without a fixed exploration ratio. Jev is an independent decision provider, also available for discovery filtering, not a chat-LLM fallback. Web surfaces and CLI preserve screen identity and exact feedback; configure through TOML. Live model quality remains unverified. See the [decision module](docs/modules/decision.md) and [Director runtime](docs/modules/director.md).

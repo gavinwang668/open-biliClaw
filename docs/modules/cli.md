@@ -119,6 +119,9 @@ server-owned binding、context preview 与卡片 action 不改变 CLI 的既有�
 
 独立 Jev 决策配置也展示开关、模型、API key 环境变量名、总超时和最大尝试次数。
 同时显示导演 mode / strategy、提前编排屏数与独立过滤 mode。
+另显示候选完整评估器、Jev 纯文本 / 受控分类的实验状态及两个 UTF-8 字节护栏（非 token 数）。
+`eval_scorer="jev"` 时 CLI discovery 与旧池补评共用纯 Jev 评估合同；每次请求关闭 transport，
+不跨 asyncio loop 复用连接、不隐式回退 LLM；配置失败在构建时直接报告。
 这里不读取或打印实际 key，不创建 provider 或探测。配置见[决策配置](config.md#decisionprovidersjev)。
 
 导演启用时，`recommend` 支持 `--request-id`（128 字符内，重试复用）、`--stream-ref`（默认 cli）、`--intent NEXT|STAY`、`--restore`、`--limit 1..20`、`--direction`（500 字符内）。恢复仅打印同一批次；成功打印后确认 presentation，provider 在同一事件循环内关闭。CLI feedback 投影原 ingress event，不重复写学习事件。独立 `discover*` 也注入语义过滤，按 loop 管理并发、每请求关闭 transport，不跨 `asyncio.run()` 复用连接。导演 off 保持旧路径。见[导演合同](director.md)。

@@ -983,11 +983,26 @@ def _build_recommendation_engine() -> Any:
     # it — constructing one is not free (httpx client + cookie load).
     _danmaku_on = bool(getattr(getattr(cfg, "discovery", None), "danmaku_enabled", False))
 
+    from openbiliclaw.discovery.engine import ContentDiscoveryEngine
+    from openbiliclaw.discovery.evaluator_runtime import build_cli_jev_evaluator
+
+    jev_evaluator = build_cli_jev_evaluator(cfg)
+    content_evaluator = (
+        ContentDiscoveryEngine(
+            database=database,
+            embedding_service=_emb,
+            eval_scorer="jev",
+            jev_evaluator=jev_evaluator,
+        )
+        if jev_evaluator is not None
+        else None
+    )
     return RecommendationEngine(
         llm=llm_service,
         database=database,
         embedding_service=embedding_service,
         xhs_self_info_provider=_xhs_self_info_provider,
+        content_evaluator=content_evaluator,
         copy_ready_target_count=effective_copy_target,
         pool_available_target_count=max(
             0,
@@ -1408,6 +1423,7 @@ def _build_discovery_engine() -> Any:
 
     embedding_service = build_embedding_service(cfg, registry)
     discovery_cfg = getattr(cfg, "discovery", None)
+    from openbiliclaw.discovery.evaluator_runtime import build_cli_jev_evaluator
     from openbiliclaw.discovery.semantic_filter import build_cli_semantic_filter
 
     engine = ContentDiscoveryEngine(
@@ -1416,6 +1432,7 @@ def _build_discovery_engine() -> Any:
         concurrency=concurrency,
         embedding_service=embedding_service,
         semantic_filter=build_cli_semantic_filter(cfg, database),
+        jev_evaluator=build_cli_jev_evaluator(cfg),
         multimodal_evaluation_enabled=bool(
             getattr(discovery_cfg, "multimodal_evaluation_enabled", False)
         ),
@@ -16504,6 +16521,13 @@ def config_show() -> None:
         ("导演策略", cfg.director.strategy),
         ("提前编排屏数", str(cfg.director.planning_horizon_screens)),
         ("Jev 独立语义过滤", cfg.discovery.semantic_filter.mode),
+        ("候选完整评估器", cfg.discovery.eval_scorer),
+        ("Jev 评估能力", "纯文本 / 受控分类 / 未校准实验模式"),
+        (
+            "Jev 输入字节护栏（非 token 数）",
+            f"{cfg.discovery.jev_evaluation.max_state_question_bytes} / "
+            f"{cfg.discovery.jev_evaluation.max_request_bytes}",
+        ),
         ("B站认证", cfg.bilibili.auth_method),
         (
             "B站发布日期范围",

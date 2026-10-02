@@ -2615,6 +2615,27 @@ class SoulConfigOut(BaseModel):
     dialogue_tone_prompt: str = ""
 
 
+class JevEvaluationConfigOut(BaseModel):
+    """Pure Jev evaluator controls; byte guards are not exact token counts."""
+
+    topic_labels: list[str] = Field(default_factory=list)
+    franchise_labels: list[str] = Field(default_factory=list)
+    max_state_question_bytes: int = 24000
+    max_request_bytes: int = 48000
+    max_calls: int = 32
+    budget_seconds: float = 30.0
+
+
+class JevProviderReadinessOut(BaseModel):
+    """Safe read-only status; credential values are never returned."""
+
+    enabled: bool = False
+    model: str = "jev-1.13.0"
+    api_key_env: str = "TYPESAFE_API_KEY"
+    ready: bool = False
+    reason: str = "请在 TOML 启用独立 Jev provider，并设置后端环境变量。"
+
+
 class DiscoveryConfigOut(BaseModel):
     unified_keyword_planner_enabled: bool = True
     kw_cache_high: int = 30
@@ -2629,7 +2650,9 @@ class DiscoveryConfigOut(BaseModel):
     keyword_digest_grace_hours: int = Field(default=24, ge=0, le=168)
     admission_min_score: float = 0.60
     eval_prefilter_mode: Literal["off", "shadow", "enforce"] = "shadow"
-    eval_scorer: Literal["llm", "shadow", "learned"] = "llm"
+    eval_scorer: Literal["llm", "shadow", "learned", "jev"] = "llm"
+    jev_evaluation: JevEvaluationConfigOut = Field(default_factory=JevEvaluationConfigOut)
+    jev_provider: JevProviderReadinessOut = Field(default_factory=JevProviderReadinessOut)
     candidate_eval_concurrency: int = Field(default=3, ge=1, le=3)
     multimodal_evaluation_enabled: bool = False
     visual_profile_enabled: bool = False

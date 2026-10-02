@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from openbiliclaw.config import decision_routes_enabled
 from openbiliclaw.decision.registry import build_decision_provider
 from openbiliclaw.decision.runtime import BoundedDecisionProvider
+from openbiliclaw.discovery.jev_evaluator import JevContentEvaluator
 from openbiliclaw.discovery.semantic_filter import JevSemanticFilter
 from openbiliclaw.soul.profile_views import build_director_profile_view
 
@@ -78,6 +79,8 @@ class DirectorRuntime:
                 "director": asdict(config.director),
                 "decision": asdict(config.decision),
                 "filter": asdict(config.discovery.semantic_filter),
+                "eval_scorer": config.discovery.eval_scorer,
+                "jev_evaluation": asdict(config.discovery.jev_evaluation),
                 "planner_route": asdict(config.llm),
                 "source_policy": asdict(config.sources),
                 "screen_policy_version": DIRECTOR_POLICY_VERSION,
@@ -93,6 +96,15 @@ class DirectorRuntime:
                 adapter, model=config.decision.providers.jev.model
             )
         self.planner = HorizonPlanner(llm)
+        self.jev_evaluator = (
+            JevContentEvaluator(
+                self.provider,
+                model=config.decision.providers.jev.model,
+                config=config.discovery.jev_evaluation,
+            )
+            if config.discovery.eval_scorer == "jev" and self.provider is not None
+            else None
+        )
         self.controller = DirectorController(provider=self.provider)
         self.semantic_filter = (
             JevSemanticFilter(
@@ -554,6 +566,7 @@ def build_director_runtime(
     filter_mode = getattr(
         getattr(getattr(config, "discovery", None), "semantic_filter", None), "mode", "off"
     )
-    if mode == "off" and filter_mode == "off":
+    eval_scorer = getattr(getattr(config, "discovery", None), "eval_scorer", "llm")
+    if mode == "off" and filter_mode == "off" and eval_scorer != "jev":
         return None
     return DirectorRuntime(config, database, engine, llm, activate=activate)

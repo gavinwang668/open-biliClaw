@@ -306,6 +306,11 @@ optional Director (default off; separate decision credentials):
   independent discovery semantic filter → shared bounded decision provider → Jev
     → evidence audit → soft defer / full LLM review; never a chat-LLM fallback
 
+candidate full evaluator (settings switch; LLM default):
+  named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
+    Jev: controlled taxonomy / IP + exact temporal excerpts + dual byte guards
+  → shared metadata validation / separate cache → admission / legacy pool recovery
+
 interactive (dialogue / config probe / agent.chat / agent.task) ┐
                                                     ├─ runtime total gate (default 4) ─ ordered instance chain ─ adapter
 background ─ background admission (default 3) ──────┘
