@@ -61,6 +61,11 @@ api_key_env = "TYPESAFE_API_KEY"
 # 初始传输预算，并非实测 SLA。有限正秒数；max_attempts 包含首次请求。
 timeout_seconds = 2.0
 max_attempts = 2
+# 已知固定版本自动加载已确认容量；绝不自动换模型。未知模型须先登记双 token 上限。
+# 手工容量按精确模型 ID 隔离；切模型不会继承其他型号的容量。以下仅示意，勿照抄容量。
+# [decision.providers.jev.context_limits."your-exact-model-id"]
+# max_request_tokens = 64000
+# max_state_question_tokens = 32000
 
 [director]
 # 三种编排共用 off/shadow/enforce 灰度。shadow 记录导演提案、返回同 shortlist
@@ -95,9 +100,11 @@ decision_budget_seconds = 2.0
 topic_labels = ["科技", "编程", "科学", "游戏", "影视", "音乐", "动漫", "生活", "美食", "旅行", "运动", "财经", "教育", "历史", "社会", "艺术", "其他"]
 franchise_labels = []
 # 工程 UTF-8 字节护栏，不是精确 token 计数；逐批拆分，超长单项明确失败。
-# 保守上限不得提高：state+单问题 24000，完整请求 48000；关键画像不会偷偷截断。
-max_state_question_bytes = 24000
-max_request_bytes = 48000
+# 0=按所选模型双上下文上限自适应；正数为额外更严上限，不得高于模型字节护栏。
+# jev-1.13.0 对应 24000/48000 bytes；旧配置的正值仍保留，不会被静默改为自动。
+# 工程估算 = 已确认 token 上限 × 0.75，不是 tokenizer；画像按需加载不修改原画像。
+max_state_question_bytes = 0
+max_request_bytes = 0
 max_calls = 32
 budget_seconds = 30.0
 

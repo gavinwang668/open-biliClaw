@@ -2620,8 +2620,8 @@ class JevEvaluationConfigOut(BaseModel):
 
     topic_labels: list[str] = Field(default_factory=list)
     franchise_labels: list[str] = Field(default_factory=list)
-    max_state_question_bytes: int = 24000
-    max_request_bytes: int = 48000
+    max_state_question_bytes: int = 0
+    max_request_bytes: int = 0
     max_calls: int = 32
     budget_seconds: float = 30.0
 
@@ -2634,6 +2634,8 @@ class JevProviderReadinessOut(BaseModel):
     api_key_env: str = "TYPESAFE_API_KEY"
     ready: bool = False
     reason: str = "请在 TOML 启用独立 Jev provider，并设置后端环境变量。"
+    context_limits: dict[str, dict[str, int]] = Field(default_factory=dict)
+    context_budget: dict[str, str | int] | None = None
 
 
 class DiscoveryConfigOut(BaseModel):

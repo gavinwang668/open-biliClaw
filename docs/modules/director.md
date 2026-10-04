@@ -7,6 +7,7 @@
 ```text
 候选池 → eligibility + 个性化分数 → topic 分层 shortlist（≤40）
                        ↓
+本地画像目录 → 按意图/候选/预算加载视图
 画像视图 + 最近三屏真实经历 → 共享屏目标 / 证据 / 角色策略
                        ↓
               DirectorRuntime / Controller
@@ -30,6 +31,7 @@
 
 | 能力 | 合同 |
 |---|---|
+| 按需画像与模型预算 | 全集留本地，按明确意图和 shortlist 加载；避雷/场景完整保留。Jev 逐对与修补共享所选模型双护栏；Agent 不自动切模型，保留原规划工程上限 |
 | `jev_recurrent` | 一次 Choice 联合选择有序二卡组合与软角色，应用追加到 prefix 后再请求下一对；奇数屏允许单卡尾部，不读取 Agent 计划 |
 | `agent_jev` | Agent 一次规划最多三屏具体卡片、brief 和配对角色；非法输出可在同一预算内纠正一次；Jev 带原 intent / role 与剩余草稿审查，替换中间单卡或整对，重验受影响后缀和跨屏重复 |
 | `agent_only` | 执行 Agent 的具体多屏草稿，不调用 Jev；持久化反馈水位证明只有曝光／弱点击新增时可保留计划，偏好反馈或意图／画像变化重排；无权威水位的离线输入遇证据缺口保守重排 |
@@ -101,13 +103,26 @@ Agent 输入候选按本次合法 shortlist 顺序映射为 `c0 / c1 / …`，�
 - `real_feedback`：上述最多 4 条动作（保护最新非点击反馈）+ 4 条最新曝光确认，附实际时间及对应卡片语义；内容来自不可变批次，而不是可能已经改动的候选缓存，事件不只剩裸 ID。历史引用不是新候选。
 - 原有本次明确意图、本屏方向、已选前缀、合法组合及状态版本仍保留。只看到未操作的曝光不能视为不喜欢，点击不能当喜欢；只有交互而没有 ACK 时标记行为，不虚构 ACK。
 
-所有画像序列化统一走 `soul.profile_views.build_director_profile_view()`，不传自由文本文学人格画像、聊天历史或核心记忆。Agent 慢路径保留最多 32 个兴趣、12 个领域、6 条近期信息；Jev 快路径压到 12／6／3，并省略历史卡摘要但保留标题、主题和行为。明确避雷不截断。`planning_profile_digest` 绑定慢路径视图，下一次请求发现画像变化会重排；历史已提交屏不改写，仍保留最新避雷复查。
+所有画像序列化统一走 `soul.profile_views` 的目录与按需视图，不传自由文本文学人格画像、聊天历史或核心记忆。Agent 慢路径和 Jev 快路径按各自预算加载整条事实，不再固定 32/12 或 12/6 个兴趣；快路径仍省略历史卡摘要但保留标题、主题和行为。明确避雷、风格和场景不截断。`planning_profile_digest` 绑定完整源画像与选择策略，候选变化只影响本次视图，不凭空让计划失效；画像内容变化会重排。历史已提交屏不改写，仍保留最新避雷复查。
 
-Agent 将该投影中的 `profile_context` 提到 user input 顶层首字段，并把 `stable` 放在 `recent` 前；其余易变屏幕状态随后序列化，避免状态摘要提前破坏稳定前缀。system prompt 固定，不重复注入画像；这只是缓存友好的输入顺序，不保证提供商实际命中缓存。
+Agent 将投影中的 `profile_context` 提到 user input 顶层首字段，其余易变屏幕状态随后序列化。新视图明确携带 `purpose`、原约束、选中的兴趣/近期事实；旧 `stable/recent` 视图仍兼容。system prompt 固定，不重复注入画像；按需投影可能随任务变化，此输入顺序不保证提供商实际命中缓存。
 
-上下文 schema 为 `director-context.v1`／`director-profile.v1`，当前 Jev pair／audit／repair question 为 v3；模型输入上限保持 Jev 64,000、Agent 96,000 UTF-8 字节（工程预算，非 token / 质量标定）。超限明确回退，不能通过删除负偏好冒充成功。没有新增 UI／CLI 参数、依赖或远端调用入口；已有四表面和 OpenClaw 自动使用后端相同上下文。当前不补采 watch duration／完成率，也没有自动长期导演笔记。
+会话上下文仍为 `director-context.v1`，新画像为 `on-demand-profile-context.v1`；Jev pair／audit／repair question 仍为 v3。Jev 按精确所选模型检查 state＋最长题和完整请求两层护栏；Agent 保留原 96,000 UTF-8 字节工程上限，不猜通用 LLM 的模型容量。编排空间不足先减少合法 pair 备选集，仍保留已选前缀、画像、反馈和硬约束；最低请求也超限则有因回退。修补超限不擅自拆成彼此独立的问题。所有字节数是工程预算，非 tokenizer 或质量标定；没有新增依赖或远端调用入口，当前不补采观看时长／完成率，也没有自动长期导演笔记。
 
 ## 公共 API
+
+运行时使用 `build_profile_catalog` / `select_profile_context`，旧静态画像视图仍可供兼容调用。
+`CompositionSession.profile_source_digest` 绑定完整源画像及选择策略，避免每屏候选不同导致
+无意义重排；真实请求仍绑定实际 slow/fast 视图。容量与策略进入 runtime context fencing，
+旧未来草稿不能跨变更沿用，历史已提交屏不改写。`PairComposer`、`DirectorController`、
+`DraftRepairer` 接受共享 `context_budget`，无法装入时保留明确失败归因，不冒充 Jev 成功。
+
+`profile_context_headroom(request, budget)` 在 runtime 装载快画像前以完整原生 pair 包作
+本地容量探针，并预留到目标屏尾的卡片/角色开销；不调用模型、不把全部 40 张误算为必需前缀。
+修补还有跨屏草稿开销，audit/repair 发送前可经 `resize_profile_context()` 二次选择已加载的
+可选事实，保留完整负偏好、场景及所有意图/真实反馈/前缀/剩余草稿，最终请求摘要按实际
+输入计算；不改源画像或原计划身份。修补也按实际双预算收缩合法备选，保留合法 KEEP
+及要求编辑类型的至少一个替换，硬约束与后缀校验仍覆盖完整候选集。
 
 | 接口 | 职责 |
 |---|---|

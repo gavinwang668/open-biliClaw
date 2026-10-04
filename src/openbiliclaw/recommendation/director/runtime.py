@@ -11,13 +11,18 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from openbiliclaw.config import decision_routes_enabled
+from openbiliclaw.decision.context_budget import resolve_jev_context
 from openbiliclaw.decision.registry import build_decision_provider
 from openbiliclaw.decision.runtime import BoundedDecisionProvider
 from openbiliclaw.discovery.jev_evaluator import JevContentEvaluator
 from openbiliclaw.discovery.semantic_filter import JevSemanticFilter
-from openbiliclaw.soul.profile_views import build_director_profile_view
+from openbiliclaw.soul.profile_views import (
+    PROFILE_CONTEXT_VERSION,
+    build_profile_catalog,
+    select_profile_context,
+)
 
-from .composer import PairComposer
+from .composer import PairComposer, profile_context_headroom
 from .controller import DirectorController, plan_needs_replanning
 from .horizon_models import DirectorStrategy, HorizonPlan
 from .models import (
@@ -74,6 +79,14 @@ class DirectorRuntime:
         self._closed = False
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self.context_budget = (
+            resolve_jev_context(
+                config.decision.providers.jev.model,
+                config.decision.providers.jev.context_limits,
+            )
+            if provider is not None or decision_routes_enabled(config)
+            else None
+        )
         self.context_digest = digest(
             {
                 "director": asdict(config.director),
@@ -84,6 +97,10 @@ class DirectorRuntime:
                 "planner_route": asdict(config.llm),
                 "source_policy": asdict(config.sources),
                 "screen_policy_version": DIRECTOR_POLICY_VERSION,
+                "profile_projection_version": PROFILE_CONTEXT_VERSION,
+                "jev_context_fingerprint": self.context_budget.fingerprint
+                if self.context_budget
+                else "",
             }
         )
         self.store = DirectorStore(database)
@@ -101,11 +118,14 @@ class DirectorRuntime:
                 self.provider,
                 model=config.decision.providers.jev.model,
                 config=config.discovery.jev_evaluation,
+                context_budget=self.context_budget,
             )
             if config.discovery.eval_scorer == "jev" and self.provider is not None
             else None
         )
-        self.controller = DirectorController(provider=self.provider)
+        self.controller = DirectorController(
+            provider=self.provider, context_budget=self.context_budget
+        )
         self.semantic_filter = (
             JevSemanticFilter(
                 config.discovery.semantic_filter,
@@ -209,7 +229,46 @@ class DirectorRuntime:
             )
             for card in snapshot.items
         )
-        return CompositionRequest(
+        catalog = build_profile_catalog(profile)
+        query_texts = [explicit_intent, direction]
+        query_texts.extend(
+            text for card in cards for text in (card.title, card.summary, card.topic_group)
+        )
+        query_texts.extend(event.description for event in session.real_feedback)
+        # These are profile allocations, not inferred model windows. The slow
+        # planner retains its existing 96k-byte complete-prompt guard. Reserve
+        # space for instructions, policy, history and candidate envelopes.
+        nonprofile_bytes = len(
+            json.dumps(
+                {
+                    "cards": [card.model_dump(mode="json") for card in cards],
+                    "feedback": [event.model_dump(mode="json") for event in session.real_feedback],
+                    "history": [
+                        screen.model_dump(mode="json") for screen in session.recent_screens
+                    ],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
+        )
+        slow_floor = select_profile_context(
+            catalog, query_texts=(), max_bytes=0, purpose="director_planning"
+        ).used_bytes
+        slow_allocation = max(slow_floor, min(32_000, max(0, 96_000 - nonprofile_bytes - 16_000)))
+        slow = select_profile_context(
+            catalog, query_texts=query_texts, max_bytes=slow_allocation, purpose="director_planning"
+        )
+        fast_minimum = select_profile_context(
+            catalog, query_texts=(), max_bytes=0, purpose="director_pair"
+        )
+        if (
+            self.context_budget is not None
+            and fast_minimum.used_bytes > self.context_budget.max_state_question_bytes
+        ):
+            # Keep all mandatory conditions in the snapshot. The complete
+            # request guard records decision_input_too_large without a call.
+            logger.warning("Director mandatory profile exceeds selected model context")
+        request = CompositionRequest(
             request_id=request_id,
             session=CompositionSession(
                 session_ref=session.session_ref,
@@ -221,9 +280,10 @@ class DirectorRuntime:
                 real_feedback=session.real_feedback,
                 recent_screens=session.recent_screens,
                 latest_preference_revision=session.latest_preference_revision,
-                profile_context=json.loads(json.dumps(build_director_profile_view(profile))),
-                fast_profile_context=json.loads(
-                    json.dumps(build_director_profile_view(profile, fast=True))
+                profile_context=json.loads(json.dumps(slow.payload)),
+                fast_profile_context=json.loads(json.dumps(fast_minimum.payload)),
+                profile_source_digest=digest(
+                    {"catalog": catalog, "projection_policy": PROFILE_CONTEXT_VERSION}
                 ),
             ),
             candidate_set_ref="serving_" + digest([card.model_dump(mode="json") for card in cards]),
@@ -236,6 +296,23 @@ class DirectorRuntime:
             target_count=target_count,
             decision_budget_seconds=self.config.director.decision_budget_seconds,
             max_provider_calls=self.config.director.max_decision_calls,
+        )
+        fast_allocation = 8_000
+        if self.context_budget is not None:
+            fast_allocation = min(
+                self.context_budget.max_state_question_bytes // 3,
+                fast_minimum.used_bytes + profile_context_headroom(request, self.context_budget),
+            )
+        fast = select_profile_context(
+            catalog,
+            query_texts=query_texts,
+            max_bytes=max(fast_minimum.used_bytes, fast_allocation),
+            purpose="director_pair",
+        )
+        return request.model_copy(
+            update={
+                "session": request.session.model_copy(update={"fast_profile_context": fast.payload})
+            }
         )
 
     @staticmethod

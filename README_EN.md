@@ -637,6 +637,8 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 ## 🏛️ Architecture Overview
 
 Full candidate evaluation: `named profile + negative evidence + candidate text → LLM (default) OR pure Jev → metadata validation / isolated cache → admission`.
+Jev evaluation and Director share `local full profile → candidate/intent-specific facts → selected-model budget check`.
+No automatic model switching, source-profile rewriting or removal of explicit exclusions; unknown model capacities require explicit TOML registration.
 The three Web settings surfaces can select experimental, text-only Jev evaluation with controlled topic/IP vocabularies,
 explicit unknowns and dual input guards. Failures never silently invoke an LLM. Credentials still use TOML/env;
 live Chinese-content quality remains unverified. See [evaluation details](docs/modules/discovery.md).

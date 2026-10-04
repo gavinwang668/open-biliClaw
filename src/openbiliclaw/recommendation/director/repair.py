@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Literal
 
 from openbiliclaw.decision.models import (
@@ -14,6 +15,7 @@ from openbiliclaw.decision.models import (
     DecisionRequest,
     parse_jev_response,
 )
+from openbiliclaw.soul.profile_views import PROFILE_CONTEXT_VERSION, resize_profile_context
 
 from .horizon_models import (
     DirectorPair,
@@ -34,9 +36,12 @@ from .proposer import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pydantic import JsonValue
 
     from openbiliclaw.decision.base import DecisionProvider
+    from openbiliclaw.decision.context_budget import JevContextBudget
 
     from .policy import PairRole
 
@@ -90,6 +95,7 @@ class _Budget:
     deadline: float
     max_calls: int
     calls: int = 0
+    context_budget: JevContextBudget | None = None
 
 
 @dataclass(frozen=True)
@@ -182,6 +188,122 @@ def _repair_options(
     return tuple(PairAlternative(option_id=key, card_refs=refs) for key, refs in options)
 
 
+def _decision_profile(request: DecisionRequest) -> dict[str, object] | None:
+    if not isinstance(request.state, dict):
+        return None
+    session = request.state.get("session_context")
+    if not isinstance(session, dict):
+        return None
+    profile = session.get("profile_context")
+    if not isinstance(profile, dict) or profile.get("schema_version") != PROFILE_CONTEXT_VERSION:
+        return None
+    return dict(profile)
+
+
+def _with_decision_profile(request: DecisionRequest, profile: dict[str, object]) -> DecisionRequest:
+    """Detach only the selected view; source plan identity and other state stay intact."""
+    data = request.model_dump(mode="python", warnings="error")
+    data["state"]["session_context"]["profile_context"] = profile
+    return DecisionRequest.model_validate(data)
+
+
+def _fit_decision_profile(request: DecisionRequest, budget: JevContextBudget) -> DecisionRequest:
+    """Resize only an on-demand view against the complete audit/repair envelope."""
+    if budget.fits_request(request):
+        return request
+    profile = _decision_profile(request)
+    if profile is None:
+        # Legacy/offline arbitrary shapes cannot be classified safely. Keep
+        # them intact and let the complete request guard report the failure.
+        return request
+    minimum = resize_profile_context(profile, max_bytes=0)
+    minimum_request = _with_decision_profile(request, minimum.payload)
+    size = budget.measure(minimum_request.state, minimum_request.questions)
+    available = min(
+        budget.max_request_bytes - size.request_bytes,
+        budget.max_state_question_bytes - size.max_state_question_bytes,
+    )
+    if available <= 0:
+        return minimum_request
+    assert isinstance(request.state, dict)
+    session = request.state.get("session_context")
+    assert isinstance(session, dict)
+    query_texts = [
+        value
+        for value in (request.state.get("screen_direction"), session.get("explicit_intent"))
+        if isinstance(value, str)
+    ]
+    candidates = request.state.get("untrusted_candidates")
+    if isinstance(candidates, list):
+        query_texts.extend(
+            value
+            for candidate in candidates
+            if isinstance(candidate, dict)
+            for key in ("title", "summary", "topic_group")
+            if isinstance(value := candidate.get(key), str)
+        )
+    resized = resize_profile_context(
+        profile, max_bytes=minimum.used_bytes + available, query_texts=query_texts
+    )
+    return _with_decision_profile(request, resized.payload)
+
+
+def _pack_repair_decision(
+    alternatives: tuple[PairAlternative, ...],
+    requested_edit: str | None,
+    build: Callable[[tuple[PairAlternative, ...]], DecisionRequest],
+    budget: JevContextBudget,
+) -> tuple[tuple[PairAlternative, ...], DecisionRequest]:
+    """Keep a legal no-change option and at least one useful repair under both caps.
+
+    Every option was already validated against the complete candidate set and
+    feasible suffix. Prefer reducing the choice set; if still needed, resize
+    optional profile facts. Mandatory profile, intent, feedback, tentative
+    prefix and hard constraints stay intact. Probes consume no provider calls.
+    """
+    complete = build(alternatives)
+    if budget.fits_request(complete):
+        return alternatives, complete
+    keep_ids = {option.option_id for option in alternatives if option.option_id == "keep"}
+    replacements = tuple(option for option in alternatives if option.option_id != "keep")
+    matching = tuple(
+        option
+        for option in replacements
+        if requested_edit and option.option_id.startswith(requested_edit + "_")
+    )
+    # A definite invalid draft has no audit kind. If an audited edit kind has
+    # no legal replacement, retain the existing repair policy's legal options.
+    # Preserve loaded taste before spending its context on redundant choices.
+    for resize_profile in (False, True):
+        for replacement in matching or replacements:
+            required_ids = keep_ids | {replacement.option_id}
+            packed = tuple(option for option in alternatives if option.option_id in required_ids)
+            decision = build(packed)
+            if resize_profile:
+                decision = _fit_decision_profile(decision, budget)
+            if not budget.fits_request(decision):
+                continue
+            selected_profile = _decision_profile(decision)
+            # Once a useful repair fits, freeze its view while trying to add
+            # more choices; do not progressively starve the chosen taste view.
+            for extra in alternatives:
+                if extra.option_id in required_ids:
+                    continue
+                expanded_ids = required_ids | {extra.option_id}
+                expanded = tuple(
+                    option for option in alternatives if option.option_id in expanded_ids
+                )
+                expanded_decision = build(expanded)
+                if selected_profile is not None:
+                    expanded_decision = _with_decision_profile(expanded_decision, selected_profile)
+                if budget.fits_request(expanded_decision):
+                    required_ids, packed, decision = expanded_ids, expanded, expanded_decision
+            return packed, decision
+    # Nothing with KEEP (when legal) plus the requested kind fits. Preserve
+    # the original contract; _evaluate reports the explicit size failure.
+    return alternatives, _fit_decision_profile(complete, budget)
+
+
 def _read_choice(result: object, expected: DecisionRequest) -> _Choice:
     if not isinstance(result, DecisionEvidence):
         return _Choice(None, "invalid_evidence")
@@ -234,8 +356,19 @@ async def _evaluate(
         return _Choice(None, "call_budget_exhausted")
     if time.monotonic() >= budget.deadline:
         return _Choice(None, "screen_deadline_exhausted")
-    if len(canonical_json(request.model_dump(mode="json")).encode("utf-8")) > _MAX_DECISION_BYTES:
+    if budget.context_budget is not None:
+        request = _fit_decision_profile(request, budget.context_budget)
+    fits = (
+        budget.context_budget.fits_request(request)
+        if budget.context_budget is not None
+        else len(canonical_json(request.model_dump(mode="json")).encode("utf-8"))
+        <= _MAX_DECISION_BYTES
+    )
+    if not fits:
         return _Choice(None, "decision_input_too_large")
+    # Packing is local work but still spends the same absolute screen budget.
+    if time.monotonic() >= budget.deadline:
+        return _Choice(None, "screen_deadline_exhausted")
     expected = DecisionRequest.model_validate(request.model_dump(mode="python", warnings="error"))
     budget.calls += 1
     task = asyncio.current_task()
@@ -381,11 +514,16 @@ class DraftRepairer:
     """
 
     def __init__(
-        self, provider: DecisionProvider | None = None, *, max_patch_pairs: int = 1
+        self,
+        provider: DecisionProvider | None = None,
+        *,
+        max_patch_pairs: int = 1,
+        context_budget: JevContextBudget | None = None,
     ) -> None:
         if type(max_patch_pairs) is not int or not 0 <= max_patch_pairs <= 10:
             raise ValueError("invalid local patch budget")
         self._provider = provider
+        self._context_budget = context_budget
         # Initial conservative engineering limit, not a calibrated quality
         # optimum. Every actual suffix edit counts; audit-only work does not.
         self._max_patch_pairs = max_patch_pairs
@@ -394,7 +532,7 @@ class DraftRepairer:
         deadline = time.monotonic() + request.decision_budget_seconds
         if request.deadline_monotonic is not None:
             deadline = min(deadline, request.deadline_monotonic)
-        budget = _Budget(deadline, request.max_provider_calls)
+        budget = _Budget(deadline, request.max_provider_calls, context_budget=self._context_budget)
         bindings = _bound_refs(request, horizon)
         screens: list[ScreenDraft] = []
         traces: list[tuple[DirectorPair, ...]] = []
@@ -483,21 +621,31 @@ class DraftRepairer:
                             if len(restricted) > 1:
                                 alternatives = restricted
                         if self._provider is not None:
+                            build_repair_decision = partial(
+                                _decision,
+                                local,
+                                horizon,
+                                screen,
+                                index,
+                                prefix,
+                                prior,
+                                original,
+                                budget,
+                                selected_roles=tuple(pair.role for pair in new_pairs),
+                                target_count=target,
+                            )
+                            if self._context_budget is not None:
+                                alternatives, repair_decision = _pack_repair_decision(
+                                    alternatives,
+                                    choice.choice,
+                                    build_repair_decision,
+                                    self._context_budget,
+                                )
+                            else:
+                                repair_decision = build_repair_decision(alternatives)
                             choice = await _evaluate(
                                 self._provider,
-                                _decision(
-                                    local,
-                                    horizon,
-                                    screen,
-                                    index,
-                                    prefix,
-                                    prior,
-                                    original,
-                                    budget,
-                                    alternatives,
-                                    selected_roles=tuple(pair.role for pair in new_pairs),
-                                    target_count=target,
-                                ),
+                                repair_decision,
                                 budget,
                             )
                             evidence = choice.evidence_json or evidence

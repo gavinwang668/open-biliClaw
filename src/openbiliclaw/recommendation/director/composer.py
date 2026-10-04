@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from pydantic import JsonValue
 
     from openbiliclaw.decision.base import DecisionProvider
+    from openbiliclaw.decision.context_budget import JevContextBudget
 
 # Engineering input-size cap, not a tokenizer estimate or calibrated quality
 # threshold. Revisit alongside provider/model changes and Chinese replay data.
@@ -148,6 +149,53 @@ def _decision_request(
     )
 
 
+def profile_context_headroom(request: CompositionRequest, context_budget: JevContextBudget) -> int:
+    """Reserve each complete recurrent envelope before adding optional taste.
+
+    This is a local size probe, never a provider call or a selection. It walks a
+    feasible witness only to obtain the real per-pair envelope, reserving the
+    largest possible referenced card payloads and role/topic metadata for a
+    different chosen prefix. The actual request is still guarded at every seam.
+    """
+    target = largest_feasible_count(request)
+    if not target:
+        return 0
+    cards = sorted(
+        (_card_data(card) for card in request.cards),
+        key=lambda card: len(canonical_json(card).encode("utf-8")),
+        reverse=True,
+    )
+    topic_counts = build_policy_context(request, brief=build_screen_brief(request))[
+        "available_topic_counts"
+    ]
+    prefix: tuple[str, ...] = ()
+    headroom = min(context_budget.max_request_bytes, context_budget.max_state_question_bytes)
+    longest_roles: tuple[PairRole, ...] = ("exploration", "complement", "anchor", "open")
+    while len(prefix) < target:
+        alternatives = propose_pairs(request, prefix, target)[:1]
+        if not alternatives:
+            return 0
+        pair_count = len(prefix) // 2
+        roles = longest_roles[:pair_count] + (longest_roles[0],) * max(0, pair_count - 4)
+        probe = _decision_request(request, prefix, alternatives, target, 0.0, roles)
+        # Only a prefix plus the proposed pair is required, not the full pool.
+        assert isinstance(probe.state, dict)
+        probe.state["untrusted_candidates"] = [
+            card for card in cards[: len(prefix) + len(alternatives[0].card_refs)]
+        ]
+        policy = probe.state["screen_policy"]
+        assert isinstance(policy, dict)
+        policy["available_topic_counts"] = topic_counts
+        measured = context_budget.measure(probe.state, probe.questions)
+        headroom = min(
+            headroom,
+            context_budget.max_request_bytes - measured.request_bytes,
+            context_budget.max_state_question_bytes - measured.max_state_question_bytes,
+        )
+        prefix += alternatives[0].card_refs
+    return max(0, headroom)
+
+
 @dataclass(frozen=True)
 class _DecisionResult:
     selected: PairAlternative | None
@@ -225,8 +273,24 @@ class PairComposer:
     not all production admission/availability/commit checks.
     """
 
-    def __init__(self, provider: DecisionProvider | None = None) -> None:
+    def __init__(
+        self,
+        provider: DecisionProvider | None = None,
+        *,
+        context_budget: JevContextBudget | None = None,
+    ) -> None:
         self._provider = provider
+        self._context_budget = context_budget
+
+    def _fits_context(self, request: DecisionRequest) -> bool:
+        if self._context_budget is not None:
+            return self._context_budget.fits_request(request)
+        # Backwards-compatible offline seam without a configured model. Every
+        # application runtime supplies the selected model's dual-limit budget.
+        return (
+            len(canonical_json(request.model_dump(mode="json")).encode("utf-8"))
+            <= _MAX_DECISION_INPUT_BYTES
+        )
 
     async def prepare_next(self, request: CompositionRequest) -> ScreenProposal:
         """Freeze one request and append dependent pairs under a shared budget."""
@@ -253,6 +317,23 @@ class PairComposer:
             decision = _decision_request(
                 frozen, prefix, alternatives, target_count, deadline, tuple(t.role for t in traces)
             )
+            # Reduce only the legal choice set, not profile, feedback, prefix,
+            # or constraints. Every retained alternative was checked against
+            # the complete shortlist's feasible suffix by propose_pairs.
+            while (
+                self._context_budget is not None
+                and len(alternatives) > 1
+                and not self._fits_context(decision)
+            ):
+                alternatives = alternatives[: max(1, len(alternatives) // 2)]
+                decision = _decision_request(
+                    frozen,
+                    prefix,
+                    alternatives,
+                    target_count,
+                    deadline,
+                    tuple(t.role for t in traces),
+                )
             # Snapshot before crossing the adapter seam. An injected adapter
             # may mutate its argument's nested dictionaries despite frozen=True.
             expected = DecisionRequest.model_validate(
@@ -265,10 +346,7 @@ class PairComposer:
                     result = _DecisionResult(None, "call_budget_exhausted")
                 elif time.monotonic() >= deadline:
                     result = _DecisionResult(None, "screen_deadline_exhausted")
-                elif (
-                    len(canonical_json(expected.model_dump(mode="json")).encode("utf-8"))
-                    > _MAX_DECISION_INPUT_BYTES
-                ):
+                elif not self._fits_context(expected):
                     result = _DecisionResult(None, "decision_input_too_large")
                 else:
                     result, called = await self._evaluate(

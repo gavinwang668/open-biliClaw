@@ -19,12 +19,20 @@ semantic filter 同开会报配置错误。Jev 模式暂不运行旧 embedding p
 LLM 对照审计，避免将 Jev 结果记作 LLM 真值。默认仍是 LLM；沿用的产品入池阈值
 不是 Jev 标定结果，中文质量与误拒需要另行真实验证。
 
-请求保留命名 compact 画像、完整负偏好、负例、来源、评估时间和既有文本候选合同。
-适配器不再截断输入；按候选拆批，双层 UTF-8 字节护栏默认 24,000（state＋最长题）/
-48,000（完整请求），含问题、词表及 JSON 包装。它们是保守工程限制，不是精确 token 数。
-官方另有 32k / 64k token 双限制但未公开 tokenizer，远端拒绝仍按失败处理；单条超限
-明确失败，不删除画像重试。每次 adapter evaluate 共用 30 秒 / 32 调用预算，外层不重置重试。
-固定模型、问题版本、规则、词表与预算进入独立 cache namespace。
+Jev 完整评估改用 `build_profile_catalog()` + `select_profile_context()` 命名按需视图：
+全画像只在本地，先保留完整负偏好（Onion 保留原 domain/specific 限定树）、风格和场景，
+再按每条候选文本选择相关兴趣、少量全局偏好与近期事实，不调摘要 LLM、不改源画像。
+完整兴趣目录不再受旧 top-48/256 限制；当前相关性是确定性词法检索，不承诺语义同义召回。
+选中的单条事实不截字；没有加载某兴趣不等于用户不喜欢。请求中 `candidate_profiles.cN`
+只供对应候选使用，选择不依赖批次同行；原有 LLM 评估视图和召回不变。
+
+共享 `decision.context_budget` 按用户选择的精确模型 ID 解析双限制，不自动切模型。
+已登记 `jev-1.13.0` 默认仍是 24,000（state＋最长题）/48,000（完整请求）UTF-8 字节护栏，
+含问题、词表及 JSON 包装；其它模型按自身登记容量计算。无公开 tokenizer，字节护栏只是
+保守工程策略，不是精确 token 数。先预留候选、问题、负例，再加载画像并分批；单条候选或
+必需画像本身装不下则 missing，远端拒绝也按失败处理，不删约束、不重置预算重试。
+每次 adapter evaluate 共用 30 秒 / 32 调用预算。源画像在缓存查找前冻结；完整目录摘要、
+问题版本、选择策略、模型容量、词表进入缓存身份，避免并发反馈或预算变化复用旧结果。
 成功且绑定验证通过的响应会记录实际 input/output token 与上述两种字节量，明确标记
 字节并非 token 估计；不记录画像、候选标题或词表。总 usage 不能反推最长单题 token。
 
@@ -691,6 +699,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| Jev 按需画像 | ✅ | 完整目录本地保留，逐候选投影与精确模型双上下文预算；源快照、策略及预算隔离缓存，mandatory 不足明确 missing |
 | 5.1 搜索策略 | ✅ | compact 画像生成搜索词（关闭 thinking / core-memory 注入）+ 6 小时 query 缓存 + B 站搜索 + `bvid` 去重 + `DiscoveredContent` 映射 |
 | B 站近期供给 lane | ✅ | 生产 composition 在既有 SearchStrategy 请求预算内预留 1 个 `pubdate` 请求、最多 5 条；普通/近期结果交错进入评估窗口，并以 `search:recent` + raw provenance 留痕。它不改变 relevance、admission、来源策略或配额。 |
 | 5.2 排行榜策略 | ✅ | 全站榜 + 非 0 分区 rid 本地洗牌轮转覆盖 + LLM 评分筛选 |
@@ -773,6 +782,11 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 推荐预热只在安全成功条件下写完成状态，便于下一轮重试失败的 source / sprite / embedding。
 
 ## 公开 API
+
+`JevContentEvaluator(provider, model=..., config=..., context_budget=...)` 接受模型绑定的共享
+预算；`evaluate(profile_summary=..., content_items=...)` 支持命名 on-demand catalog，
+仅向 provider 发送按需投影，保留旧直接视图调用兼容。返回仍逐项对齐，失败为 `None`，
+不扩大自动重试或隐式 LLM 路由。
 
 ### Learned scorer 校准 API
 

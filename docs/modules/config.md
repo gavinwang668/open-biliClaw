@@ -242,6 +242,20 @@ max_attempts = 2
 | `api_key_env` | string | `"TYPESAFE_API_KEY"` | 合法环境变量名称，不是 key 本身；实际秘密由显式调用进程提供 |
 | `timeout_seconds` | float | `2.0` | 有限且大于 0 的总请求预算，覆盖所有尝试及重试等待，不是每次尝试各有一份预算 |
 | `max_attempts` | int | `2` | 大于等于 1 的整数，包含第一次请求；不接受布尔或小数 |
+| `context_limits` | model ID → table | `{}` | 精确模型 ID 对应 `max_request_tokens` 和 `max_state_question_tokens`；两项均必填且为整数，后者不能大于前者 |
+
+模型始终由用户选择，程序只适应它的容量。内置登记仅含 `jev-1.13.0` 的官方
+64k / 32k token 双限制（按十进制处理）；未知模型须按该服务官方规格在 TOML 登记，
+不能把 `G5` 猜成 GPT-5 或套用 Jev 1.13 容量。示例表名为
+`[decision.providers.jev.context_limits."实际选中的完整模型ID"]`，两个 token 数须自行核实，
+不提供猜测值。关闭所有 Jev 路由可保留未知模型；启用路由但缺容量则报错且 readiness=false。
+更改后需完整重启后端。`config-show` 和配置 API 显示容量来源、token 限制与工程字节护栏，
+不请求 `/models` 或付费接口，不下载 tokenizer，不自动升级模型。
+
+共享预算采用 token 限制 × 3/4 的 UTF-8 字节工程护栏，逐请求计算 native JSON 包装、state
+及全部问题和最长单题；这不是字符/token 比率估计或保证，服务端仍可能拒绝。
+不将所有 422/429 都误认作上下文溢出。官方依据：[模型文档](https://docs.typesafe.ai/models)、
+[OpenAPI](https://api.typesafe.ai/openapi.json)（2026-10-04 核实）。
 
 旧配置缺段时使用默认关闭值；加载 / 保存通过
 `validate_jev_decision_config()` 严格校验，非法字段抛 `ConfigError`，不静默回落默认值。
@@ -270,12 +284,15 @@ readiness 信息，不返回 key。`config-show` 展示模式及非 token 的字
 |---|---|---|
 | `topic_labels` | 内置粗分类 | 受控主题列表；未知明确保留，不动态创造新标签 |
 | `franchise_labels` | `[]` | 受控 IP / 系列 / 品牌名称；未配词表时无法识别新 IP |
-| `max_state_question_bytes` | `24000` | state 加最长题的序列化 UTF-8 工程上限 |
-| `max_request_bytes` | `48000` | 完整原生请求的序列化 UTF-8 工程上限 |
+| `max_state_question_bytes` | `0` | 0=按选定模型自动；非零是 state 加最长题的额外 UTF-8 护栏，不得超过该模型工程预算 |
+| `max_request_bytes` | `0` | 0=按选定模型自动；非零是完整原生请求的额外 UTF-8 护栏，不得超过该模型工程预算 |
 | `max_calls` | `32` | 一次 evaluator 调用的子批调用数上限 |
 | `budget_seconds` | `30.0` | 一次 evaluator 共用的总预算，不是每个子批各一份 |
 
 预算与词表严格验证；词表预留 unknown 选项，不能静默截断。固定模型版本进入缓存
+身份；旧配置显式 24000/48000 会保留为更严的人工护栏，想随更大模型扩大需改为 0。
+按需画像保留必需约束，再加载相关事实；无法放下必需内容会失败，不切模型或隐式调 LLM。
+模型容量、选择策略也进入缓存
 命名空间；完整评估拒绝 `jev-latest / jev-preview` 浮动别名。须先通过 TOML 启用
 `decision.providers.jev` 并在实际后端环境设置凭据，重启后可通过页面切换评估模式；
 保存时缺少凭据会失败，不显示虚假的切换成功。Jev 与封面多模态评估、Jev 预过滤

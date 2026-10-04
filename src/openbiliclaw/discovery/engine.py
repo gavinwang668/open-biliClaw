@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import copy
 import inspect
 import json
 import logging
@@ -81,6 +82,7 @@ from openbiliclaw.saved_sync.identity import (
     content_storage_key,
     make_item_key,
 )
+from openbiliclaw.soul.profile_views import PROFILE_CONTEXT_VERSION, build_profile_catalog
 from openbiliclaw.sources.platforms import CANONICAL_SOURCE_FAMILIES, normalize_source_platform
 
 if TYPE_CHECKING:
@@ -2516,6 +2518,10 @@ class ContentDiscoveryEngine:
             self._llm_service is None and getattr(self, "_eval_scorer", "llm") != "jev"
         ) or not contents:
             return [0.0] * len(contents)
+        if getattr(self, "_eval_scorer", "llm") == "jev":
+            # One source snapshot owns cache lookup, on-demand selection and
+            # cache write even if feedback updates the caller's profile in flight.
+            profile = copy.deepcopy(profile)
 
         from openbiliclaw.llm.prompts import content_evaluation_clock
 
@@ -3169,6 +3175,11 @@ class ContentDiscoveryEngine:
     def _evaluation_profile_digest(self, profile: SoulProfile) -> str:
         """Digest the structured profile slice and recall pool visible to evaluation."""
 
+        if getattr(self, "_eval_scorer", "llm") == "jev":
+            return stable_json_digest(
+                {"catalog": build_profile_catalog(profile), "policy": PROFILE_CONTEXT_VERSION}
+            )
+
         compacted = self._evaluation_profile_summary(profile)
         return stable_json_digest(
             {
@@ -3630,7 +3641,11 @@ class ContentDiscoveryEngine:
             batch,
             source_context=source_context,
         )
-        recall = await self._related_interests_for_batch_result(batch, profile)
+        recall = (
+            _BatchRelatedInterestRecall({}, frozenset(range(len(batch))))
+            if getattr(self, "_eval_scorer", "llm") == "jev"
+            else await self._related_interests_for_batch_result(batch, profile)
+        )
         content_items: list[dict[str, object]] = []
         for index, c in enumerate(batch):
             item = _batch_evaluation_content_item(c, source_context=source_context)
@@ -3919,8 +3934,24 @@ class ContentDiscoveryEngine:
         if negative_examples is _NEGATIVE_EXAMPLES_UNSET:
             negative_examples = self._get_negative_exemplars()
         negatives = cast("list[dict[str, object]] | None", negative_examples or None)
+        profile_catalog = build_profile_catalog(profile)
+        profile_digest = self._evaluation_profile_digest(profile)
+        negative_digest = self._negative_examples_digest(negatives)
+        # Keys are frozen before awaiting the provider; later item mutation
+        # cannot write an old result under a new content/profile identity.
+        cache_keys = {
+            index: self._batch_eval_cache_key(
+                content,
+                profile_digest=profile_digest,
+                negative_digest=negative_digest,
+                evaluation_bucket=evaluation_bucket,
+                source_context=source_context,
+            )
+            for index, content in enumerate(batch)
+            if index in cache_indices
+        }
         payload = await evaluator.evaluate(
-            profile_summary=self._evaluation_profile_summary(profile),
+            profile_summary=profile_catalog,
             content_items=content_items,
             source_context=source_context or (batch[0].source_strategy if batch else ""),
             negative_examples=negatives,
@@ -3955,14 +3986,9 @@ class ContentDiscoveryEngine:
             )
             results.append(score)
             if score is not None and index in cache_indices:
-                cache_key = self._batch_eval_cache_key(
-                    content,
-                    profile_digest=self._evaluation_profile_digest(profile),
-                    negative_digest=self._negative_examples_digest(negatives),
-                    evaluation_bucket=evaluation_bucket,
-                    source_context=source_context,
+                self._set_eval_cache_entry(
+                    cache_keys[index], _eval_cache_entry_for_content(content)
                 )
-                self._set_eval_cache_entry(cache_key, _eval_cache_entry_for_content(content))
         return results
 
     async def evaluate_cached_content_batch(
@@ -4094,6 +4120,7 @@ class ContentDiscoveryEngine:
             # Jev owns its splitting and total deadline. Outer malformed-output
             # retries would reset that budget and repeat permanently oversized inputs.
             budget["remaining"] = 0
+            profile = copy.deepcopy(profile)
         normal_cache_enabled = normal_cache_enabled and self._batch_normal_cache_eligible(
             batch,
             source_context=source_context,

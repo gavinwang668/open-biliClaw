@@ -8,6 +8,11 @@ provider 准备情况，不返回凭据。保存前校验启用状态、固定�
 冲突，失败不得写配置或留下表面成功的旧路由。运行时的完整评估器由共享独立 decision
 provider 提供；单条 / 批量 / 旧池恢复均使用它，聊天、搜索与推荐表达保持原有 LLM 路由。
 
+`discovery.jev_provider.context_limits` / `context_budget` 分别只读暴露容量登记表与当前精确模型的
+生效 token 限制、字节护栏、来源与策略指纹；未知容量使 readiness=false，并拒绝启用 Jev
+完整评估。容量表仍通过 TOML 配置，API 不提供模型自动切换。评估两个旧字节字段默认
+改为 0（自动），非零只可收紧，不可绕开所选模型限制；错误保存不得持久化。
+
 ## 概述
 
 `src/openbiliclaw/api/` 暴露本地 FastAPI 契约，并把 UI 请求编排到 durable storage、Soul、Dialogue 与 runtime。本文记录配置、迁移、推荐和对话等公开端点；通用鉴权见 [api-auth.md](api-auth.md)，初始化端点见 [init.md](init.md)。

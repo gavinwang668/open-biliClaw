@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from openbiliclaw.config import JevEvaluationConfig
+from openbiliclaw.decision.context_budget import JevContextLimits, resolve_jev_context
 from openbiliclaw.decision.models import (
     ChoiceAnswer,
     ChoiceQuestion,
@@ -642,7 +643,12 @@ def test_cache_namespace_versions_model_rubric_config_and_snapshots_vocabularies
     assert JevContentEvaluator(provider, model=MODEL, config=config).cache_namespace != original
     assert (
         JevContentEvaluator(
-            provider, model="jev-1.14.0", config=JevEvaluationConfig()
+            provider,
+            model="jev-1.14.0",
+            config=JevEvaluationConfig(),
+            context_budget=resolve_jev_context(
+                "jev-1.14.0", {"jev-1.14.0": JevContextLimits(64000, 32000)}
+            ),
         ).cache_namespace
         != original
     )

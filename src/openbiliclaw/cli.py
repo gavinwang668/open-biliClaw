@@ -16504,6 +16504,20 @@ def config_show() -> None:
     default_chain = effective_llm_default_chain(cfg.llm)
     llm_label = "LLM 默认调用链" if instance_routing else "LLM"
     llm_value = " → ".join(default_chain) if instance_routing else cfg.llm.default_provider
+    from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
+
+    try:
+        jev_context = resolve_jev_context(
+            cfg.decision.providers.jev.model, cfg.decision.providers.jev.context_limits
+        )
+    except JevContextError:
+        jev_context_label = "未知；需按精确模型 ID 配置双 token 上限"
+    else:
+        jev_context_label = (
+            f"{jev_context.max_state_question_tokens} / {jev_context.max_request_tokens} tokens; "
+            f"{jev_context.max_state_question_bytes} / {jev_context.max_request_bytes} bytes "
+            f"({jev_context.source})"
+        )
     _print_page_title("当前配置概览", "运行时配置")
     rows = [
         ("语言", cfg.language),
@@ -16514,6 +16528,7 @@ def config_show() -> None:
             "开启" if cfg.decision.providers.jev.enabled else "关闭",
         ),
         ("Jev 模型", cfg.decision.providers.jev.model),
+        ("Jev 模型上下文（单题 / 总请求）", jev_context_label),
         ("Jev 凭据变量名", cfg.decision.providers.jev.api_key_env),
         ("Jev 超时（秒）", str(cfg.decision.providers.jev.timeout_seconds)),
         ("Jev 最大尝试次数", str(cfg.decision.providers.jev.max_attempts)),
@@ -16524,9 +16539,9 @@ def config_show() -> None:
         ("候选完整评估器", cfg.discovery.eval_scorer),
         ("Jev 评估能力", "纯文本 / 受控分类 / 未校准实验模式"),
         (
-            "Jev 输入字节护栏（非 token 数）",
+            "Jev 评估额外字节护栏（0=自适应）",
             f"{cfg.discovery.jev_evaluation.max_state_question_bytes} / "
-            f"{cfg.discovery.jev_evaluation.max_request_bytes}",
+            f"{cfg.discovery.jev_evaluation.max_request_bytes}（非 token 计数）",
         ),
         ("B站认证", cfg.bilibili.auth_method),
         (

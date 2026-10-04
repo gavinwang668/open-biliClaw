@@ -6,7 +6,18 @@
 
 ## 概述
 
-推荐导演通过公共纯函数 `profile_views.build_director_profile_view(profile, fast=False)` 消费有效画像：稳定兴趣／内容风格／完整避雷与近期觉察／洞察分开，用户否定的洞察不再进入此视图；`fast=True` 为 Jev 的较小投影。它不含 `personality_portrait`，不修改画像，不增加后台推理调用。具体字段及工程容量见[导演上下文](director.md)与[使用登记](../profile-usage.md)。
+推荐导演与 Jev 完整评估通过公共纯函数 `profile_views.build_profile_catalog(profile)` 和
+`select_profile_context(catalog, query_texts=..., max_bytes=..., purpose=...)` 按需消费有效画像。
+完整目录只在本地；视图完整保留负偏好原树、风格和场景，再选本任务相关兴趣、全局偏好与
+近期事实。返回不可变 `ProfileContextProjection`（payload 每次复制、digest、fits、used_bytes、
+included_interest_names）；必需内容超过容量则 fits=false，不能当成功摘要使用。无全局
+兴趣条数截断、无摘要模型调用、无源画像写入。归档正偏好和用户否定洞察不进入视图，
+推测保留置信度／来源，不含人格散文和创作者列表。旧 `build_director_profile_view` 保留兼容，
+不再是生产导演入口。具体上下文见[导演](director.md)与[使用登记](../profile-usage.md)。
+
+`resize_profile_context(payload, max_bytes=..., query_texts=...)` 仅对命名按需视图重新选择
+已经加载的整条可选事实，供更长的 audit/repair 包二次适配；不补入未加载事实，未知字段
+作为必需语义保留，未知 schema 拒绝。最小必需块装不下仍返回 fits=false。
 
 `soul/` 包实现了用户理解的核心逻辑，包括：
 
@@ -37,6 +48,7 @@
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 按需画像公共 API | ✅ | `build_profile_catalog` / `select_profile_context` 分离本地全集与预算视图；确定性词法检索、整条事实选择、完整负偏好底线，供 Jev 评估和导演共享 |
 | OnionProfile 五层重构 | ✅ | 将 SoulProfile 重构为五层洋葱模型（CoreLayer → ValuesLayer → InterestLayer → RoleLayer → SurfaceLayer） |
 | MBTI 人格类型 | ✅ | Core 层新增 MBTI 类型与维度强度（E/I, S/N, T/F, J/P），支持置信度标注 |
 | 树形兴趣结构 | ✅ | InterestLayer 改为领域树结构 (domain → specifics)，支持”国际时事 → 中东局势 / 欧洲政治”的多层级兴趣 |

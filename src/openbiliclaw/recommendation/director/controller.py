@@ -22,6 +22,7 @@ from .repair import DraftRepairer
 
 if TYPE_CHECKING:
     from openbiliclaw.decision.base import DecisionProvider
+    from openbiliclaw.decision.context_budget import JevContextBudget
 
 
 def plan_needs_replanning(
@@ -80,10 +81,15 @@ class DirectorController:
     """
 
     def __init__(
-        self, provider: DecisionProvider | None = None, *, max_patch_pairs: int = 1
+        self,
+        provider: DecisionProvider | None = None,
+        *,
+        max_patch_pairs: int = 1,
+        context_budget: JevContextBudget | None = None,
     ) -> None:
         self._provider = provider
         self._max_patch_pairs = max_patch_pairs
+        self._context_budget = context_budget
         # Validate once, including when a pure-Jev caller supplies the budget.
         DraftRepairer(max_patch_pairs=max_patch_pairs)
 
@@ -106,7 +112,9 @@ class DirectorController:
         if not math.isfinite(now) or now < 0:
             raise ValueError("invalid current time")
         if strategy == "jev_recurrent":
-            composed = await PairComposer(self._provider).prepare_next(frozen)
+            composed = await PairComposer(
+                self._provider, context_budget=self._context_budget
+            ).prepare_next(frozen)
             return DirectorResult(proposal=self._from_composer(frozen, composed, strategy))
         reason = "agent_plan_missing"
         if horizon is not None:
@@ -143,7 +151,9 @@ class DirectorController:
                 reason = "agent_plan_state_changed"
         if horizon is None:
             provider = self._provider if strategy == "agent_jev" else None
-            fallback = await PairComposer(provider).prepare_next(frozen)
+            fallback = await PairComposer(
+                provider, context_budget=self._context_budget
+            ).prepare_next(frozen)
             return DirectorResult(
                 proposal=self._from_composer(frozen, fallback, strategy, reason),
                 replan_required=True,
@@ -151,6 +161,7 @@ class DirectorController:
         repair = await DraftRepairer(
             self._provider if strategy == "agent_jev" else None,
             max_patch_pairs=self._max_patch_pairs,
+            context_budget=self._context_budget,
         ).repair(frozen, horizon)
         if now + (time.monotonic() - started) >= horizon.expires_at:
             # Recheck TTL after awaited judgments. We have already spent the

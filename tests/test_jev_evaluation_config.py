@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from openbiliclaw.config import (
     Config,
     ConfigError,
+    JevContextLimits,
     JevEvaluationConfig,
     build_jev_evaluation_config,
     decision_routes_enabled,
@@ -57,7 +58,7 @@ def test_jev_evaluation_roundtrip_and_route_enablement(tmp_path: Path) -> None:
         ("franchise_labels", [1]),
         ("max_state_question_bytes", 24001),
         ("max_request_bytes", 48001),
-        ("max_request_bytes", 1000),
+        ("max_request_bytes", 255),
         ("max_calls", True),
         ("budget_seconds", float("nan")),
     ],
@@ -119,6 +120,10 @@ def test_jev_api_roundtrip_ready_and_no_secret(monkeypatch, tmp_path: Path) -> N
     assert response.status_code == 200
     assert secret not in response.text
     assert response.json()["discovery"]["jev_provider"]["ready"] is True
+    context = response.json()["discovery"]["jev_provider"]["context_budget"]
+    assert context["max_request_tokens"] == 64_000
+    assert context["max_state_question_tokens"] == 32_000
+    assert context["max_request_bytes"] == 48_000
     response = client.put(
         "/api/config",
         json={
@@ -133,6 +138,37 @@ def test_jev_api_roundtrip_ready_and_no_secret(monkeypatch, tmp_path: Path) -> N
     assert loaded.discovery.eval_scorer == "jev"
     assert loaded.discovery.jev_evaluation.topic_labels == cfg.discovery.jev_evaluation.topic_labels
     assert secret not in (tmp_path / "config.toml").read_text()
+
+
+@pytest.mark.parametrize("registered", [False, True])
+def test_jev_api_readiness_requires_exact_model_capacity(monkeypatch, tmp_path, registered) -> None:
+    cfg = _configured()
+    cfg.decision.providers.jev.model = "operator-fixed"
+    cfg.decision.providers.jev.context_limits = {
+        "another-fixed": JevContextLimits(256_000, 128_000)
+    }
+    if registered:
+        cfg.decision.providers.jev.context_limits["operator-fixed"] = JevContextLimits(
+            128_000, 64_000
+        )
+    monkeypatch.setenv(cfg.decision.providers.jev.api_key_env, "test-only-key")
+    client = _client(monkeypatch, tmp_path, cfg)
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    readiness = response.json()["discovery"]["jev_provider"]
+    assert readiness["ready"] is registered
+    if registered:
+        assert readiness["context_budget"]["max_request_bytes"] == 96_000
+        assert readiness["context_budget"]["source"] == "operator_confirmed"
+    else:
+        assert readiness["context_budget"] is None
+        assert "精确模型 ID" in readiness["reason"]
+    assert readiness["context_limits"]["another-fixed"]["max_request_tokens"] == 256_000
+    before = (tmp_path / "config.toml").read_bytes()
+    response = client.put("/api/config", json={"discovery": {"eval_scorer": "jev"}})
+    assert response.status_code == (202 if registered else 400), response.text
+    if not registered:
+        assert (tmp_path / "config.toml").read_bytes() == before
 
 
 @pytest.mark.parametrize(

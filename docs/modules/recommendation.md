@@ -30,6 +30,10 @@ HTTPS URL。
 
 ## 已实现功能
 
+导演画像已从静态 top-N 切为本地目录按意图／候选加载，三策略共用命名视图；Jev 逐对和
+修补按用户选择模型的双上下文护栏运行，不自动换模型。完整源画像与视图身份分开，
+候选变化不导致无意义重排，真实偏好变化仍使未来计划失效。详见[导演上下文](director.md)。
+
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | 推荐导演三策略 | ✅ 默认关闭 | `DirectorRuntime` 接通逐对 Jev、Agent+Jev 局部修补和纯 Agent 多屏计划；屏原子提交、真实曝光反馈及配置换代 fencing，详见[模块合同](director.md) |
@@ -132,6 +136,9 @@ HTTPS URL。
 cover bonus 仍由前者单独控制。
 
 ## 公开 API
+
+`DirectorRuntime` 为 controller/composer/repair 注入 `JevContextBudget`；
+`CompositionSession.profile_source_digest` 用于计划新鲜度，实际视图仍绑定 `input_digest`。
 
 `RecommendationEngine.load_director_candidates()` 只读准备 topic 分层 shortlist；
 `DirectorRuntime` 统一驱动三种模式，由 `DirectorStore` 原子提交，而非借用旧接口的部分入库逻辑。

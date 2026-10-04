@@ -442,6 +442,14 @@ class LLMInstanceConfig(LLMProviderConfig):
     enabled: bool = True
 
 
+@dataclass(frozen=True)
+class JevContextLimits:
+    """Operator-confirmed dual token limits bound to one exact model ID."""
+
+    max_request_tokens: int
+    max_state_question_tokens: int
+
+
 @dataclass
 class JevDecisionConfig:
     """Independent Jev client settings; credentials remain in the environment.
@@ -456,6 +464,7 @@ class JevDecisionConfig:
     api_key_env: str = "TYPESAFE_API_KEY"
     timeout_seconds: float = 2.0
     max_attempts: int = 2
+    context_limits: dict[str, JevContextLimits] = field(default_factory=dict)
 
 
 @dataclass
@@ -536,8 +545,10 @@ class JevEvaluationConfig:
         ]
     )
     franchise_labels: list[str] = field(default_factory=list)
-    max_state_question_bytes: int = 24000
-    max_request_bytes: int = 48000
+    # Zero adapts to the selected model. Existing explicit values remain
+    # operator-owned stricter guards; they never redefine model capacity.
+    max_state_question_bytes: int = 0
+    max_request_bytes: int = 0
     max_calls: int = 32
     budget_seconds: float = 30.0
 
@@ -3069,6 +3080,12 @@ def _build_config(
 
 def _jev_decision_config_issues(config: JevDecisionConfig) -> list[ConfigIssue]:
     """Check typed Jev settings without reading or revealing credentials."""
+    from openbiliclaw.decision.context_budget import (
+        JevContextError,
+        parse_jev_context_limits,
+        validate_jev_model_id,
+    )
+
     issues: list[ConfigIssue] = []
 
     def add(name: str, message: str) -> None:
@@ -3109,6 +3126,15 @@ def _jev_decision_config_issues(config: JevDecisionConfig) -> list[ConfigIssue]:
         or config.max_attempts < 1
     ):
         add("max_attempts", "必须为大于等于 1 的整数（包含首次请求）。")
+    if not isinstance(config.context_limits, dict):
+        add("context_limits", "必须为按精确模型 ID 索引的上下文容量表。")
+    else:
+        for model, limits in config.context_limits.items():
+            try:
+                validate_jev_model_id(model)
+                parse_jev_context_limits(limits)
+            except JevContextError as exc:
+                add("context_limits", str(exc))
     return issues
 
 
@@ -3122,6 +3148,7 @@ def validate_jev_decision_config(config: JevDecisionConfig) -> None:
 
 def _build_decision_config(raw: object) -> DecisionConfig:
     """Parse the isolated decision namespace without credential lookup."""
+    from openbiliclaw.decision.context_budget import JevContextError, parse_jev_context_limits
 
     def table(value: object, section: str, allowed: set[str]) -> dict[str, Any]:
         if not isinstance(value, dict):
@@ -3139,7 +3166,16 @@ def _build_decision_config(raw: object) -> DecisionConfig:
         "decision.providers.jev",
         {item.name for item in fields(JevDecisionConfig)},
     )
-    jev = JevDecisionConfig(**jev_raw)
+    context_raw = jev_raw.get("context_limits", {})
+    if not isinstance(context_raw, dict):
+        raise ConfigError("decision.providers.jev.context_limits 必须为 TOML table。")
+    try:
+        context_limits = {
+            model: parse_jev_context_limits(limits) for model, limits in context_raw.items()
+        }
+    except JevContextError as exc:
+        raise ConfigError(f"decision.providers.jev.context_limits: {exc}") from None
+    jev = JevDecisionConfig(**{**jev_raw, "context_limits": context_limits})
     validate_jev_decision_config(jev)
     return DecisionConfig(providers=DecisionProvidersConfig(jev=jev))
 
@@ -3199,17 +3235,19 @@ def _jev_evaluation_config_issues(evaluation: JevEvaluationConfig) -> list[Confi
             add(name, "必须为至多 254 个非空标签，每项最多 80 UTF-8 字节；unknown 为保留结果。")
         elif len(set(labels)) != len(labels):
             add(name, "标签不能重复；不会自动截断或合并。")
-    for name, low, high in (
-        ("max_state_question_bytes", 256, 24000),
-        ("max_request_bytes", 256, 48000),
-        ("max_calls", 1, 64),
-    ):
+    for name in ("max_state_question_bytes", "max_request_bytes"):
+        value = getattr(evaluation, name)
+        if type(value) is not int or (value != 0 and not 256 <= value <= 75_000_000):
+            add(name, "必须为 0（按模型自适应）或 256..75000000 的更严字节护栏。")
+    for name, low, high in (("max_calls", 1, 64),):
         value = getattr(evaluation, name)
         if type(value) is not int or not low <= value <= high:
             add(name, f"必须为 {low}..{high} 的整数。")
     if (
         type(evaluation.max_request_bytes) is int
         and type(evaluation.max_state_question_bytes) is int
+        and evaluation.max_request_bytes > 0
+        and evaluation.max_state_question_bytes > 0
         and evaluation.max_request_bytes < evaluation.max_state_question_bytes
     ):
         add("max_request_bytes", "不能小于 max_state_question_bytes。")
@@ -3237,6 +3275,8 @@ def decision_routes_enabled(config: Config) -> bool:
 
 
 def _director_route_issues(config: Config) -> list[ConfigIssue]:
+    from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
+
     issues: list[ConfigIssue] = []
 
     def add(path: str, message: str) -> None:
@@ -3298,6 +3338,21 @@ def _director_route_issues(config: Config) -> list[ConfigIssue]:
             "启用 Jev 评估、编排或过滤路由时必须显式启用 provider。",
         )
     issues.extend(_jev_evaluation_config_issues(config.discovery.jev_evaluation))
+    # Inactive routes may retain an unknown model for later setup, but must
+    # not silently borrow another model's capacity when the route is enabled.
+    try:
+        context = resolve_jev_context(
+            config.decision.providers.jev.model, config.decision.providers.jev.context_limits
+        )
+    except JevContextError as exc:
+        if decision_routes_enabled(config):
+            add("decision.providers.jev.context_limits", str(exc))
+    else:
+        evaluation = config.discovery.jev_evaluation
+        for name in ("max_request_bytes", "max_state_question_bytes"):
+            value = getattr(evaluation, name)
+            if type(value) is int and value > getattr(context, name):
+                add(f"discovery.jev_evaluation.{name}", "只能收紧所选模型字节预算，不能放宽。")
     if config.discovery.eval_scorer == "jev":
         if config.decision.providers.jev.model in {"jev-latest", "jev-preview"}:
             add(
@@ -6100,6 +6155,8 @@ def _render_config_toml(
     include_api_auth: bool = True,
 ) -> str:
     """Render a Config dataclass into TOML."""
+    from openbiliclaw.decision.context_budget import parse_jev_context_limits
+
     jev = config.decision.providers.jev
     validate_jev_decision_config(jev)
     validate_director_routes(config)
@@ -6150,6 +6207,17 @@ def _render_config_toml(
         f"timeout_seconds = {jev.timeout_seconds}",
         f"max_attempts = {jev.max_attempts}",
         "",
+        *[
+            line
+            for model, raw_limits in sorted(jev.context_limits.items())
+            for limits in (parse_jev_context_limits(raw_limits),)
+            for line in (
+                f"[decision.providers.jev.context_limits.{_toml_string(model)}]",
+                f"max_request_tokens = {limits.max_request_tokens}",
+                f"max_state_question_tokens = {limits.max_state_question_tokens}",
+                "",
+            )
+        ],
         "[general]",
         f"language = {_toml_string(config.language)}",
         f"data_dir = {_toml_string(config.data_dir)}",

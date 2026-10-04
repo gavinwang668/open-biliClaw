@@ -895,6 +895,13 @@ system-level package the user must consent to.
 
 ## Optional: Jev decision provider and recommendation director
 
+The model is always user-selected. `jev-1.13.0` has registered dual context limits;
+other exact model IDs require verified `max_request_tokens` and `max_state_question_tokens`
+under `decision.providers.jev.context_limits."<exact-id>"`, followed by a full backend restart.
+Do not guess a G5 capacity or silently change the model. Evaluation byte guards default to
+`0=auto`; existing explicit guards remain stricter overrides. See [configuration](modules/config.md#decisionprovidersjev).
+On-demand profile loading needs no new dependency, migration, credential, or installer step.
+
 The Bash and PowerShell completion summaries link this optional configuration; they
 do not enable a route, add onboarding flags, collect a Jev key, or make a paid probe.
 

@@ -148,6 +148,9 @@ class CompositionSession(_FrozenModel):
     real_feedback: tuple[RealFeedback, ...] = Field(default=(), max_length=8)
     profile_context: dict[str, JsonValue] = Field(default_factory=dict)
     fast_profile_context: dict[str, JsonValue] = Field(default_factory=dict)
+    # Runtime-built views vary with the candidate query and available bytes.
+    # Replanning follows underlying profile facts/policy, not selection churn.
+    profile_source_digest: str = Field(default="", max_length=64)
     recent_screens: tuple[RecentScreen, ...] = Field(default=(), max_length=3)
     # Authoritative store aggregate, not an inference from the bounded prompt
     # history. None means an offline caller cannot prove full event coverage.
@@ -155,12 +158,15 @@ class CompositionSession(_FrozenModel):
 
     @property
     def profile_digest(self) -> str:
-        return digest(self.profile_context) if self.profile_context else ""
+        return self.profile_source_digest or (
+            digest(self.profile_context) if self.profile_context else ""
+        )
 
     def prompt_context(self, *, fast: bool = False) -> dict[str, JsonValue]:
         """One projection used by all models; fast calls omit historical summaries."""
         data = self.model_dump(
-            mode="json", exclude={"fast_profile_context", "latest_preference_revision"}
+            mode="json",
+            exclude={"fast_profile_context", "latest_preference_revision", "profile_source_digest"},
         )
         data["context_schema_version"] = "director-context.v1"
         if fast:
@@ -220,7 +226,12 @@ class CompositionRequest(_FrozenModel):
     @property
     def input_digest(self) -> str:
         """Bind semantic snapshot and policy budgets, excluding wall-clock identity."""
-        return digest(self.model_dump(mode="json", exclude={"request_id", "deadline_monotonic"}))
+        payload = self.model_dump(mode="json", exclude={"request_id", "deadline_monotonic"})
+        if not self.session.profile_source_digest:
+            # Legacy/offline callers did not have a source-identity field; an
+            # empty default must not invalidate their exact transport golden.
+            payload["session"].pop("profile_source_digest", None)
+        return digest(payload)
 
 
 class PairAlternative(_FrozenModel):

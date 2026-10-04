@@ -120,6 +120,8 @@ server-owned binding、context preview 与卡片 action 不改变 CLI 的既有�
 独立 Jev 决策配置也展示开关、模型、API key 环境变量名、总超时和最大尝试次数。
 同时显示导演 mode / strategy、提前编排屏数与独立过滤 mode。
 另显示候选完整评估器、Jev 纯文本 / 受控分类的实验状态及两个 UTF-8 字节护栏（非 token 数）。
+`config-show` 还显示精确模型的已登记 token 容量、容量来源与自动工程字节护栏；评估字段
+为 0 表示 auto，旧显式数值表示额外收紧，未知容量明确显示不可用，不自动挑选替代模型。
 `eval_scorer="jev"` 时 CLI discovery 与旧池补评共用纯 Jev 评估合同；每次请求关闭 transport，
 不跨 asyncio loop 复用连接、不隐式回退 LLM；配置失败在构建时直接报告。
 这里不读取或打印实际 key，不创建 provider 或探测。配置见[决策配置](config.md#decisionprovidersjev)。

@@ -1,5 +1,43 @@
 # 纯 Jev 完整候选评估：实施与验收记录
 
+## 2026-10-04–05 增补：固定模型预算与按需画像
+
+分支 `feat/jev-adaptive-profile`，基于完整评估分支 `10555ccf`，独立 worktree；不合回 main，
+不修改生产配置、源画像或线上候选池。以下为本轮增补，后文保留 10 月 2 日历史验收。
+
+- 按用户决定不自动选模型。`decision.context_budget` 解析精确模型的双容量，已登记
+  `jev-1.13.0`；其它型号（包括尚未核实的 G5）必须提供该型号确切容量，不映射到 GPT-5。
+  API/CLI 展示来源与工程护栏，旧显式 byte guard 保留为额外收紧，0=自动。
+- 依照 `codebase-design` 将容量与画像序列化分别集中在共享模块。`soul.profile_views`
+  保存本地完整目录，按任务词法相关性与少量全局锚点选取整条事实；不调用摘要模型，不
+  覆写用户画像。完整负偏好原树、风格和场景不可裁，画像为部分视图，未加载不代表不喜欢。
+- 评估先预留完整候选/问题/负例，逐项加载 `candidate_profiles.cN`，不足则分批或 missing，
+  绝不偷偷换 LLM。源画像在缓存查询前冻结，写缓存键在 await 前冻结。回归覆盖弱兴趣
+  第 21/291 位、不同模型容量、画像超限、并发反馈以及同行/批位置变化。
+- 独立审计发现 c0/c10 引用长度能改变临界画像，已改用固定宽度容量探针：只限制可选内容，
+  必需画像仍按实际请求复查，不因保守预留而假报必需内容超限。多个临界长度和编号宽度有回归。
+- 导演慢/快视图从同一本地目录加载，最近三屏真实行为仍单独保留；完整源身份用于计划新鲜度，
+  实际投影用于请求归因。不能因换了候选就把同一画像当新画像，也不能跨容量/策略变化沿用旧计划。
+- 第二轮独立审计补齐小窗口边界：runtime 先用完整 pair 包预留前缀开销，再加载快画像；
+  repair 先缩合法备选，仍不足时只重选可选画像。回归包含第三屏审查带前两屏 8 张 prior、
+  同时需要减少备选和画像才能成功的替换；发送前检查最终包，所有旁支上下文和必需约束保持原样。
+- 字节预算不是精确 tokenizer。未发送真实 Jev 请求、未读取凭据；未验证中文推荐质量、跨语种
+  同义召回、误拒、费用或服务端超限形态。独立 semantic prefilter 与默认 LLM 评估仍保留旧画像合同。
+  本轮没有改变 UI 组件或安装依赖，没有重跑浏览器/扩展测试或全仓 pytest；避开了下文已知 CLI 凭据探测测试。
+
+本轮扩展回归（所有命令使用 `.venv` 与 `PYTHONPATH=src`）：
+
+- `pytest -q tests/test_jev*.py tests/test_director*.py tests/test_on_demand_profile_views.py tests/test_profile_views.py tests/test_profile_views_guards.py tests/test_discovery_evaluator.py tests/test_config.py tests/test_pair_composer.py tests/test_decision*.py tests/test_semantic_filter.py tests/test_api_config_guards.py tests/test_api_config_transactional.py tests/test_temporal_evaluation.py tests/test_eval_payload.py tests/test_candidate_eval_coordinator.py --ignore=tests/test_director_frontend_e2e.py`：1639 passed（修补二次画像压缩前；该补丁最终复测另记）。
+- `pytest -q tests/test_discovery_evaluator.py tests/test_config.py tests/test_pair_composer.py tests/test_decision*.py tests/test_semantic_filter.py tests/test_api_config_guards.py tests/test_api_config_transactional.py tests/test_temporal_evaluation.py tests/test_eval_payload.py tests/test_candidate_eval_coordinator.py`：813 passed。
+- `pytest -q tests/test_cli.py -k config_show`：6 passed，254 deselected；只执行隔离的配置展示测试。
+- 最终补丁后 `pytest -q tests/test_jev*.py tests/test_director*.py tests/test_on_demand_profile_views.py tests/test_profile_views.py tests/test_profile_views_guards.py tests/test_pair_composer.py --ignore=tests/test_director_frontend_e2e.py`：878 passed；包含第三屏修补、resize 和原生 HTTP 流水线。和前述 1639 项有重叠，不相加冒充独立样本。
+- 最后一处 repair packing 后绝对截止时间重查补丁由 `pytest -q tests/test_director_repair_context_budget.py` 再验：12 passed；压缩不能续租或在过期后启动请求。
+- 最终 `ruff check src/ tests/`、`mypy src/`（321 个源文件）与 `git diff --check` 均通过。
+
+原生 HTTP 流水线继续使用 `httpx.MockTransport` + 实际适配器/引擎/临时 SQLite，不能把它叫作真实 Jev 服务 E2E。
+
+## 2026-10-02 原始实施记录
+
 日期：2026-10-02。
 分支：`feat/jev-full-evaluator`，基于 `fix/director-real-e2e-1002` 的 `a94c1401`。
 开发位于独立 worktree；本轮实现未主动修改生产配置、生产数据库或主工作区，没有合回 main。旧 CLI 测试触及本机凭据的隔离边界另见下文。

@@ -1,7 +1,8 @@
 """Pure typed Jev adapter for complete, text-only candidate evaluation.
 
-The caller supplies a named profile view. This module does not compact it,
-fetch images, call a generative LLM, own a provider, or cache partial results.
+The caller supplies a named profile view or on-demand catalog. Selection from
+the catalog stays in soul.profile_views; this adapter only supplies the budget.
+It never fetches images, calls a generative LLM or caches partial results.
 Unknown taxonomy labels are explicit decisions, not fabricated metadata.
 """
 
@@ -19,6 +20,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, cast
 
 from openbiliclaw.config import validate_jev_evaluation_config
+from openbiliclaw.decision.context_budget import JevContextBudget, resolve_jev_context
 from openbiliclaw.decision.models import (
     ChoiceAnswer,
     ChoiceQuestion,
@@ -33,6 +35,11 @@ from openbiliclaw.discovery.temporal import (
     ground_temporal_evaluation,
     parse_temporal_evaluation,
 )
+from openbiliclaw.soul.profile_views import (
+    PROFILE_CATALOG_VERSION,
+    PROFILE_CONTEXT_VERSION,
+    select_profile_context,
+)
 
 if TYPE_CHECKING:
     from pydantic import JsonValue
@@ -42,7 +49,7 @@ if TYPE_CHECKING:
     from openbiliclaw.decision.models import DecisionAnswer, DecisionQuestion
 
 logger = logging.getLogger(__name__)
-_SCHEMA = "jev-full-evaluation-v1"
+_SCHEMA = "jev-full-evaluation-v2"
 _UNKNOWN = "u"
 _TEXT_FIELDS = ("title", "description", "body_text", "published_label")
 _FAILURE_REASONS = frozenset(
@@ -221,6 +228,7 @@ class _Candidate:
     questions: dict[str, DecisionQuestion]
     excerpts: dict[str, str]
     deadlines: dict[str, str]
+    profile_context: dict[str, object] | None = None
 
     @property
     def ref(self) -> str:
@@ -234,7 +242,8 @@ class JevContentEvaluator:
     before the first await. UTF-8 byte limits are conservative engineering caps,
     NOT a claim to reproduce Jev's unpublished tokenizer. Both the whole wire
     body and state + longest question (including criteria/envelopes) are checked.
-    Oversized candidates fail without trimming profile, negatives or content.
+    Catalog inputs load whole relevant facts before packing; mandatory profile,
+    negatives and candidate content are never trimmed to manufacture a success.
     """
 
     def __init__(
@@ -243,6 +252,7 @@ class JevContentEvaluator:
         *,
         model: str,
         config: JevEvaluationConfig,
+        context_budget: JevContextBudget | None = None,
     ) -> None:
         if not model.strip() or model != model.strip() or model in {"jev-latest", "jev-preview"}:
             raise ValueError("Jev full evaluation requires a pinned model version")
@@ -254,6 +264,12 @@ class JevContentEvaluator:
             topic_labels=list(config.topic_labels),
             franchise_labels=list(config.franchise_labels),
         )
+        if context_budget is not None and context_budget.model != model:
+            raise ValueError("Jev context budget must belong to the selected model")
+        self._context_budget = (context_budget or resolve_jev_context(model)).with_byte_guards(
+            max_request_bytes=config.max_request_bytes,
+            max_state_question_bytes=config.max_state_question_bytes,
+        )
         self._topics = {f"t{i}": label for i, label in enumerate(self._config.topic_labels)}
         self._franchises = {f"f{i}": label for i, label in enumerate(self._config.franchise_labels)}
 
@@ -264,6 +280,8 @@ class JevContentEvaluator:
             "model": self._model,
             "schema": _SCHEMA,
             "config": asdict(self._config),
+            "context_budget": self._context_budget.fingerprint,
+            "profile_policy": PROFILE_CONTEXT_VERSION,
             "guard": _GUARD,
             "relevance": [_RELEVANCE_INSTRUCTIONS, _RELEVANCE_RUBRIC],
             "reasons": _REASONS,
@@ -282,6 +300,13 @@ class JevContentEvaluator:
     def _candidate(self, index: int, item: dict[str, object]) -> _Candidate | None:
         ref = f"c{index}"
         guard = _GUARD.format(ref=ref)
+        guard += (
+            f" If candidate_profiles is present, use only candidate_profiles.{ref} "
+            "as this candidate's user profile, including its mandatory exclusions; "
+            "other candidates' profile selections are not evidence for this candidate. "
+            "A selected profile is partial, not an exhaustive list of the user's interests. "
+            "Missing interests do not imply dislike. Otherwise use the shared profile. "
+        )
         texts = [value for key in _TEXT_FIELDS if isinstance(value := item.get(key), str)]
         # Exact contiguous excerpts, with no hidden cap/truncation of source text.
         # The native Choice limit is an explicit unsupported-input failure.
@@ -395,6 +420,11 @@ class JevContentEvaluator:
                     "untrusted_candidates": [
                         {"candidate_ref": row.ref, "content": row.item} for row in candidates
                     ],
+                    **(
+                        {"candidate_profiles": {row.ref: row.profile_context for row in candidates}}
+                        if any(row.profile_context is not None for row in candidates)
+                        else {}
+                    ),
                 },
             ),
             questions={key: value for row in candidates for key, value in row.questions.items()},
@@ -407,31 +437,73 @@ class JevContentEvaluator:
         These are serialized UTF-8 envelopes, not tokenizer measurements. The
         provider's aggregate input usage cannot reveal exact per-question tokens.
         """
-        envelope = {
-            "model": self._model,
-            "state": request.state,
-            "questions": {},
-        }
-        questions = {
-            key: question.model_dump(mode="json", exclude_none=True)
-            for key, question in request.questions.items()
-        }
-        # Counting each single-question envelope includes labels, criteria and
-        # JSON punctuation, which a state-only or characters/4 test would miss.
-        # Replacing the empty {} costs exactly two bytes in canonical JSON;
-        # serialize the potentially long shared state only once, not per question.
-        envelope_bytes = len(_json(envelope).encode("utf-8")) - 2
-        largest_question_bytes = envelope_bytes + max(
-            len(_json({key: question}).encode("utf-8")) for key, question in questions.items()
-        )
-        return envelope_bytes + len(_json(questions).encode("utf-8")), largest_question_bytes
+        measurement = self._context_budget.measure(request.state, request.questions)
+        return measurement.request_bytes, measurement.max_state_question_bytes
 
     def _fits(self, request: DecisionRequest) -> bool:
-        request_bytes, state_question_bytes = self._wire_sizes(request)
-        return (
-            request_bytes <= self._config.max_request_bytes
-            and state_question_bytes <= self._config.max_state_question_bytes
+        return self._context_budget.fits_request(request)
+
+    def _load_profile(
+        self,
+        catalog: dict[str, object],
+        base: dict[str, object],
+        candidate: _Candidate,
+        deadline: float,
+    ) -> _Candidate | None:
+        """Load a candidate-specific view independent of batch companions.
+
+        Reserve space for the complete candidate, negative examples and all
+        questions first. Mandatory profile fields can borrow the soft profile
+        allowance, but cannot be erased or split. No source profile is sent.
+        """
+        # A stable worst-case reference prevents c0/c10 wire-length differences
+        # from changing a cacheable candidate's projection near a byte boundary.
+        # Real batches cannot approach this signed-64-bit item count; reject
+        # larger references explicitly instead of silently breaking the contract.
+        if candidate.index > 2**63 - 1:
+            return None
+        probe = self._candidate(2**63 - 1, candidate.item)
+        if probe is None:
+            return None
+        bare = replace(probe, profile_context={})
+        request_size, question_size = self._wire_sizes(self._request(base, [bare], deadline))
+        available = (
+            min(
+                self._context_budget.max_request_bytes - request_size,
+                self._context_budget.max_state_question_bytes - question_size,
+            )
+            + 2
+        )  # replace the already-counted empty profile object
+        queries = [
+            value
+            for key in (*_TEXT_FIELDS, "topic_group", "source_strategy")
+            if isinstance(value := candidate.item.get(key), str)
+        ]
+        minimum = select_profile_context(catalog, query_texts=queries, max_bytes=0)
+        # Engineering allocation, not a calibrated quality threshold. Fixed per
+        # model/item, never tuned using batch peers (which would invalidate cache).
+        allowance = max(
+            minimum.used_bytes,
+            min(available, self._context_budget.max_state_question_bytes // 3),
         )
+        projection = select_profile_context(catalog, query_texts=queries, max_bytes=allowance)
+        if not projection.fits:
+            logger.warning("Jev full evaluator candidate skipped: mandatory_profile_too_large")
+            return None
+        loaded = replace(candidate, profile_context=projection.payload)
+        if not self._fits(self._request(base, [loaded], deadline)):
+            logger.warning(
+                "Jev full evaluator candidate skipped: input_budget_exhausted "
+                "(mandatory_profile_too_large_or_candidate)"
+            )
+            return None
+        logger.info(
+            "Jev profile loaded: digest=%s bytes=%d interests=%d",
+            projection.digest,
+            projection.used_bytes,
+            len(projection.included_interest_names),
+        )
+        return loaded
 
     def _answers(
         self, raw: object, expected: DecisionRequest, *, candidate_count: int
@@ -578,12 +650,24 @@ class JevContentEvaluator:
             )
             items = snapshot.pop("items")
             base = cast("dict[str, object]", snapshot)
+            catalog = None
+            supplied_profile = base.get("profile")
+            if (
+                isinstance(supplied_profile, dict)
+                and supplied_profile.get("schema_version") == PROFILE_CATALOG_VERSION
+            ):
+                catalog = supplied_profile
+                base["profile"] = {}
             batches: list[tuple[DecisionRequest, list[_Candidate]]] = []
             pending: list[_Candidate] = []
             for index, item in enumerate(items):
                 candidate = self._candidate(index, item)
                 if candidate is None:
                     continue
+                if catalog is not None:
+                    candidate = self._load_profile(catalog, base, candidate, deadline)
+                    if candidate is None:
+                        continue
                 proposed = self._request(base, [*pending, candidate], deadline)
                 if self._fits(proposed):
                     pending.append(candidate)

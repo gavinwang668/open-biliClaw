@@ -17,10 +17,11 @@
 runtime ── 共享有界准入、总截止时间、熔断与取消回收
 ```
 
-导演调用的 `session_context` 包含命名推荐画像快视图、最近三屏真实经历和语义反馈。
-pair / audit / repair question schema 当前为 v3；导演 Jev 输入总上限为 64,000 UTF-8
-字节（不是 token 限额或 SLA），独立过滤仍是原来的 24,000 字节。超限有因回退，不
-静默删掉避雷项。画像／历史卡片不能扩大程序提供的合法选项集合，详见[导演上下文](director.md)。
+导演调用的 `session_context` 包含按需推荐画像快视图、最近三屏真实经历和语义反馈。
+pair / audit / repair 使用 `context_budget.py` 的模型绑定双护栏；不再把所有模型都当作
+64,000 字节。完整评估共用该预算，独立预过滤保留原来的 24,000 字节上限与合同。
+超限有因回退，不静默删掉避雷项。画像／历史卡片不能扩大程序提供的合法选项集合，
+详见[导演上下文](director.md)。
 
 Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMProvider.complete()`，
 也不加入 `[llm]` 的全局或模块 fallback 链。它返回判断证据，不直接改候选池、曝光历史、
@@ -50,6 +51,7 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | 共享屏目标与角色 | 已实现 | `screen_policy` 区分事实／假设／未知；一次 pair / role 联合选择或保留职责的局部修补，不新增语义质量保证 |
 | 独立过滤与运行时 | 已实现 | 独立 shadow / enforce、真实标签审计与延期重审；运行时共享并发闸与熔断 |
 | 完整候选评估 | 已实现，实验性 | purpose=`EVALUATE`，纯文本受控分类；不隐式调用 LLM，详见 discovery |
+| 固定模型自适应预算 | 已实现 | 精确 ID 的双 token 容量 → 双 UTF-8 工程护栏；模型不自动切换，未知容量必须显式登记；完整评估与导演共用 |
 | 图形界面设置与服务探测 | 部分提供 | 完整评估模式在三端设置页可切换；provider 凭据仍由 TOML/env 配置，不提供付费探测 |
 | 线上质量 / 中文效果 / 时延保证 | 未验证 | 离线 fixture 不等于真实模型验收；本轮未调用付费 API |
 
@@ -59,6 +61,9 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 
 | 接口 | 合同 |
 |---|---|
+| `resolve_jev_context(model, overrides=None)` | 返回不可变 `JevContextBudget`；仅解析所选模型，未登记抛 `JevContextError`；不发网络请求 |
+| `JevContextBudget.measure(state, questions)` / `fits_request(request)` | 包含原生 JSON 包装的总字节与最长单题字节；不是 tokenizer；`fingerprint` 用于缓存/运行时身份 |
+| `JevContextBudget.with_byte_guards(...)` | 0=自动，非零只允许更严的人工护栏；不得超过模型护栏；`JevContextLimits` 为精确模型的两项 token 容量 |
 | `DecisionRequest` | `request_id`、`purpose`、`question_schema_version`、JSON `state`、具名 `questions` 和可选 `deadline_monotonic` |
 | `DecisionPurpose` | `FILTER` / `CHOOSE_PAIR` / `AUDIT_DRAFT` / `REPAIR_PAIR`，仅用于归因，不自动实现对应业务流程或阈值 |
 | 导演 `DecisionRequest.state.screen_policy` | 带 brief、证据强度、已选／剩余角色和可用主题摘要；是调用方的软编排合同，不授予 provider 修改准入、计划或数据库的权限 |

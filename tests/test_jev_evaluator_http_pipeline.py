@@ -158,7 +158,8 @@ async def test_mock_native_http_complete_evaluation_is_admitted_to_real_sqlite(
             assert http_calls[0].method == "POST"
             assert str(http_calls[0].url) == "https://api.typesafe.ai/v1/systemone"
             body = json.loads(http_calls[0].content)
-            assert body["state"]["profile"]
+            assert body["state"]["candidate_profiles"]["c0"]["interests"]
+            assert body["state"]["profile"] == {}  # full local catalog is never sent
             assert body["state"]["untrusted_candidates"][0]["content"]["body_text"] == (
                 "算法与数据结构的通用概念。"
             )

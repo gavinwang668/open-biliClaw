@@ -19612,6 +19612,7 @@ def create_app(
             tailnet_state = str(tailnet_status.get("event") or "pending_restart")
 
         from openbiliclaw.config import ConfigError
+        from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
         from openbiliclaw.decision.registry import validate_decision_provider_credentials
 
         jev_settings = cfg.decision.providers.jev
@@ -19637,6 +19638,17 @@ def create_app(
         if jev_settings.model in {"jev-latest", "jev-preview"}:
             jev_ready = False
             jev_reason = "完整评估需要固定 Jev 模型版本；请在 TOML 替换 latest/preview 并重启。"
+        jev_context_budget: dict[str, str | int] | None = None
+        try:
+            jev_context = resolve_jev_context(jev_settings.model, jev_settings.context_limits)
+        except JevContextError:
+            jev_ready = False
+            jev_reason = (
+                "所选模型上下文容量未知；请在 TOML 的 decision.providers.jev.context_limits "
+                "按精确模型 ID 填写已确认的双 token 上限，再重启后端。"
+            )
+        else:
+            jev_context_budget = {**asdict(jev_context), "fingerprint": jev_context.fingerprint}
 
         return ConfigResponse(
             language=cfg.language,
@@ -19948,6 +19960,11 @@ def create_app(
                     api_key_env=jev_settings.api_key_env,
                     ready=jev_ready,
                     reason=jev_reason,
+                    context_limits={
+                        model: asdict(limits)
+                        for model, limits in jev_settings.context_limits.items()
+                    },
+                    context_budget=jev_context_budget,
                 ),
                 candidate_eval_concurrency=cfg.discovery.candidate_eval_concurrency,
                 multimodal_evaluation_enabled=cfg.discovery.multimodal_evaluation_enabled,

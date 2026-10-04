@@ -13,6 +13,7 @@ main API ← validated response inventory / 2s active-client inventory watcher
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 
 optional Director (default off; separate decision credentials):
+  local profile catalog → on-demand projection (intent / shortlist / byte budget)
   profile view + latest 3 experienced screens + bounded shortlist
     → shared screen policy (brief / evidence / soft roles)
       ├→ recurrent Jev pairs
@@ -26,8 +27,9 @@ optional Director (default off; separate decision credentials):
     → evidence audit → soft defer / full LLM review; never a chat-LLM fallback
 
 candidate full evaluator (settings switch; LLM default):
+  Jev: local profile catalog → per-candidate projection + selected-model context budget
   named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
-    Jev: controlled taxonomy / IP + exact temporal excerpts + dual byte guards
+    Jev: controlled taxonomy / IP + exact temporal excerpts + model-bound dual byte guards
   → shared metadata validation / separate cache → admission / legacy pool recovery
 
 LAN clients ─ HTTP（默认）────────────→ IPv4 0.0.0.0 + IPv6 [::] listeners → one uvicorn / FastAPI app
@@ -520,6 +522,11 @@ flowchart LR
 `LLMProvider.complete()`，不加入 `[llm]` fallback 链，也没有候选池、推荐历史或画像
 写权限。配置为默认关闭的 `[decision.providers.jev]`，凭据只引用环境变量名；
 自建 HTTP client 遵循现有海外网络策略。
+
+`decision/context_budget.py` 集中解析精确所选模型的双上下文容量与 UTF-8 工程护栏，
+不路由/切换模型；未知容量必须显式登记。`soul/profile_views.py` 管理本地全目录与
+按需投影，完整评估按每条候选选事实，导演按意图与 shortlist 选事实；必需负偏好原树
+不裁，原始画像不写。源摘要、选择策略、实际视图与容量分层绑定缓存/计划/请求身份。
 
 `RuntimeContext` 显式配置 `DirectorRuntime`，在同一实例内共享有界队列／并发／熔断的 decision provider，
 供编排、独立发现过滤或纯 Jev 完整评估借用；重载切换 epoch，关闭旧任务和 provider。模型只返回证据，

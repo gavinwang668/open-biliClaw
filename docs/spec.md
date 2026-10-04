@@ -294,6 +294,7 @@ main API ← validated response inventory / 2s active-client inventory watcher
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 
 optional Director (default off; separate decision credentials):
+  local profile catalog → on-demand projection (intent / shortlist / byte budget)
   profile view + latest 3 experienced screens + bounded shortlist
     → shared screen policy (brief / evidence / soft roles)
       ├→ recurrent Jev pairs
@@ -307,8 +308,9 @@ optional Director (default off; separate decision credentials):
     → evidence audit → soft defer / full LLM review; never a chat-LLM fallback
 
 candidate full evaluator (settings switch; LLM default):
+  Jev: local profile catalog → per-candidate projection + selected-model context budget
   named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
-    Jev: controlled taxonomy / IP + exact temporal excerpts + dual byte guards
+    Jev: controlled taxonomy / IP + exact temporal excerpts + model-bound dual byte guards
   → shared metadata validation / separate cache → admission / legacy pool recovery
 
 interactive (dialogue / config probe / agent.chat / agent.task) ┐

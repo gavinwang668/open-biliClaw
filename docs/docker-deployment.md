@@ -299,6 +299,11 @@ base_url = "https://relay.example.com/v1"
 
 ### 可选：Jev 决策与推荐导演
 
+模型仍由用户选择。`jev-1.13.0` 内置双容量登记；其它精确型号需在挂载的 TOML 中按
+`decision.providers.jev.context_limits."实际模型ID"` 填写核实后的两个 token 上限，完整
+重启后端生效，不自动换模型。评估字节护栏 0=auto，旧非零配置仍作额外收紧。
+画像按需加载无新依赖、数据迁移或安装步骤，详见[配置](modules/config.md#decisionprovidersjev)。
+
 导演三模式与独立语义过滤均默认关闭；它们使用现有依赖，无需安装 Jev SDK、模型
 或额外 sidecar。显式启用时，按[配置参考](modules/config.md#director)修改容器实际
 配置目录 `/app/runtime` 的 TOML，而不是宿主机未挂载的同名文件。`agent_only` 且
