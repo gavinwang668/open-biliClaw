@@ -2590,6 +2590,36 @@ def create_app(
 
     register_auth_routes(app, _get_auth_gate)
 
+    def _local_or_authenticated_gate(request: Request, *, detail: str) -> JSONResponse | None:
+        """Self-gate privileged routes for when the password gate is off.
+
+        The auth middleware short-circuits when ``[api.auth]`` is disabled (the
+        default), so privileged routes must self-gate like ``/api/auth/admin``:
+        trusted-local callers always pass; remote callers must enable the
+        password gate first (the middleware then requires an authenticated
+        session). Returns ``None`` when the request may proceed. See issues
+        #299 (credential export) and #300 (config tampering).
+        """
+        gate = _get_auth_gate()
+        if gate.auth.enabled or gate.is_trusted_local(request):
+            return None
+        return JSONResponse({"error": "local_only", "detail": detail}, status_code=403)
+
+    def _config_write_gate(request: Request) -> JSONResponse | None:
+        """Gate config write/probe routes (issue #300).
+
+        An unauthenticated remote ``PUT /api/config`` can hijack LLM traffic
+        (``llm.instances.*.base_url`` + stored API key) and plant an arbitrary
+        executable (``bilibili.browser_executable``); the probe/discover
+        endpoints leak the stored API key to an attacker-chosen ``base_url``
+        without any write.
+        """
+        return _local_or_authenticated_gate(
+            request,
+            detail="远程读取或修改设置需要先开启密码门禁"
+            "（[api.auth] enabled = true），或在本机操作。",
+        )
+
     @app.post("/api/auth/admin")
     async def auth_admin(request: Request) -> JSONResponse:
         """Local-only enable/disable + set/change of the password gate.
@@ -8349,22 +8379,14 @@ def create_app(
         """Keep the Bilibili credential routes privileged even with the gate off.
 
         The auth middleware short-circuits when ``[api.auth]`` is disabled, so
-        cookie import/export/session must self-gate like ``/api/auth/admin``:
-        trusted-local callers always pass; remote callers must enable the
-        password gate first (the middleware then requires an authenticated
-        session). Otherwise any LAN peer could export the stored session
-        cookie and take over the victim's Bilibili account (issue #299).
+        cookie import/export/session must self-gate like ``/api/auth/admin``.
+        Otherwise any LAN peer could export the stored session cookie and take
+        over the victim's Bilibili account (issue #299).
         """
-        gate = _get_auth_gate()
-        if gate.auth.enabled or gate.is_trusted_local(request):
-            return None
-        return JSONResponse(
-            {
-                "error": "local_only",
-                "detail": "远程访问 B 站凭据需要先开启密码门禁"
-                "（[api.auth] enabled = true），或在本机操作。",
-            },
-            status_code=403,
+        return _local_or_authenticated_gate(
+            request,
+            detail="远程访问 B 站凭据需要先开启密码门禁"
+            "（[api.auth] enabled = true），或在本机操作。",
         )
 
     @app.post("/api/bilibili/auth/import", response_model=None)
@@ -22258,8 +22280,13 @@ def create_app(
             )
 
     @app.post("/api/config/probe-service", response_model=ConfigServiceProbeResponse)
-    async def probe_config_service(payload: ConfigServiceProbeIn) -> ConfigServiceProbeResponse:
+    async def probe_config_service(
+        request: Request, payload: ConfigServiceProbeIn
+    ) -> ConfigServiceProbeResponse | JSONResponse:
         """Probe submitted LLM / embedding / proxy settings without saving config.toml."""
+        denied = _config_write_gate(request)
+        if denied is not None:
+            return denied
         from copy import deepcopy
 
         from openbiliclaw.config import (
@@ -22308,9 +22335,13 @@ def create_app(
 
     @app.post("/api/config/discover-models", response_model=ConfigModelDiscoveryResponse)
     async def discover_config_models(
+        request: Request,
         payload: ConfigModelDiscoveryIn,
-    ) -> ConfigModelDiscoveryResponse:
+    ) -> ConfigModelDiscoveryResponse | JSONResponse:
         """List models for one submitted instance without saving config.toml."""
+        denied = _config_write_gate(request)
+        if denied is not None:
+            return denied
         from copy import deepcopy
 
         from openbiliclaw.config import load_config
@@ -22332,6 +22363,9 @@ def create_app(
         After persisting, the backend attempts to rebuild all swappable
         runtime components so the new settings take effect immediately.
         """
+        denied = _config_write_gate(request)
+        if denied is not None:
+            return denied
         from openbiliclaw.config import (
             _DEFAULT_ADMISSION_MIN_SCORE,
             _DEFAULT_CANDIDATE_EVAL_CONCURRENCY,

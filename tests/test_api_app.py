@@ -326,7 +326,7 @@ def test_injected_runtime_adopts_shared_soul_controller_gate(monkeypatch, tmp_pa
     assert ctx.llm_concurrency_gate is gate
     assert soul._llm_service.concurrency_gate is gate  # type: ignore[attr-defined]
     assert ctx.dialogue._build_service() is soul._llm_service  # type: ignore[attr-defined]
-    response = TestClient(app).post(
+    response = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420").post(
         "/api/config/probe-service",
         json={"kind": "llm", "config": {}},
     )
@@ -2397,7 +2397,7 @@ class TestBackendAPI:
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
-            base_url="http://testserver",
+            base_url="http://127.0.0.1:8420",
         ) as client:
             response = await asyncio.wait_for(
                 client.put("/api/config", json={"language": "zh"}),
@@ -2446,7 +2446,7 @@ class TestBackendAPI:
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
-            base_url="http://testserver",
+            base_url="http://127.0.0.1:8420",
         ) as client:
             response = await client.put(
                 "/api/config",
@@ -12797,7 +12797,7 @@ class TestBackendAPI:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         response = client.put(
             "/api/config",
@@ -12854,7 +12854,7 @@ class TestBackendAPI:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         response = client.put(
             "/api/config",
@@ -12900,7 +12900,7 @@ class TestBackendAPI:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         response = client.put(
             "/api/config",
@@ -12952,7 +12952,7 @@ class TestBackendAPI:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         response = client.put(
             "/api/config",
@@ -13006,7 +13006,7 @@ class TestBackendAPI:
             lambda c, path=None: save_config(c, config_path),
         )
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         response = client.put(
             "/api/config",
@@ -13072,7 +13072,7 @@ class TestBackendAPI:
             lambda c, path=None: save_config(c, config_path),
         )
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         unsafe_slug = client.put(
             "/api/config",
@@ -13140,7 +13140,11 @@ class TestBackendAPI:
         database = Database(tmp_path / "bangumi-token-put.db")
         database.initialize()
         app = create_app(memory_manager=object(), database=database, soul_engine=object())
-        return cfg, database, TestClient(app)
+        return (
+            cfg,
+            database,
+            TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"),
+        )
 
     def test_put_config_bangumi_token_validates_live_and_writes_username(
         self, monkeypatch, tmp_path
@@ -13327,7 +13331,7 @@ class TestBackendAPI:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         # PUT — supply dedicated embedding credentials.
         put_resp = client.put(
@@ -13407,7 +13411,7 @@ class TestBackendAPI:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        client = TestClient(app)
+        client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
         response = client.put(
             "/api/config",
@@ -15300,7 +15304,7 @@ class TestEmbeddingAndCompatProviderE2E:
         )
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        return TestClient(app)
+        return TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     # ── GET masking & shape ─────────────────────────────────────────
 
@@ -17099,7 +17103,7 @@ class TestProfileEditEndpoints:
         layer.data.update(profile.to_dict())
         layer.save()
         app = create_app(memory_manager=memory, database=memory._database, soul_engine=engine)
-        return TestClient(app)
+        return TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     def test_edit_state_returns_untruncated_fields(self, tmp_path: Path) -> None:
         client = self._client(tmp_path)
@@ -21182,7 +21186,9 @@ class TestLlmFallbackConfigValidationAndProbe:
             lambda c, path=None: save_config(c, config_path),
         )
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        return TestClient(app), config_path
+        return TestClient(
+            app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"
+        ), config_path
 
     def _base_config(self):
         from openbiliclaw.config import Config, LLMConfig, LLMProviderConfig
@@ -21415,7 +21421,9 @@ class TestKeywordGenerationModeWrite:
             lambda c, path=None: save_config(c, config_path),
         )
         app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-        return TestClient(app), config_path
+        return TestClient(
+            app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"
+        ), config_path
 
     @pytest.mark.parametrize(
         ("mode", "enabled", "replace"),
@@ -21585,7 +21593,11 @@ def _make_defer_app(interest_defer=None, avoidance_defer=None, llm_reply="neutra
         dialogue=FakeDialogue(),
         recommendation_engine=SimpleNamespace(_llm=FakeLLM()),
     )
-    return TestClient(app), interest, avoidance
+    return (
+        TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420"),
+        interest,
+        avoidance,
+    )
 
 
 def test_interest_probe_defer_button_returns_deferred() -> None:
@@ -21706,7 +21718,7 @@ def test_interest_pending_excludes_deferred_probes(tmp_path) -> None:
 
     app = create_app(soul_engine=FakeSoulEngine(), memory_manager=object(), database=object())
     app.state.runtime_context.config = SimpleNamespace(data_path=tmp_path)
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     items = client.get("/api/interest-probes/pending").json()["items"]
     domains = {i["domain"] for i in items}
@@ -21754,7 +21766,7 @@ def test_reshuffle_endpoint_forwards_visible_card_exclusions() -> None:
         recommendation_engine=engine,
         runtime_controller=FakeRuntimeController(),
     )
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     no_body = client.post("/api/recommendations/reshuffle")
     with_exclusions = client.post(
@@ -21836,7 +21848,7 @@ def test_successful_reshuffle_records_one_batch_event_and_empty_result_records_n
         recommendation_engine=FakeRecommendationEngine(),
         runtime_controller=FakeRuntimeController(),
     )
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     success = client.post(
         "/api/recommendations/reshuffle",
@@ -22162,7 +22174,7 @@ class TestRootRedirectLanding:
         from fastapi.testclient import TestClient
 
         app = create_app(memory_manager=object(), database=object(), soul_engine=soul_engine)
-        return TestClient(app)
+        return TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
     def test_root_redirects_to_web_when_initialized(self) -> None:
         client = self._client(SimpleNamespace(is_profile_ready=lambda: True))

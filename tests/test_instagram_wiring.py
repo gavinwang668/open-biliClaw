@@ -283,7 +283,9 @@ def test_instagram_creator_only_config_is_normalized_to_seeded_modes(
     database.initialize()
 
     with TestClient(
-        create_app(memory_manager=object(), database=database, soul_engine=object())
+        create_app(memory_manager=object(), database=database, soul_engine=object()),
+        client=("127.0.0.1", 5000),
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = client.put(
             "/api/config",
