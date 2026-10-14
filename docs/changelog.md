@@ -2,6 +2,10 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## 未发布：B 站凭据接口远程访问门禁（issue #299 安全修复）
+
+- 修复默认部署（`0.0.0.0` 绑定 + `[api.auth]` 门禁关闭）下 `POST /api/bilibili/auth/export` 零鉴权泄露完整 B 站登录 Cookie（SESSDATA / bili_jct）的严重漏洞：凭据导入、导出、注销三个接口无论门禁开关都要求本机访问或已认证会话，远程零鉴权调用一律 `403 local_only`。移动 App 远程使用这三接口前需先开启密码门禁并登录。`config.example.toml`、README 中英文与 `docs/modules/api-auth.md` 同步补充安全警示。
+
 ## 未发布：TikTok 源后端缺口修复与前端展示面补全（issue #88）
 
 - README 中英文与项目首页突出 Instagram/TikTok 新来源，补齐首页首屏、搜索/分享摘要和连接指引；区分 Instagram 已发布、TikTok main 已合入待发版，保留默认关闭、代理要求及账号验收限制。

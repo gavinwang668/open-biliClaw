@@ -376,6 +376,8 @@ openbiliclaw start
 - **Flutter 原生客户端**：从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw-mobile/releases/latest) 下载 Android APK（新机型选 `arm64-v8a`，老设备选 `armeabi-v7a`）直接安装，或下载 iOS 未签名 IPA 用个人 Apple 账号重签；装好后右上角设置里填后端 IP / 端口即可连接同一后端。局域网仍填电脑 IP；跨网络时 Android / iOS App 已内嵌 tsnet，可配合电脑端默认关闭的应用内 Tailnet 使用，两端加入同一 tailnet 后走 MagicDNS / Tailnet IP，无需电脑全局开 Tailscale，并建议开启应用密码。这里不包括该仓库的 Web / Linux / macOS / Windows Flutter 构建。
 
 > 首次运行 `openbiliclaw init` 时会询问是否允许局域网访问（默认 Y）。如果选了 N 或想改回来，编辑 `config.toml` 的 `[api].host`（`0.0.0.0` = 通过可用的 IPv4 / IPv6 局域网访问，`127.0.0.1` = 仅本机）。二维码优先使用 IPv4；仅有 IPv6 时会自动生成带方括号的 IPv6 地址。
+>
+> **安全提示**：`0.0.0.0` 绑定意味着同网络的任何设备都能访问后端。默认配置下 `[api.auth]` 密码门禁是关闭的，此时历史、画像和点赞/评论等写接口对局域网零鉴权开放；B 站登录凭据的导入/导出/注销接口例外——它们始终要求本机或已登录会话。只要在不可信网络（公共 Wi-Fi、共享热点、端口映射到公网）使用，请立即执行 `openbiliclaw set-password` 开启门禁。
 
 打开 `/m/` 后可以把手机页面保存成桌面快捷入口：iPhone / iPad 用 Safari 的「分享 → 添加到主屏幕」；Android Chrome / Chromium 浏览器用菜单里的「安装应用」或「添加到主屏幕」。局域网 HTTP 在部分 Android 浏览器上可能只生成快捷方式；如果想要更稳定的完整 PWA 安装提示，建议在可信环境里用 HTTPS 反代访问本机后端。
 
