@@ -15,6 +15,7 @@
 |------|------|------|
 | 总开关 | ✅ | `[api.auth].enabled=false` 时中间件直接放行；`true` 且无密码视为配置错误（blocking）。例外：B 站凭据接口在门禁关闭时仍自查（见下行）。 |
 | B 站凭据接口特权化 | ✅ | `POST /api/bilibili/auth/import`、`POST /api/bilibili/auth/export`、`DELETE /api/bilibili/auth/session` 无论门禁开关都要求 trusted-local 或已认证会话：门禁关闭时远程调用一律 `403 local_only`，杜绝默认部署（0.0.0.0 + 门禁关闭）下局域网零鉴权导出登录 Cookie 接管账号（issue #299）。移动 App 远程使用这三接口前需先开启密码门禁并登录。 |
+| 配置写 / 探测接口特权化 | ✅ | `PUT /api/config`、`POST /api/config/probe-service`、`POST /api/config/discover-models` 同样无论门禁开关都要求 trusted-local 或已认证会话（与 B 站凭据接口共用 `_local_or_authenticated_gate`）。门禁关闭时远程调用一律 `403 local_only`，堵住默认部署下篡改 `llm.*.base_url` 劫持 LLM 流量（连带泄露存储的 API Key）与植入 `bilibili.browser_executable` 任意执行（issue #300）；probe / discover 不写盘也会把存储的 Key 发往提交的 base_url，故一并收口。桌面 / 移动 Web 与扩展在门禁关闭时跨设备改设置会被拒，需先开启门禁。 |
 | 信任模型 | ✅ | `trust_loopback=true`（默认）下，loopback 且无 `X-Forwarded-For` / `X-Real-IP` / `Forwarded` 头的请求免登录；带转发头的 loopback fail-closed（要求登录），防同机反代绕过。 |
 | 应用内 Tailnet 反代边界 | ✅ | Go helper 丢弃客户端自带的全部转发头，再从 tsnet peer 重建 `X-Forwarded-For`，同时保留外部 Host / Origin。FastAPI 收到的是“loopback 代理 + 远端来源”，不会继承本机免登录；Tailnet ACL 是外层设备门，仍建议开启应用密码。 |
 | 反代真实 IP 解析 | ✅ | `resolve_client_ip()`：仅当直接对端命中 `trusted_proxies` 才采信 `X-Forwarded-For`，并**从右向左**穿越受信代理链取第一个非受信 IP；任何缺失 / 畸形 / 伪造 loopback 都 fail-closed，绝不 500 / fail-open。 |

@@ -37,7 +37,7 @@ def _make_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cfg: Config) -
     monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
     save_config(cfg, tmp_path / "config.toml")
     app = create_app(memory_manager=object(), database=object(), soul_engine=object())
-    return TestClient(app)
+    return TestClient(app, client=("127.0.0.1", 5000), base_url="http://127.0.0.1:8420")
 
 
 async def _wait_for_apply_state(
@@ -90,7 +90,7 @@ async def test_put_config_success_saves_snapshot_then_hot_reloads(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put(
             "/api/config",
@@ -122,7 +122,7 @@ async def test_put_bilibili_date_preference_hot_reloads_curator(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put(
             "/api/config",
@@ -159,7 +159,7 @@ async def test_instagram_date_preference_config_api_round_trip(
     app = create_app(memory_manager=object(), database=object(), soul_engine=object())
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put(
             "/api/config",
@@ -201,7 +201,7 @@ async def test_put_config_idle_lane_returns_after_persist_before_rebuild(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await asyncio.wait_for(
             client.put(
@@ -247,7 +247,7 @@ async def test_put_config_skips_feedback_cutover_for_incomplete_memory_adapter(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put(
             "/api/config",
@@ -288,7 +288,7 @@ async def test_put_config_runs_feedback_cutover_for_capable_memory_adapter(
     app = create_app(memory_manager=memory, database=object(), soul_engine=object())
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put(
             "/api/config",
@@ -319,7 +319,7 @@ async def test_put_config_rolls_back_when_hot_reload_fails(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put(
             "/api/config",
@@ -362,7 +362,7 @@ async def test_put_config_restores_in_memory_runtime_after_restart_failure(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put(
             "/api/config",
@@ -392,7 +392,7 @@ async def test_put_config_explains_blank_hot_reload_timeout(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put(
             "/api/config",
@@ -437,7 +437,7 @@ async def test_put_config_hot_reload_failure_file_log_keeps_traceback(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put(
             "/api/config",
@@ -485,7 +485,7 @@ async def test_put_config_reports_failed_when_background_rollback_fails(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put(
             "/api/config",
@@ -513,7 +513,7 @@ async def test_put_config_serializes_concurrent_saves(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         first, second = await asyncio.gather(
             client.put("/api/config", json={"llm": {"openai": {"model": "gpt-4.1-mini"}}}),
@@ -552,7 +552,7 @@ async def test_busy_dialogue_queues_config_and_latest_revision_wins(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 12345)),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         first = await asyncio.wait_for(
             client.put(
@@ -620,7 +620,7 @@ async def test_queued_config_failure_restores_last_applied_config(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put(
             "/api/config",
@@ -657,7 +657,7 @@ async def test_hot_reload_rollback_preserves_persisted_restart_only_data_dir(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         first = await client.put("/api/config", json={"data_dir": str(next_data)})
         assert first.status_code == 202
@@ -713,7 +713,7 @@ async def test_agent_config_success_is_retained_by_later_failed_settings_apply(
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put(
             "/api/config",
@@ -842,7 +842,7 @@ async def test_config_apply_reports_which_execution_lane_is_draining(
     await dialogue_entered.wait()
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
-        base_url="http://testserver",
+        base_url="http://127.0.0.1:8420",
     ) as client:
         response = await client.put("/api/config", json={"language": "en-US"})
         assert response.status_code == 202

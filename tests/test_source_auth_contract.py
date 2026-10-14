@@ -2788,7 +2788,11 @@ def _write_client(env: _Env) -> TestClient:
     # than an unrelated config-validation refusal.
     env.cfg.llm.deepseek.api_key = "sk-test-not-used"
     env.monkeypatch.setattr("openbiliclaw.config.load_config", lambda *_a, **_kw: env.cfg)
-    return TestClient(create_app(memory_manager=object(), database=env.db, soul_engine=object()))
+    return TestClient(
+        create_app(memory_manager=object(), database=env.db, soul_engine=object()),
+        client=("127.0.0.1", 5000),
+        base_url="http://127.0.0.1:8420",
+    )
 
 
 def _stub_live_probe(env: _Env, *, authenticated: bool = True) -> list[tuple[str, str]]:

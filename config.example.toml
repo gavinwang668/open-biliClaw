@@ -27,8 +27,10 @@ port = 8420
 # 是否开启密码登录门禁。
 # 安全警告：enabled = false 且 host 绑定 0.0.0.0（默认组合）时，历史记录、画像、
 # 推荐和点赞/评论/关注等写接口对同一网络中的任何人完全开放（零鉴权）。
-# B 站凭据接口（/api/bilibili/auth/import|export|session）不受此开关影响：
-# 它们始终要求本机访问或已登录会话，远程调用一律 403（issue #299）。
+# B 站凭据接口（/api/bilibili/auth/import|export|session）与设置写/探测接口
+# （PUT /api/config、/api/config/probe-service、/api/config/discover-models）
+# 不受此开关影响：它们始终要求本机访问或已登录会话，远程调用一律 403
+#（issue #299、#300）。
 # 只要端口可被局域网或公网访问，强烈建议设为 true 并用
 # `openbiliclaw set-password` 设置密码。
 enabled = false
