@@ -8345,9 +8345,36 @@ def create_app(
         finally:
             await client.close()
 
-    @app.post("/api/bilibili/auth/import")
-    async def bilibili_auth_import(payload: Annotated[dict[str, Any], Body()]) -> dict[str, Any]:
+    def _bilibili_credential_gate(request: Request) -> JSONResponse | None:
+        """Keep the Bilibili credential routes privileged even with the gate off.
+
+        The auth middleware short-circuits when ``[api.auth]`` is disabled, so
+        cookie import/export/session must self-gate like ``/api/auth/admin``:
+        trusted-local callers always pass; remote callers must enable the
+        password gate first (the middleware then requires an authenticated
+        session). Otherwise any LAN peer could export the stored session
+        cookie and take over the victim's Bilibili account (issue #299).
+        """
+        gate = _get_auth_gate()
+        if gate.auth.enabled or gate.is_trusted_local(request):
+            return None
+        return JSONResponse(
+            {
+                "error": "local_only",
+                "detail": "远程访问 B 站凭据需要先开启密码门禁"
+                "（[api.auth] enabled = true），或在本机操作。",
+            },
+            status_code=403,
+        )
+
+    @app.post("/api/bilibili/auth/import", response_model=None)
+    async def bilibili_auth_import(
+        request: Request, payload: Annotated[dict[str, Any], Body()]
+    ) -> dict[str, Any] | JSONResponse:
         """Import a Bilibili cookie from the mobile WebView login."""
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
         cookies = payload.get("cookies") or {}
         if not isinstance(cookies, dict):
             raise HTTPException(status_code=400, detail="cookies must be an object")
@@ -8376,8 +8403,8 @@ def create_app(
             },
         }
 
-    @app.post("/api/bilibili/auth/export")
-    async def bilibili_auth_export() -> dict[str, Any]:
+    @app.post("/api/bilibili/auth/export", response_model=None)
+    async def bilibili_auth_export(request: Request) -> dict[str, Any] | JSONResponse:
         """Export the backend's Bilibili cookie for the mobile app.
 
         The mobile client keeps the returned cookie only in memory and uses it
@@ -8385,6 +8412,9 @@ def create_app(
         such as comments. The backend still remains the source of truth for
         login state and CSRF-protected writes.
         """
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
         from openbiliclaw.bilibili.api import BilibiliAPIClient
         from openbiliclaw.bilibili.auth import resolve_runtime_cookie
         from openbiliclaw.config import load_config
@@ -8412,9 +8442,12 @@ def create_app(
             "expires_at": "",
         }
 
-    @app.delete("/api/bilibili/auth/session")
-    async def bilibili_auth_clear() -> dict[str, Any]:
+    @app.delete("/api/bilibili/auth/session", response_model=None)
+    async def bilibili_auth_clear(request: Request) -> dict[str, Any] | JSONResponse:
         """Clear the backend's stored Bilibili cookie/session."""
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
         from openbiliclaw.bilibili.auth import AuthManager
         from openbiliclaw.config import load_config
 

@@ -13,7 +13,8 @@
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| 总开关 | ✅ | `[api.auth].enabled=false` 时中间件直接放行；`true` 且无密码视为配置错误（blocking）。 |
+| 总开关 | ✅ | `[api.auth].enabled=false` 时中间件直接放行；`true` 且无密码视为配置错误（blocking）。例外：B 站凭据接口在门禁关闭时仍自查（见下行）。 |
+| B 站凭据接口特权化 | ✅ | `POST /api/bilibili/auth/import`、`POST /api/bilibili/auth/export`、`DELETE /api/bilibili/auth/session` 无论门禁开关都要求 trusted-local 或已认证会话：门禁关闭时远程调用一律 `403 local_only`，杜绝默认部署（0.0.0.0 + 门禁关闭）下局域网零鉴权导出登录 Cookie 接管账号（issue #299）。移动 App 远程使用这三接口前需先开启密码门禁并登录。 |
 | 信任模型 | ✅ | `trust_loopback=true`（默认）下，loopback 且无 `X-Forwarded-For` / `X-Real-IP` / `Forwarded` 头的请求免登录；带转发头的 loopback fail-closed（要求登录），防同机反代绕过。 |
 | 应用内 Tailnet 反代边界 | ✅ | Go helper 丢弃客户端自带的全部转发头，再从 tsnet peer 重建 `X-Forwarded-For`，同时保留外部 Host / Origin。FastAPI 收到的是“loopback 代理 + 远端来源”，不会继承本机免登录；Tailnet ACL 是外层设备门，仍建议开启应用密码。 |
 | 反代真实 IP 解析 | ✅ | `resolve_client_ip()`：仅当直接对端命中 `trusted_proxies` 才采信 `X-Forwarded-For`，并**从右向左**穿越受信代理链取第一个非受信 IP；任何缺失 / 畸形 / 伪造 loopback 都 fail-closed，绝不 500 / fail-open。 |
@@ -52,7 +53,8 @@
 清除后用实际 tsnet peer 重建 XFF；因此 AuthGate 的 loopback fast path 必定 fail-closed 为远程
 请求。不要为了“让 Tailnet 免登录”关闭该行为。多人 tailnet 或 ACL 较宽时应在本机 Web
 设置中开启应用密码做第二层控制；源码安装也可执行 `openbiliclaw set-password`。移动 App 按
-普通远程 Web/API 客户端登录。
+普通远程 Web/API 客户端登录；门禁关闭时其 B 站凭据导入 / 导出 / 注销调用会被
+`403 local_only` 拒绝，需先开启门禁（issue #299）。
 
 浏览器扩展仍受自己的 remote endpoint、HTTPS 与设备 key 契约约束。首版 Tailnet 入口只服务
 已内嵌 tsnet 的 `OpenBiliClaw-mobile` Android / iOS 原生 App，不包括其 Web / Linux / macOS /
