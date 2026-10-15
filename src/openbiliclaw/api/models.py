@@ -466,6 +466,10 @@ class RuntimeStatusResponse(BaseModel):
     last_account_sync_issues: list[dict[str, str]] = Field(default_factory=list)
     last_account_sync_message: str = ""
     last_account_sync_severity: str = ""
+    # True while a bilibili cookie pushed during guided init sits staged on
+    # disk, waiting to be applied when init completes (fix/auth-expired-
+    # deadlock: previously such pushes were 409-dropped silently).
+    bilibili_cookie_staged: bool = False
     event_lane_depth: int = 0
     event_lane_active: bool = False
     event_lane_paused: bool = False
@@ -658,7 +662,8 @@ class BilibiliCookieResponse(BaseModel):
 
     ``error_code`` lets the extension pick a smart retry cadence
     (network errors → quick retry, expired cookie → wait for next
-    login). Empty when ``ok=True``.
+    login). Empty on a fully applied success; ``cookie_staged`` is the
+    one code paired with ``ok=True`` (accepted but applied after init).
     """
 
     ok: bool
@@ -672,6 +677,11 @@ class BilibiliCookieResponse(BaseModel):
     #   "empty_cookie"           — payload was empty
     #   "cookie_invalid"         — Bilibili says cookie is bad / expired
     #   "validation_network"     — backend couldn't reach api.bilibili.com
+    #   "cookie_staged"          — guided init is running; the cookie was
+    #                              persisted to the staging file and applies
+    #                              automatically when init completes
+    # ``cookie_staged`` is the one code that accompanies ``ok=True``: the
+    # backend accepted responsibility for the value but has not applied it.
     error_code: str = ""
 
 

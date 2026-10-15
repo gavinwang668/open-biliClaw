@@ -9208,6 +9208,7 @@ ${cardFeedbackBarHtml()}`;
         // silently, which is how the backend copy stopped reaching the chip.
         last_account_sync_message: String(merged.last_account_sync_message ?? ""),
         last_account_sync_severity: String(merged.last_account_sync_severity ?? ""),
+        bilibili_cookie_staged: Boolean(merged.bilibili_cookie_staged),
         live_summary: String(merged.live_summary || merged.message || merged.state || "")
       };
     }
@@ -9347,10 +9348,12 @@ ${cardFeedbackBarHtml()}`;
         : [];
       const severity = String(runtime?.last_account_sync_severity || "");
       const sourceIssues = collectEnabledSourceIssues(state.sourceStatus);
+      const stagedCookie = Boolean(runtime?.bilibili_cookie_staged);
+      const stagedText = stagedCookie ? "B 站新 Cookie 已暂存，初始化完成后自动应用" : "";
       // Healthy installs (no sync or source issue) show nothing — zero visual
       // change. Pending verification alone is not an error and stays on the
       // source card instead of turning the dashboard into an alarm panel.
-      if (!error && !kind && !issues.length && !sourceIssues.length) {
+      if (!error && !kind && !issues.length && !sourceIssues.length && !stagedCookie) {
         el.hidden = true;
         el.textContent = "";
         el.classList.remove("is-auth-expired", "is-warning", "is-error");
@@ -9370,13 +9373,13 @@ ${cardFeedbackBarHtml()}`;
       const sourceText = sourceIssues.length
         ? `来源接入：${sourceIssues.map((issue) => `${issue.source}：${issue.detail}`).join("；")}`
         : "";
-      const combined = [accountText, sourceText].filter(Boolean).join("；");
+      const combined = [accountText, sourceText, stagedText].filter(Boolean).join("；");
       const hasSourceDanger = sourceIssues.some((issue) => issue.tone === "danger");
       if (kind === "auth_expired" && !hasSourceDanger) {
         el.classList.add("is-auth-expired", "is-warning");
         el.classList.remove("is-error");
         const fallback = "B 站登录已失效，账号同步已停止 — 请重新登录";
-        el.textContent = [message ? accountText : fallback, sourceText].filter(Boolean).join("；");
+        el.textContent = [message ? accountText : fallback, sourceText, stagedText].filter(Boolean).join("；");
         return;
       }
       const hasAccountIssue = Boolean(error || kind || issues.length);

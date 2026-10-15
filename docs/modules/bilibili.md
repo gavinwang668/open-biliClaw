@@ -18,7 +18,7 @@
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | 3.1 Cookie 认证 | ✅ | set / load / validate / clear + CLI auth 命令 + 运行时 cookie 回退 |
-| 扩展 Cookie 自动同步 | ✅ | 浏览器扩展可 POST `/api/bilibili/cookie` 持久化 Cookie；后端在 background runtime-stream 连接且缺 Cookie 时会发 `bilibili_cookie_sync_requested` 主动要求扩展回传 |
+| 扩展 Cookie 自动同步 | ✅ | 浏览器扩展可 POST `/api/bilibili/cookie` 持久化 Cookie；后端在 background runtime-stream 连接且缺 Cookie 时会发 `bilibili_cookie_sync_requested` 主动要求扩展回传。guided init 期间异值推送暂存到 `data/runtime/staged_bilibili_cookie.json`、init 完成后自动应用（`runtime-status` 的 `bilibili_cookie_staged` 可见）；写入探针遭遇传输失败时短退避重试后以显式 unverified 标记落盘（账号同步每轮复检兜底），平台明确 -101 仍拒绝；凭据落盘即清 `account_sync_state.json` 残留的 `auth_expired` 横幅状态 |
 | 3.2 核心 API | ✅ | 10+ API 方法 + 限流 + 统一错误处理 |
 | 移动端播放画质 | ✅ | DASH 候选先匹配请求的 `qn`，再在同画质内选择 `preferred_codec`；目标画质不可用时保留候选流回退，`video.qn` 始终表示实际返回的画质。 |
 | 登录态诊断 | ✅ | 任意 `_get_json()` endpoint 返回 `-101` 时抛 `BilibiliAuthExpiredError`；日志使用固定 session-expired 文案提示重新登录或保持扩展在线，不复制远端 message/body。 |

@@ -2,6 +2,13 @@
 
 > 按里程碑记录各阶段交付内容。每次分支合回 main 时追加条目。
 
+## 未发布：修复 B 站登录失效横幅死锁（fix/auth-expired-deadlock）
+
+- 修复用户 Cookie 已修复但「B 站登录已失效」横幅永久悬挂的死锁：`auth_expired` 持久化状态过去只有「完整跑完一轮账号同步」一个清理点，而 guided init 暂停（`llm_paused`）或 worker 崩溃循环让 daemon 永远到不了那个点，且 `account_sync_state.json` 随数据迁移原样保留。现在①B 站凭据一经落盘（`_credential_landed`）即调用 `AccountSyncService.clear_auth_expired_state()` 清除残留 `auth_expired`；②`llm_paused` 早退的 tick 仍会对持久化的 `auth_expired` 做一次 nav 复验，已登录即清除（暂停原因本就是避免与 guided init 的 bootstrap 抓取竞争，故选择轻量复验而非完整阶段拆分）。
+- `POST /api/bilibili/cookie` 在 guided init 期间不再 409 丢弃异值 Cookie：暂存到 `data/runtime/staged_bilibili_cookie.json`，init 终态与 `/api/init-completed` 自动经正常 validate+persist 路径应用；`/api/runtime-status` 新增 `bilibili_cookie_staged`（纯增量字段），桌面 Web 横幅会显示「新 Cookie 已暂存」。
+- 写入探针传输失败（`validation_network`）时 B 站 Cookie 不再拒绝落盘：短退避重试两次仍以显式 unverified 标记持久化（verdict 记为 `network_error` 而非干净失败，响应带 `unverified_reason`）；账号同步每轮真实拉取仍是复检兜底。平台明确回「未登录」（真实 -101）依旧拒绝；抖音等其他活体门禁平台行为不变。
+- 凭据写入后的运行时重建失败不再被 `suppress(Exception)` 吞掉：ERROR 带 traceback 记日志并记入 `pending_runtime_rebuilds`，下一次写入（包括此前是纯 no-op 的相同 Cookie 重投）自动重试，不再静默停留在旧 Cookie 的内存运行时上。
+
 ## 未发布：修复 expression drain 测试的时序 flake
 
 - `test_public_expression_drain_carries_partial_progress_into_missing_retry_transient` 与 `test_expression_coordinator_reports_same_branch_partial_progress` 依赖 drain 按 A→D 顺序出批，但 `_seed_pool` 写入的 `last_scored_at` 使用 SQLite `CURRENT_TIMESTAMP`（秒级精度），种子插入跨秒时 `ORDER BY last_scored_at DESC` 不再等于插入顺序，CI 上以约每秒一次的概率随机失败。测试新增 `_pin_seed_score_order`，在种子后显式钉入递减时间戳，使 drain 顺序与种子顺序一致；生产代码不变。

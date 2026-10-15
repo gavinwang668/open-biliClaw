@@ -2512,6 +2512,11 @@ def create_app(
     recommendation_snapshot_lock = asyncio.Lock()
     runtime_status_cache: RuntimeStatusResponse | None = None
     runtime_status_cached_at = 0.0
+    # Slugs whose post-write runtime rebuild failed. A write whose persisted
+    # value already matches the store is otherwise an accepted no-op, so
+    # without this debt set a failed rebuild would never be retried and the
+    # runtime would keep running on the stale credential.
+    pending_runtime_rebuilds: set[str] = set()
     activity_feed_cache: dict[tuple[int, str], tuple[float, ActivityFeedResponse]] = {}
     activity_feed_lock = asyncio.Lock()
 
@@ -2909,6 +2914,50 @@ def create_app(
         except Exception:
             return False
 
+    async def _apply_staged_bilibili_cookie(reason: str) -> None:
+        """Apply a cookie staged while guided init owned the runtime.
+
+        Runs the same validate+persist path as a direct push, so a staged jar
+        gets the identical live gate (including the unverified-persist
+        fallback on transport failure). The staged file is cleared after any
+        completed attempt — a definitive refusal is logged, not retried
+        forever — but kept when the apply itself crashes, so the next
+        completion point can retry.
+        """
+        from openbiliclaw.api.source_auth.staged import (
+            clear_staged_bilibili_cookie,
+            peek_staged_bilibili_cookie,
+        )
+
+        if _init_active_now():
+            return
+        staged = peek_staged_bilibili_cookie(active_runtime_data_path)
+        if staged is None:
+            return
+        try:
+            result = await _write_source_credential(
+                "bilibili",
+                kind="cookie",
+                value=staged["cookie"],
+                source=staged["source"],
+            )
+        except Exception:
+            logger.error(
+                "failed to apply staged bilibili cookie (%s); keeping it staged",
+                reason,
+                exc_info=True,
+            )
+            return
+        clear_staged_bilibili_cookie(active_runtime_data_path)
+        if result.accepted:
+            logger.info("applied staged bilibili cookie (%s)", reason)
+        else:
+            logger.warning(
+                "staged bilibili cookie refused on apply (%s): %s",
+                reason,
+                result.message,
+            )
+
     def _init_owns_task(task_id: str) -> bool:
         """Whether ``task_id`` is a bootstrap task enqueued by the active init
         run (so its task-result is init's own data, not a stale/steady-state
@@ -3009,7 +3058,8 @@ def create_app(
     #                                         embedding, and network settings;
     #                                         the LLM path still uses the stable
     #                                         total concurrency gate
-    #  - /api/bilibili/cookie               — handler no-ops during init
+    #  - /api/bilibili/cookie               — handler stages a changed cookie
+    #                                         during init (applies on completion)
     #  - /api/auth/*                        — auth-gate management (login/admin)
     #  - /api/sources/*/kick                — init's own dispatcher kick
     #  - /api/sources/*/task-result         — init bootstrap results (the handler
@@ -6392,6 +6442,11 @@ def create_app(
             if not bool(getattr(ctx, "degraded", False)):
                 with suppress(Exception):
                     await _restart_background_tasks_after_event_recovery()
+            # A cookie pushed mid-init was staged rather than applied; now
+            # that the run released the runtime (complete/fail/cancel alike),
+            # put it through the normal validate+persist path.
+            with suppress(Exception):
+                await _apply_staged_bilibili_cookie("guided_init_finished")
 
     @app.post("/api/init")
     async def start_guided_init(request: Request) -> JSONResponse:
@@ -7692,6 +7747,13 @@ def create_app(
         the config-update endpoint uses, so any in-flight handlers see
         the new cookie on their next call.
 
+        While guided init runs, a *changed* cookie is staged to
+        ``data/runtime/staged_bilibili_cookie.json`` instead of being
+        validated/applied mid-init; the guided-init completion hook then
+        runs it through the same validate+persist path, and
+        ``/api/runtime-status`` exposes ``bilibili_cookie_staged`` so the
+        desktop can show the pending state.
+
         Security: the backend is bound to 127.0.0.1 by default, so this
         endpoint is only reachable from the user's own machine. CORS
         already accepts ``*`` (set when the app is built); no auth token
@@ -7714,31 +7776,44 @@ def create_app(
         # gui-init D1.2: while guided init runs, the extension keeps auto-syncing
         # the cookie. Don't validate (~30s round-trip) or rebuild the runtime
         # (which would swap the BilibiliAPIClient mid-init). Same effective
-        # cookie → silent 200 no-op so the extension's auto-sync doesn't error;
-        # a genuinely different cookie → 409 so the user learns the switch
-        # didn't take (it applies after init), rather than being dropped.
+        # cookie → silent 200 no-op so the extension's auto-sync doesn't error.
+        # A genuinely different cookie is STAGED (not 409-dropped as before:
+        # the extension's backoff decided whether the fix ever landed, which
+        # deadlocked users whose init never completed) and applied through the
+        # normal validate+persist path once init completes.
         if _init_active_now():
+            staged_data_dir = active_runtime_data_path
             effective_cookie = ""
             try:
                 _cfg, _ = load_config_with_diagnostics()
                 _cfg = _pin_active_runtime_config(_cfg)
+                staged_data_dir = Path(_cfg.data_path)
                 effective_cookie = (_cfg.bilibili.cookie or "").strip()
                 if not effective_cookie:
                     effective_cookie = AuthManager(data_dir=_cfg.data_path).load_cookie().strip()
             except Exception:
                 effective_cookie = ""
+            from openbiliclaw.api.source_auth.staged import (
+                clear_staged_bilibili_cookie,
+                stage_bilibili_cookie,
+            )
+
             if cookie_value == effective_cookie and effective_cookie:
+                # The pushed jar matches the live one, so any older staged
+                # value describes a session the user has since replaced.
+                clear_staged_bilibili_cookie(staged_data_dir)
                 return BilibiliCookieResponse(
                     ok=True,
                     authenticated=True,
                     message="Cookie 未变，初始化进行中无需重新同步。",
                 )
-            return JSONResponse(
-                {
-                    "error": "init_running",
-                    "detail": "初始化进行中，暂不能切换 Cookie，请稍后再试。",
-                },
-                status_code=409,
+            stage_bilibili_cookie(staged_data_dir, cookie=cookie_value, source=payload.source)
+            logger.info("bilibili cookie staged while guided init is active")
+            return BilibiliCookieResponse(
+                ok=True,
+                authenticated=False,
+                message="初始化进行中，新 Cookie 已暂存，初始化完成后自动应用。",
+                error_code="cookie_staged",
             )
 
         # ``payload.validate_with_bilibili`` is deliberately not consulted. It is
@@ -8622,6 +8697,10 @@ def create_app(
                     "message": "初始化完成，画像与发现池已就绪。",
                 }
             )
+        # CLI-driven init never passes through the in-app runner's finally
+        # block, so its completion is the other place a staged cookie lands.
+        with suppress(Exception):
+            await _apply_staged_bilibili_cookie("init_completed")
         await _request_runtime_replenishment(reason="init_completed", force=True)
         return {"ok": True}
 
@@ -11047,6 +11126,13 @@ def create_app(
             active_runtime_data_path / "runtime" / "worker_status.json"
         )
         payload.update(worker_status_store.status_payload())
+        # A bilibili cookie staged while guided init ran is pending state the
+        # desktop should show, not something only the extension console knows.
+        from openbiliclaw.api.source_auth.staged import peek_staged_bilibili_cookie
+
+        payload["bilibili_cookie_staged"] = (
+            peek_staged_bilibili_cookie(active_runtime_data_path) is not None
+        )
         response = RuntimeStatusResponse(**payload)
         runtime_status_cache = response
         runtime_status_cached_at = time.monotonic()
@@ -17711,7 +17797,11 @@ def create_app(
                 slug,
                 authenticated=verdict.authenticated,
                 detail=verdict.message,
-                network_error=False,
+                # An ``unverified`` verdict means the probe never reached the
+                # platform; recording it as a clean negative would tell the
+                # status surfaces the stored cookie failed a check it never
+                # took.
+                network_error=bool(getattr(verdict, "unverified", False)),
                 fingerprint=credential_fingerprint(slug, value),
                 username=verdict.username,
                 user_id=verdict.user_id,
@@ -17729,6 +17819,25 @@ def create_app(
                 )
         if changed:
             note_credential_changed(slug)
+        if slug == "bilibili":
+            # A persisted ``auth_expired`` sync issue must not outlive the
+            # credential it was about: the account-sync banner is only cleared
+            # by a completed tick, which a paused/crash-looping daemon may
+            # never run, so the write path clears it the moment a fresh
+            # cookie lands. The next real tick re-derives the truth.
+            try:
+                clear_auth_expired = getattr(
+                    getattr(ctx, "account_sync_service", None),
+                    "clear_auth_expired_state",
+                    None,
+                )
+                if callable(clear_auth_expired):
+                    clear_auth_expired()
+            except Exception:
+                logger.warning(
+                    "failed to clear stale auth_expired account-sync state",
+                    exc_info=True,
+                )
 
     async def _write_source_credential(
         slug: str,
@@ -17806,6 +17915,15 @@ def create_app(
         # is excluded from the change signal: 小红书's ``xsec_token`` is per-note
         # content access, not a login, so it cannot invalidate a login verdict.
         if written.persisted:
+            if slug == "bilibili":
+                # A directly-landed cookie supersedes anything staged during
+                # guided init; applying the older staged value later would
+                # resurrect a session the user already replaced.
+                from openbiliclaw.api.source_auth.staged import (
+                    clear_staged_bilibili_cookie,
+                )
+
+                clear_staged_bilibili_cookie(active_runtime_data_path)
             _credential_landed(
                 slug,
                 verdict=verdict,
@@ -17824,16 +17942,32 @@ def create_app(
                 XSourceHealthStore(ctx.database).clear_relogin_block()
 
         runtime_refreshed = False
-        if slug in {"bilibili", "tiktok"} and written.runtime_dirty:
+        if slug in {"bilibili", "tiktok"} and (
+            written.runtime_dirty or slug in pending_runtime_rebuilds
+        ):
             # Atomic by contract: a partial ``rebuild_from_config`` leaves the
             # old runtime intact, so a failure here costs a stale client, never
             # a broken one. TikTok captures its cookie and search availability
             # at construction, so a late extension sync must replace it too.
-            with suppress(Exception):
+            # A failure must NOT be swallowed: log it and record the debt in
+            # ``pending_runtime_rebuilds`` so the next write for this slug —
+            # including an identical-cookie push, which is otherwise an
+            # accepted no-op that never reaches the rebuild — retries it.
+            try:
                 await _rebuild_runtime_with_lane_handoff(
                     load_config(), run_post_reload_llm_work=slug != "tiktok"
                 )
+            except Exception:
+                logger.error(
+                    "runtime rebuild after %s credential write failed; "
+                    "the store already holds the new credential, retrying on next write",
+                    slug,
+                    exc_info=True,
+                )
+                pending_runtime_rebuilds.add(slug)
+            else:
                 runtime_refreshed = True
+                pending_runtime_rebuilds.discard(slug)
 
         event_type = {
             "bilibili": "bilibili_cookie_synced",

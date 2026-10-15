@@ -6434,6 +6434,9 @@ class TestBackendAPI:
             # same sentence; the raw error above stays for diagnostics.
             "last_account_sync_message": "",
             "last_account_sync_severity": "",
+            # True only while a bilibili cookie pushed during guided init sits
+            # staged on disk waiting to be applied.
+            "bilibili_cookie_staged": False,
             "event_lane_depth": 0,
             "event_lane_active": False,
             "event_lane_paused": False,
@@ -19521,6 +19524,84 @@ class TestGuidedInitEndpoints:
                 assert resp.status_code == 409, f"{path} not gated ({resp.status_code})"
                 assert resp.json().get("error") == "init_running", path
 
+    def test_failed_runtime_rebuild_logged_and_retried_on_next_push(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A failed post-write rebuild must be loud and must not stick.
+
+        The old ``suppress(Exception)`` left the runtime on the stale cookie
+        with no log, and the next identical push was an accepted no-op that
+        never retried the rebuild — the app synced with the dead cookie
+        forever.
+        """
+        import logging
+
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.api.source_auth import verify as verify_module
+        from openbiliclaw.api.source_auth.probe_cache import LIVE_PROBES
+
+        full_cookie = "SESSDATA=sess; bili_jct=jct; DedeUserID=12345"
+
+        async def _probe(slug, *, cfg, cookie=None, probes=None, record=True):
+            return verify_module.LiveProbeOutcome(
+                slug=slug,
+                has_credential=True,
+                authenticated=True,
+                network_error=False,
+                message="stubbed probe",
+                username="tester",
+            )
+
+        monkeypatch.setattr(verify_module, "run_live_probe", _probe)
+        LIVE_PROBES.clear()
+
+        app, _ = self._make_app(tmp_path)
+        ctx = app.state.runtime_context
+        rebuild_calls = 0
+
+        async def _flaky_rebuild(new_config: object) -> None:
+            nonlocal rebuild_calls
+            rebuild_calls += 1
+            if rebuild_calls == 1:
+                raise RuntimeError("rebuild boom")
+
+        monkeypatch.setattr(ctx, "rebuild_from_config", _flaky_rebuild)
+
+        with (
+            TestClient(app) as client,
+            caplog.at_level(logging.ERROR, logger="openbiliclaw.api.app"),
+        ):
+            first = client.post(
+                "/api/bilibili/cookie", json={"cookie": full_cookie, "source": "test"}
+            )
+            assert first.status_code == 200
+            assert first.json()["ok"] is True
+            assert rebuild_calls == 1
+            assert any(
+                "runtime rebuild after bilibili credential write failed" in record.getMessage()
+                for record in caplog.records
+            )
+
+            # Identical re-push: persisted value unchanged, so this used to be
+            # an accepted no-op; now it retries the owed rebuild.
+            second = client.post(
+                "/api/bilibili/cookie", json={"cookie": full_cookie, "source": "test"}
+            )
+            assert second.status_code == 200
+            assert rebuild_calls == 2
+            assert second.json()["message"] == "Cookie synced and runtime refreshed."
+
+            # Debt cleared: a third identical push is the old cheap no-op.
+            third = client.post(
+                "/api/bilibili/cookie", json={"cookie": full_cookie, "source": "test"}
+            )
+            assert third.status_code == 200
+            assert rebuild_calls == 2
+
     def test_cookie_same_value_is_noop_during_init(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
 
@@ -19540,8 +19621,14 @@ class TestGuidedInitEndpoints:
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
 
-    def test_cookie_changed_during_init_is_rejected(self, tmp_path: Path) -> None:
+    def test_cookie_changed_during_init_is_staged(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient
+
+        from openbiliclaw.api.source_auth.staged import (
+            peek_staged_bilibili_cookie,
+            staged_cookie_path,
+        )
+        from openbiliclaw.config import load_config
 
         app, _ = self._make_app(tmp_path)
         with TestClient(app) as client:
@@ -19549,10 +19636,107 @@ class TestGuidedInitEndpoints:
             resp = client.post(
                 "/api/bilibili/cookie", json={"cookie": "SESSDATA=different", "source": "test"}
             )
-        # A genuinely different cookie during init is rejected (not silently
-        # dropped, not a mid-init rebuild) so the user knows it didn't apply.
-        assert resp.status_code == 409
-        assert resp.json()["error"] == "init_running"
+        # A genuinely different cookie during init is staged (not dropped,
+        # not a mid-init rebuild) and applies automatically once init
+        # completes — the old 409 left the fix to the extension's backoff.
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["authenticated"] is False
+        assert body["error_code"] == "cookie_staged"
+        staged = peek_staged_bilibili_cookie(load_config().data_path)
+        assert staged is not None
+        assert staged["cookie"] == "SESSDATA=different"
+        assert staged["source"] == "test"
+        assert staged_cookie_path(load_config().data_path).exists()
+
+    def test_staged_cookie_visible_in_runtime_status(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        # runtime-status caches for 1s per app instance, so each read below
+        # uses a fresh app; both share the same isolated data dir.
+        app, _ = self._make_app(tmp_path)
+        with TestClient(app) as client:
+            before = client.get("/api/runtime-status")
+        assert before.status_code == 200
+        assert before.json()["bilibili_cookie_staged"] is False
+
+        app, _ = self._make_app(tmp_path)
+        with TestClient(app) as client:
+            app.state.runtime_context.init_coordinator.try_start("active")
+            client.post(
+                "/api/bilibili/cookie", json={"cookie": "SESSDATA=different", "source": "test"}
+            )
+            after = client.get("/api/runtime-status")
+        assert after.status_code == 200
+        assert after.json()["bilibili_cookie_staged"] is True
+
+    def test_staged_cookie_applied_after_init_completes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.api.source_auth import verify as verify_module
+        from openbiliclaw.api.source_auth.probe_cache import LIVE_PROBES
+        from openbiliclaw.bilibili.auth import AuthManager
+        from openbiliclaw.config import load_config
+
+        full_cookie = "SESSDATA=sess; bili_jct=jct; DedeUserID=12345"
+
+        async def _probe(slug, *, cfg, cookie=None, probes=None, record=True):
+            return verify_module.LiveProbeOutcome(
+                slug=slug,
+                has_credential=True,
+                authenticated=True,
+                network_error=False,
+                message="stubbed probe",
+                username="tester",
+            )
+
+        monkeypatch.setattr(verify_module, "run_live_probe", _probe)
+        LIVE_PROBES.clear()
+
+        app, _ = self._make_app(tmp_path)
+        data_dir = load_config().data_path
+        with TestClient(app) as client:
+            coord = app.state.runtime_context.init_coordinator
+            coord.try_start("active")
+            staged = client.post(
+                "/api/bilibili/cookie", json={"cookie": full_cookie, "source": "test"}
+            )
+            assert staged.status_code == 200
+            # Mid-init the cookie is staged only, not applied.
+            assert AuthManager(data_dir=data_dir).load_cookie() != full_cookie
+
+            coord.reset_to_idle("active", reason="test_done")
+            completed = client.post("/api/init-completed")
+            assert completed.status_code == 200
+
+        # Completion ran the normal validate+persist path for the staged jar.
+        assert AuthManager(data_dir=data_dir).load_cookie() == full_cookie
+
+    def test_cookie_same_value_during_init_drops_older_staged_cookie(self, tmp_path: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        from openbiliclaw.api.source_auth.staged import peek_staged_bilibili_cookie
+        from openbiliclaw.bilibili.auth import AuthManager
+        from openbiliclaw.config import load_config
+
+        app, _ = self._make_app(tmp_path)
+        data_dir = load_config().data_path
+        AuthManager(data_dir=data_dir).set_cookie("SESSDATA=same")
+        with TestClient(app) as client:
+            app.state.runtime_context.init_coordinator.try_start("active")
+            client.post("/api/bilibili/cookie", json={"cookie": "SESSDATA=older", "source": "test"})
+            assert peek_staged_bilibili_cookie(data_dir) is not None
+            resp = client.post(
+                "/api/bilibili/cookie", json={"cookie": "SESSDATA=same", "source": "test"}
+            )
+        # The pushed jar now matches the live one, so the older staged value
+        # describes a session the user has since replaced.
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert peek_staged_bilibili_cookie(data_dir) is None
 
     def test_deny_by_default_gates_arbitrary_writer_during_init(self, tmp_path: Path) -> None:
         from fastapi.testclient import TestClient

@@ -139,6 +139,12 @@ GitHub 还可只从固定的 `OPENBILICLAW_GITHUB_TOKEN` 读取，不接受可�
 
 **无法校验的绝不伪造。** 小红书、知乎与 Linux.do 后端只存一个 bool、零字节 cookie，其写入显式返回 `checked="none"` 加 `unverified_reason`，而不是假装校验过。
 
+**传输失败不是凭据的证据，但也曾把用户锁死。** 活体探针撞上代理/网络故障时，`validation_network` 拒绝落盘对多数平台仍然正确——没有什么会替用户复检一份未校验的凭据。B 站是例外：账号同步循环每轮都会用存储的 Cookie 真实拉取（-101 → `auth_expired`），它就是复检兜底。因此 B 站写入在传输失败时先短退避重试两次探针（`_NETWORK_PROBE_RETRIES`），仍不通则**以显式 unverified 标记落盘**（`CredentialVerdict.unverified=True`，响应带 `unverified_reason`，verdict 以 `network_error=True` 记录而非干净失败）；平台明确回「未登录」（真实 -101）依旧拒绝。这条逃生门解决的是真实死锁：用户唯一的出网路径与探针不同（flaky 代理）时，扩展一直在退避重试一个永远不会被接受的修复。
+
+**init 期间的 B 站 Cookie 暂存而非丢弃。** guided init 活跃时 `/api/bilibili/cookie` 对异值推送返回 200 + `error_code="cookie_staged"` 并把 Cookie 暂存到 `data/runtime/staged_bilibili_cookie.json`（`source_auth/staged.py`），init 终态与 `/api/init-completed` 经 `_write_source_credential` 正常应用；直接落盘成功的写入会清掉更旧的暂存值。`/api/runtime-status` 新增 `bilibili_cookie_staged`（纯增量字段）让桌面 Web 显示「已暂存，初始化完成后自动应用」，而不是只在扩展 service worker 控制台可见。
+
+**凭据落盘即清旧账，重建失败必留痕。** B 站凭据经 `_credential_landed` 真正落盘时，会调用 `AccountSyncService.clear_auth_expired_state()` 清掉 `account_sync_state.json` 里残留的 `auth_expired` issue——持久化的错误不允许活得比它的原因更久（此前唯一清理点是「完整跑完一轮同步」，暂停或崩溃循环的 daemon 永远到不了）。写入后的运行时重建失败不再被 `suppress(Exception)` 吞掉：ERROR 带 traceback 记日志，并把 slug 记入 `pending_runtime_rebuilds`，下一次写入（包括此前是纯 no-op 的相同 Cookie 重投）会重试重建。
+
 **活体缓存按凭据判定，不按平台。** 写入门会复用 60 秒内的**正面**结论（抖音 `msToken` 频繁轮换，插件每次启动都重发整个 jar，每次都探测就是自造风控）。但复用只对**同一份凭据**成立：只按平台取缓存时，旧 cookie 的成功结论会替另一份结构完整却已失效的 cookie 背书，于是无效凭据一个网络请求都不发就落了盘——「无效凭据绝不落盘」在用户唯一看不见的那种情况下失效。`ProbeVerdict.credential_fingerprint` 存的是该平台**登录态字段**的 SHA-256（B 站 `SESSDATA`/`bili_jct`/`DedeUserID`，抖音 `sessionid`/`sessionid_ss`/`sid_tt`），字段名直接取自 `CREDENTIAL_SPECS` 的校验门，所以「什么算同一份凭据」与「校验门要求什么」不可能漂移；`msToken` 不在其中，轮换因此仍然命中缓存。写入门用 `peek_matching()`（**严格**：指纹不符或缺失一律重探，因为猜错的代价是死凭据落盘）；状态端点用 `contradicts()`（**宽松**：只有明确不符才丢弃，缺失指纹仍显示；展示仍受 6 小时可见证据窗口约束，而凭据写入绝不会借用这个长窗口）。命中缓存的结论**不重新记录**，否则每次插件重发都会顺延自己的有效期，一份凭据可以永远「刚刚验证过」而实际从未复验。
 
 **X 的成功属于某一份凭据，不属于这个平台。** 只记「成功过」不记「谁成功的」，换 cookie 就会继承上一份的结论——实测新 cookie 直接拿到旧 cookie 的 `verified`**连时间戳都一字未变**。这与上一条按平台取缓存是同一个错误，只是换了个 store。`last_success_credential` 记下产生该成功的凭据指纹（由 producer 在解析 cookie、构造 `XClient` 的同一处绑定，所以「记录成功的那份凭据」就是「发出请求的那份凭据」），读取时与当前 cookie 比对，不符即非证据。**不挂在写入路径上而是比对身份**：cookie 也可能经环境变量或直接改 data file 变更，那些路径一个钩子都不经过；`clear_relogin_block()` 更救不了——健康行本就是 `ok` 时它返回 `False`，什么都不清。build 期绑定也是安全方向：若 cookie 变了而 producer 未重建，指纹仍跟着**真正在发请求**的那份凭据走,新 cookie 显示 `unverified` 而非冒领他人战绩。
