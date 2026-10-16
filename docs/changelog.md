@@ -140,6 +140,8 @@
 - 新增 `tiktok_tag` / `tiktok_user` discovery 策略与 `TiktokDiscoveryProducer`（镜像 YouTube producer：每日执行 ledger、节流、pool 缺口门、统一 candidate pipeline、关键词规划器 P1.7/P1.8 生命周期）；`[scheduler.pool_source_shares]` 增加 `tiktok` 配额。
 - `tiktok` 从 douyin 平台族别名拆分为独立平台族（`requires_overseas_network=True`），source-auth 契约按公开源接入（无需登录），API config / status / credentials 面同步覆盖。
 
+- v0.3.229 发布回执已归档：Chrome / Firefox AMO 已提交待审核，桌面安装包、双架构 Docker 镜像与插件三渠道包均已发布，完整性校验逐项通过；详见 [发布记录](testing/2026-10-16-release-0.3.229.md)。
+
 ## v0.3.228：画像门控大幅降本与安装包信任修复（2026-10-13）
 
 - 修复 macOS 打包在 Apple stapler 抖动下无重试：`staple_macos_artifact` 的 staple/validate 此前单次调用即失败，而 Apple ticket-delivery 端点会间歇断连（v0.3.228 x64 连续三次 exit 68，公证本身已 Accepted）；现两个动作各自重试 3 次（10s/20s/30s 退避），与 hdiutil 创建路径一致。
