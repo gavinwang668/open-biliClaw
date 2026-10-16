@@ -179,6 +179,9 @@ function scheduleHourlyCookieSync(alarmName: string): void {
  * with ``getAll({})`` and filter in JS with the same "domain or subdomain"
  * rule Chrome documents. If a browser rejects the unfiltered call, fall
  * back to one domain-filtered call per site so the sync still works.
+ * Safari can also expose an empty default store while the real login jar
+ * lives in another store, so Safari builds may probe each store for required
+ * cookies. Stores are never merged, and ambiguous complete jars are skipped.
  */
 function stripLeadingDot(domain: string): string {
   return domain.startsWith(".") ? domain.slice(1) : domain;
@@ -193,28 +196,51 @@ export function cookieDomainMatchesSite(cookieDomain: string, siteDomain: string
   );
 }
 
-async function readCookiesForDomains(
+function filterCookiesForDomains(
+  cookies: chrome.cookies.Cookie[],
   siteDomains: string[],
+): chrome.cookies.Cookie[] {
+  return cookies.filter(
+    (cookie) =>
+      !cookie.domain ||
+      siteDomains.some((siteDomain) =>
+        cookieDomainMatchesSite(cookie.domain || "", siteDomain),
+      ),
+  );
+}
+
+function hasAllCookieNames(
+  cookies: chrome.cookies.Cookie[],
+  requiredNames: readonly string[],
+): boolean {
+  const have = new Set(cookies.map((cookie) => cookie.name));
+  return requiredNames.every((required) => have.has(required));
+}
+
+declare const __OBC_BROWSER_TARGET__: string | undefined;
+
+function isSafariBuild(): boolean {
+  return typeof __OBC_BROWSER_TARGET__ !== "undefined" && __OBC_BROWSER_TARGET__ === "safari";
+}
+
+async function readCookiesFromStore(
+  chromeApi: typeof chrome,
+  siteDomains: string[],
+  storeId?: string,
 ): Promise<chrome.cookies.Cookie[]> {
-  const chromeApi = getChromeApi();
-  if (!chromeApi?.cookies?.getAll) {
-    return [];
-  }
+  const storeQuery: chrome.cookies.GetAllDetails = storeId === undefined ? {} : { storeId };
   try {
-    const allCookies = await chromeApi.cookies.getAll({});
-    return allCookies.filter(
-      (cookie) =>
-        !cookie.domain ||
-        siteDomains.some((siteDomain) =>
-          cookieDomainMatchesSite(cookie.domain || "", siteDomain),
-        ),
-    );
+    const allCookies = await chromeApi.cookies.getAll(storeQuery);
+    return filterCookiesForDomains(allCookies, siteDomains);
   } catch {
     // Defensive fallback for engines that reject an unfiltered getAll.
     const merged = new Map<string, chrome.cookies.Cookie>();
     for (const siteDomain of siteDomains) {
       try {
-        const cookies = await chromeApi.cookies.getAll({ domain: siteDomain });
+        const cookies = await chromeApi.cookies.getAll({
+          ...storeQuery,
+          domain: siteDomain,
+        });
         for (const cookie of cookies) {
           merged.set(`${cookie.domain}|${cookie.name}|${cookie.path}`, cookie);
         }
@@ -222,14 +248,50 @@ async function readCookiesForDomains(
         // Ignore a single failed domain filter and try the remaining sites.
       }
     }
-    return [...merged.values()].filter(
-      (cookie) =>
-        !cookie.domain ||
-        siteDomains.some((siteDomain) =>
-          cookieDomainMatchesSite(cookie.domain || "", siteDomain),
-        ),
-    );
+    return filterCookiesForDomains([...merged.values()], siteDomains);
   }
+}
+
+async function readCookiesForDomains(
+  siteDomains: string[],
+  requiredCookieNames: readonly string[] = [],
+): Promise<chrome.cookies.Cookie[]> {
+  const chromeApi = getChromeApi();
+  if (!chromeApi?.cookies?.getAll) {
+    return [];
+  }
+
+  const defaultCookies = await readCookiesFromStore(chromeApi, siteDomains);
+  if (
+    requiredCookieNames.length === 0 ||
+    hasAllCookieNames(defaultCookies, requiredCookieNames) ||
+    !isSafariBuild() ||
+    !chromeApi.cookies.getAllCookieStores
+  ) {
+    return defaultCookies;
+  }
+
+  let stores: chrome.cookies.CookieStore[];
+  try {
+    stores = await chromeApi.cookies.getAllCookieStores();
+  } catch {
+    return defaultCookies;
+  }
+  let completeStoreCookies: chrome.cookies.Cookie[] | null = null;
+  for (const store of stores) {
+    const storeCookies = await readCookiesFromStore(chromeApi, siteDomains, store.id);
+    if (!hasAllCookieNames(storeCookies, requiredCookieNames)) {
+      continue;
+    }
+    if (completeStoreCookies) {
+      console.debug(
+        "[openbiliclaw] Bilibili cookie sync skipped; multiple complete Safari cookie stores",
+      );
+      return defaultCookies;
+    }
+    completeStoreCookies = storeCookies;
+  }
+  return completeStoreCookies ?? defaultCookies;
 }
 
 /**
@@ -242,12 +304,13 @@ async function readCookiesForDomains(
  * round trip.
  */
 export async function readBilibiliCookieHeader(): Promise<string | null> {
-  const cookies = await readCookiesForDomains(["bilibili.com"]);
-  const have = new Set(cookies.map((c) => c.name));
-  for (const required of REQUIRED_COOKIE_NAMES) {
-    if (!have.has(required)) {
-      return null;
-    }
+  const cookies = await readCookiesForDomains(["bilibili.com"], REQUIRED_COOKIE_NAMES);
+  const missing = REQUIRED_COOKIE_NAMES.filter(
+    (required) => !cookies.some((cookie) => cookie.name === required),
+  );
+  if (missing.length > 0) {
+    console.debug(`[openbiliclaw] Bilibili cookie sync skipped; missing: ${missing.join(", ")}`);
+    return null;
   }
   // Render in the standard Cookie-header form. Order doesn't matter
   // to the B 站 API but we keep it stable for log readability.

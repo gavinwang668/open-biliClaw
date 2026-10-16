@@ -1121,6 +1121,185 @@ test("readBilibiliCookieHeader reads subdomain cookies even when Safari domain f
   assert.match(header, /DedeUserID=42/);
 });
 
+test("readBilibiliCookieHeader finds a complete Safari store when the default store is anonymous", async (t) => {
+  const buildGlobals = globalThis as typeof globalThis & { __OBC_BROWSER_TARGET__?: string };
+  buildGlobals.__OBC_BROWSER_TARGET__ = "safari";
+  t.after(() => {
+    delete buildGlobals.__OBC_BROWSER_TARGET__;
+  });
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  globalThis.chrome = {
+    cookies: {
+      getAll: async (details?: { storeId?: string }) => {
+        if (!details?.storeId) {
+          return [{ name: "buvid3", value: "anonymous", domain: ".bilibili.com" }];
+        }
+        if (details.storeId === "persistent-1") {
+          throw new Error("Safari could not read one cookie store");
+        }
+        if (details.storeId === "persistent-2") {
+          return [
+            { name: "SESSDATA", value: "sess", domain: ".bilibili.com" },
+            { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+            { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+          ];
+        }
+        return [];
+      },
+      getAllCookieStores: async () => [
+        { id: "persistent-1", tabIds: [] },
+        { id: "persistent-2", tabIds: [] },
+      ],
+    },
+  } as unknown as typeof chrome;
+
+  assert.equal(
+    await readBilibiliCookieHeader(),
+    "SESSDATA=sess; bili_jct=csrf; DedeUserID=42",
+  );
+});
+
+test("readBilibiliCookieHeader keeps a complete default store without enumerating others", async (t) => {
+  const buildGlobals = globalThis as typeof globalThis & { __OBC_BROWSER_TARGET__?: string };
+  buildGlobals.__OBC_BROWSER_TARGET__ = "safari";
+  t.after(() => {
+    delete buildGlobals.__OBC_BROWSER_TARGET__;
+  });
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  let storeEnumerations = 0;
+  globalThis.chrome = {
+    cookies: {
+      getAll: async () => [
+        { name: "SESSDATA", value: "sess", domain: ".bilibili.com" },
+        { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+        { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+      ],
+      getAllCookieStores: async () => {
+        storeEnumerations += 1;
+        return [];
+      },
+    },
+  } as unknown as typeof chrome;
+
+  assert.equal(
+    await readBilibiliCookieHeader(),
+    "SESSDATA=sess; bili_jct=csrf; DedeUserID=42",
+  );
+  assert.equal(storeEnumerations, 0);
+});
+
+test("readBilibiliCookieHeader does not combine partial cookies from different stores", async (t) => {
+  const buildGlobals = globalThis as typeof globalThis & { __OBC_BROWSER_TARGET__?: string };
+  buildGlobals.__OBC_BROWSER_TARGET__ = "safari";
+  t.after(() => {
+    delete buildGlobals.__OBC_BROWSER_TARGET__;
+  });
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  globalThis.chrome = {
+    cookies: {
+      getAll: async (details?: { storeId?: string }) => {
+        if (details?.storeId === "persistent-1") {
+          return [{ name: "SESSDATA", value: "sess", domain: ".bilibili.com" }];
+        }
+        if (details?.storeId === "persistent-2") {
+          return [
+            { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+            { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+          ];
+        }
+        return [];
+      },
+      getAllCookieStores: async () => [
+        { id: "persistent-1", tabIds: [] },
+        { id: "persistent-2", tabIds: [] },
+      ],
+    },
+  } as unknown as typeof chrome;
+
+  assert.equal(await readBilibiliCookieHeader(), null);
+});
+
+test("readBilibiliCookieHeader does not enumerate other stores outside Safari builds", async (t) => {
+  const buildGlobals = globalThis as typeof globalThis & { __OBC_BROWSER_TARGET__?: string };
+  buildGlobals.__OBC_BROWSER_TARGET__ = "chrome";
+  t.after(() => {
+    delete buildGlobals.__OBC_BROWSER_TARGET__;
+  });
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  let storeEnumerations = 0;
+  globalThis.chrome = {
+    cookies: {
+      getAll: async () => [{ name: "buvid3", value: "anonymous", domain: ".bilibili.com" }],
+      getAllCookieStores: async () => {
+        storeEnumerations += 1;
+        return [{ id: "container-1", tabIds: [] }];
+      },
+    },
+  } as unknown as typeof chrome;
+
+  assert.equal(await readBilibiliCookieHeader(), null);
+  assert.equal(storeEnumerations, 0);
+});
+
+test("readBilibiliCookieHeader rejects ambiguous multiple complete Safari stores", async (t) => {
+  const buildGlobals = globalThis as typeof globalThis & { __OBC_BROWSER_TARGET__?: string };
+  buildGlobals.__OBC_BROWSER_TARGET__ = "safari";
+  t.after(() => {
+    delete buildGlobals.__OBC_BROWSER_TARGET__;
+  });
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  globalThis.chrome = {
+    cookies: {
+      getAll: async (details?: { storeId?: string }) => {
+        if (!details?.storeId) return [];
+        return [
+          { name: "SESSDATA", value: `sess-${details.storeId}`, domain: ".bilibili.com" },
+          { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+          { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+        ];
+      },
+      getAllCookieStores: async () => [
+        { id: "persistent-1", tabIds: [] },
+        { id: "persistent-2", tabIds: [] },
+      ],
+    },
+  } as unknown as typeof chrome;
+
+  assert.equal(await readBilibiliCookieHeader(), null);
+});
+
+test("readBilibiliCookieHeader applies the domain fallback inside a Safari store", async (t) => {
+  const buildGlobals = globalThis as typeof globalThis & { __OBC_BROWSER_TARGET__?: string };
+  buildGlobals.__OBC_BROWSER_TARGET__ = "safari";
+  t.after(() => {
+    delete buildGlobals.__OBC_BROWSER_TARGET__;
+  });
+  const { readBilibiliCookieHeader } = await importCookieSync();
+  globalThis.chrome = {
+    cookies: {
+      getAll: async (details?: { domain?: string; storeId?: string }) => {
+        if (!details?.domain) {
+          throw new Error("Safari rejects unfiltered getAll");
+        }
+        if (details.storeId === "persistent-2" && details.domain === "bilibili.com") {
+          return [
+            { name: "SESSDATA", value: "sess", domain: ".bilibili.com" },
+            { name: "bili_jct", value: "csrf", domain: ".bilibili.com" },
+            { name: "DedeUserID", value: "42", domain: ".bilibili.com" },
+          ];
+        }
+        return [];
+      },
+      getAllCookieStores: async () => [{ id: "persistent-2", tabIds: [] }],
+    },
+  } as unknown as typeof chrome;
+
+  assert.equal(
+    await readBilibiliCookieHeader(),
+    "SESSDATA=sess; bili_jct=csrf; DedeUserID=42",
+  );
+});
+
 test("readCookiesForDomains falls back to per-domain getAll when unfiltered getAll throws", async () => {
   const { readWeiboLoginState } = await importCookieSync();
   globalThis.chrome = {

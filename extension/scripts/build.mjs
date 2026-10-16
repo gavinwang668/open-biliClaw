@@ -165,6 +165,7 @@ for (const target of entrypoints) {
     // paths resolve in both layouts.
     define: {
       __OBC_ASSET_PREFIX__: JSON.stringify(isFirefox || isSafari ? "" : "dist/"),
+      __OBC_BROWSER_TARGET__: JSON.stringify(targetName),
     },
     // Safari-only `browser` → `chrome` shim (see above). `banner` is undefined
     // for Chrome/Firefox so those bundles remain unchanged.
