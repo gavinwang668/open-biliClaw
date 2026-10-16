@@ -3017,6 +3017,192 @@ def test_transport_failure_refuses_rather_than_storing_an_unchecked_cookie(
     assert SourceAuthContract.model_validate(body["auth"]).verification != "failed"
 
 
+def _stub_live_probe_network_error(env: _Env) -> list[tuple[str, str]]:
+    """Answer the shared live gate with a transport failure; return the asks."""
+    from openbiliclaw.api.source_auth import verify as verify_module
+
+    calls: list[tuple[str, str]] = []
+
+    async def _probe(slug, *, cfg, cookie=None, probes=None, record=True):
+        calls.append((slug, str(cookie or "")))
+        return verify_module.LiveProbeOutcome(
+            slug=slug,
+            has_credential=True,
+            authenticated=False,
+            network_error=True,
+            message="B站 检测请求失败（proxy died），无法判定登录态。",
+        )
+
+    env.monkeypatch.setattr(verify_module, "run_live_probe", _probe)
+    return calls
+
+
+def test_bilibili_transport_failure_persists_cookie_marked_unverified(
+    contract_env: _Env,
+) -> None:
+    """B站 is the exception to transport-refusal: its account-sync loop
+    re-validates the stored cookie on every tick (-101 → auth_expired), so an
+    uncheckable candidate is safe to persist with an explicit unverified
+    marker — while refusing it deadlocked users whose only route to bilibili
+    differed from the probe's (flaky proxy)."""
+    from openbiliclaw.api.source_auth import write as write_module
+    from openbiliclaw.bilibili.auth import AuthManager
+
+    contract_env.monkeypatch.setattr(write_module, "_NETWORK_PROBE_BACKOFF_SECONDS", 0.0)
+    calls = _stub_live_probe_network_error(contract_env)
+
+    with _write_client(contract_env) as client:
+        response = client.post(
+            "/api/bilibili/cookie", json={"cookie": _FULL_BILI_COOKIE, "source": "extension"}
+        )
+
+    body = response.json()
+    assert response.status_code == 200, response.text
+    assert body["ok"] is True
+    # Persisted, but NOT reported as a confirmed login.
+    assert body["authenticated"] is False
+    # The legacy response must surface the unverified outcome additively:
+    # ok stays True (the extension treats that as accepted) while the new
+    # fields name what happened, and the message is the gate's own honest
+    # copy rather than a bare "synced and refreshed".
+    assert body["error_code"] == ""
+    assert body["unverified"] is True
+    assert body["unverified_reason"] == "保存时无法连接平台完成登录验证，已按未验证凭据保存。"
+    assert "已按未验证 Cookie 保存" in body["message"]
+    assert AuthManager(data_dir=contract_env.cfg.data_path).load_cookie() == _FULL_BILI_COOKIE
+    # Transient blips get a couple of retries before settling for unverified.
+    assert len(calls) == 1 + write_module._NETWORK_PROBE_RETRIES
+    # The recorded verdict is a network failure, never a clean negative —
+    # the status surfaces must not claim the cookie failed a check it
+    # never took.
+    verdict = LIVE_PROBES.peek("bilibili")
+    assert verdict is not None
+    assert verdict.network_error is True
+    assert verdict.authenticated is False
+
+
+def test_bilibili_transport_failure_unverified_write_via_unified_endpoint(
+    contract_env: _Env,
+) -> None:
+    """The unified write shape exposes the same accept with the reason named."""
+    from openbiliclaw.api.source_auth import write as write_module
+
+    contract_env.monkeypatch.setattr(write_module, "_NETWORK_PROBE_BACKOFF_SECONDS", 0.0)
+    _stub_live_probe_network_error(contract_env)
+
+    with _write_client(contract_env) as client:
+        response = client.post(
+            "/api/sources/bilibili/credential",
+            json={"value": _FULL_BILI_COOKIE},
+        )
+
+    body = response.json()
+    assert body["accepted"] is True
+    assert body["checked"] == "live_probe"
+    assert body["unverified_reason"]
+    assert body["persisted"] is True
+    assert SourceAuthContract.model_validate(body["auth"]).verification != "failed"
+
+
+def test_bilibili_definitive_rejection_still_refused(contract_env: _Env) -> None:
+    """A real platform 'not logged in' (not a transport failure) still refuses.
+
+    The unverified-persist escape only covers ``network_error``; a definitive
+    negative verdict remains evidence and must not land."""
+    from openbiliclaw.api.source_auth import verify as verify_module
+    from openbiliclaw.bilibili.auth import AuthManager
+
+    async def _probe(slug, *, cfg, cookie=None, probes=None, record=True):
+        return verify_module.LiveProbeOutcome(
+            slug=slug,
+            has_credential=True,
+            authenticated=False,
+            network_error=False,
+            message="B站 Cookie 未登录或已失效。",
+        )
+
+    contract_env.monkeypatch.setattr(verify_module, "run_live_probe", _probe)
+
+    with _write_client(contract_env) as client:
+        response = client.post(
+            "/api/bilibili/cookie", json={"cookie": _FULL_BILI_COOKIE, "source": "extension"}
+        )
+
+    body = response.json()
+    assert response.status_code == 200, response.text
+    assert body["ok"] is False
+    assert body["error_code"] == "cookie_invalid"
+    # A definitive refusal is the opposite of the unverified-persist outcome.
+    assert body["unverified"] is False
+    assert body["unverified_reason"] == ""
+    assert AuthManager(data_dir=contract_env.cfg.data_path).load_cookie() == ""
+
+
+def test_landed_bilibili_cookie_clears_persisted_auth_expired(contract_env: _Env) -> None:
+    """A persisted auth_expired sync issue must not outlive its cookie.
+
+    The banner state in ``account_sync_state.json`` was previously cleared
+    only by a completed sync tick; a paused or crash-looping daemon never
+    ran one, so the banner survived the fix. The credential-landed path now
+    clears it directly.
+    """
+    from openbiliclaw.memory.manager import MemoryManager
+    from openbiliclaw.runtime.account_sync import AccountSyncService
+
+    _stub_live_probe(contract_env)
+    memory_manager = MemoryManager(contract_env.cfg.data_path, database=contract_env.db)
+    memory_manager.save_account_sync_state(
+        {
+            "last_sync_error": "账号登录已失效 (-101)",
+            "last_sync_error_kind": "auth_expired",
+            "last_sync_issues": [{"stage": "bilibili_history", "kind": "auth_expired"}],
+        }
+    )
+
+    class _IdleClient:
+        """The app's background sync loop ticks against the injected service;
+        empty fetches keep a completed tick from writing new issues."""
+
+        async def get_user_history(self, max_items: int = 100) -> list[object]:
+            return []
+
+        async def get_all_favorites(self, **_kwargs: object) -> list[object]:
+            return []
+
+        async def get_following(self, **_kwargs: object) -> list[object]:
+            return []
+
+    class _IdleSoulEngine:
+        async def analyze_events(self, events: list[object]) -> None:
+            return None
+
+    sync_service = AccountSyncService(
+        memory_manager=memory_manager,
+        bilibili_client=_IdleClient(),
+        soul_engine=_IdleSoulEngine(),
+    )
+    contract_env.monkeypatch.setattr(
+        "openbiliclaw.config.load_config", lambda *_a, **_kw: contract_env.cfg
+    )
+    app = create_app(
+        memory_manager=memory_manager,
+        database=contract_env.db,
+        soul_engine=object(),
+        account_sync_service=sync_service,
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/bilibili/cookie", json={"cookie": _FULL_BILI_COOKIE, "source": "extension"}
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+    state = memory_manager.load_account_sync_state()
+    assert state["last_sync_error"] == ""
+    assert state["last_sync_error_kind"] == ""
+    assert state["last_sync_issues"] == []
+
+
 class _Dynamic:
     """A response field whose value cannot be a literal (timestamp, tmp path).
 
@@ -3044,6 +3230,10 @@ class _Dynamic:
 #: and so is a key that survives with a hollowed-out value, which is why
 #: comparing key sets alone was not enough. The bodies below are all refusals,
 #: the branch where an ``error_code`` and its message have to survive intact.
+#: (The bilibili route's ``unverified`` / ``unverified_reason`` pair is the one
+#: sanctioned shape change: purely additive, both defaulting to the "nothing
+#: to say" values on every pre-existing branch, so parsers that predate them
+#: read exactly the response they always did.)
 _LEGACY_ENDPOINT_CONTRACTS: tuple[tuple[str, dict[str, object], dict[str, object]], ...] = (
     (
         "/api/bilibili/cookie",
@@ -3058,6 +3248,8 @@ _LEGACY_ENDPOINT_CONTRACTS: tuple[tuple[str, dict[str, object], dict[str, object
                 "请在已登录的浏览器重新复制完整 Cookie。"
             ),
             "error_code": "cookie_invalid",
+            "unverified": False,
+            "unverified_reason": "",
         },
     ),
     (
@@ -3162,9 +3354,14 @@ def test_legacy_credential_endpoints_keep_their_success_shape(contract_env: _Env
         "user_id",
         "message",
         "error_code",
+        # Additive unverified-persist markers; False/"" on a verified success.
+        "unverified",
+        "unverified_reason",
     }
     assert bili.json()["ok"] is True
     assert bili.json()["authenticated"] is True
+    assert bili.json()["unverified"] is False
+    assert bili.json()["unverified_reason"] == ""
     assert douyin.json()["ok"] is True
     assert douyin.json()["cookie_names"] == ["sessionid", "ttwid"]
     assert twitter.json()["ok"] is True
