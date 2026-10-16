@@ -4451,6 +4451,16 @@ class TestBackendAPI:
         assert body["authenticated"] is True
         assert body["username"] == "test_user"
         assert body["user_id"] == 12345
+        # A verified write is never marked unverified — the additive fields
+        # stay at their defaults so the success shape is unchanged. The
+        # message remains one of the two legacy strings (the sandboxed
+        # rebuild has no LLM registry, so runtime_refreshed varies).
+        assert body["unverified"] is False
+        assert body["unverified_reason"] == ""
+        assert body["message"] in {
+            "Cookie synced and runtime refreshed.",
+            "Cookie already synced; runtime unchanged.",
+        }
 
         # Side effect 1: data/bilibili_cookie.json got written.
         cookie_file = tmp_path / "data" / "bilibili_cookie.json"

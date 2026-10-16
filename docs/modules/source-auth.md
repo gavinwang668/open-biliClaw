@@ -139,7 +139,7 @@ GitHub 还可只从固定的 `OPENBILICLAW_GITHUB_TOKEN` 读取，不接受可�
 
 **无法校验的绝不伪造。** 小红书、知乎与 Linux.do 后端只存一个 bool、零字节 cookie，其写入显式返回 `checked="none"` 加 `unverified_reason`，而不是假装校验过。
 
-**传输失败不是凭据的证据，但也曾把用户锁死。** 活体探针撞上代理/网络故障时，`validation_network` 拒绝落盘对多数平台仍然正确——没有什么会替用户复检一份未校验的凭据。B 站是例外：账号同步循环每轮都会用存储的 Cookie 真实拉取（-101 → `auth_expired`），它就是复检兜底。因此 B 站写入在传输失败时先短退避重试两次探针（`_NETWORK_PROBE_RETRIES`），仍不通则**以显式 unverified 标记落盘**（`CredentialVerdict.unverified=True`，响应带 `unverified_reason`，verdict 以 `network_error=True` 记录而非干净失败）；平台明确回「未登录」（真实 -101）依旧拒绝。这条逃生门解决的是真实死锁：用户唯一的出网路径与探针不同（flaky 代理）时，扩展一直在退避重试一个永远不会被接受的修复。
+**传输失败不是凭据的证据，但也曾把用户锁死。** 活体探针撞上代理/网络故障时，`validation_network` 拒绝落盘对多数平台仍然正确——没有什么会替用户复检一份未校验的凭据。B 站是例外：账号同步循环每轮都会用存储的 Cookie 真实拉取（-101 → `auth_expired`），它就是复检兜底。因此 B 站写入在传输失败时先短退避重试两次探针（`_NETWORK_PROBE_RETRIES`），仍不通则**以显式 unverified 标记落盘**（`CredentialVerdict.unverified=True`，统一与旧版响应都带 `unverified_reason`，旧版 `/api/bilibili/cookie` 另加 `unverified: true` 纯增量字段并把 `message` 换成门禁的诚实文案，verdict 以 `network_error=True` 记录而非干净失败）；平台明确回「未登录」（真实 -101）依旧拒绝。这条逃生门解决的是真实死锁：用户唯一的出网路径与探针不同（flaky 代理）时，扩展一直在退避重试一个永远不会被接受的修复。
 
 **init 期间的 B 站 Cookie 暂存而非丢弃。** guided init 活跃时 `/api/bilibili/cookie` 对异值推送返回 200 + `error_code="cookie_staged"` 并把 Cookie 暂存到 `data/runtime/staged_bilibili_cookie.json`（`source_auth/staged.py`），init 终态与 `/api/init-completed` 经 `_write_source_credential` 正常应用；直接落盘成功的写入会清掉更旧的暂存值。`/api/runtime-status` 新增 `bilibili_cookie_staged`（纯增量字段）让桌面 Web 显示「已暂存，初始化完成后自动应用」，而不是只在扩展 service worker 控制台可见。
 

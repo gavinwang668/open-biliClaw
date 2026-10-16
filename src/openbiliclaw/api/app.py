@@ -7843,11 +7843,20 @@ def create_app(
             authenticated=result.authenticated,
             username=result.username,
             user_id=result.user_id,
+            # An unverified persist (probe could not reach bilibili) keeps the
+            # gate's own honest copy — "stored unchecked, the sync loop will
+            # re-check" — instead of claiming a refresh that proved nothing.
             message=(
-                "Cookie synced and runtime refreshed."
-                if result.runtime_refreshed
-                else "Cookie already synced; runtime unchanged."
+                result.message
+                if result.unverified
+                else (
+                    "Cookie synced and runtime refreshed."
+                    if result.runtime_refreshed
+                    else "Cookie already synced; runtime unchanged."
+                )
             ),
+            unverified=result.unverified,
+            unverified_reason=result.unverified_reason,
         )
 
     def _qr_cookie_header(url: str) -> str:
@@ -17995,6 +18004,7 @@ def create_app(
             persisted=bool(written.persisted) and not unchanged,
             checked=verdict.checked,
             unverified_reason=verdict.unverified_reason,
+            unverified=verdict.unverified,
             cookie_names=written.cookie_names,
             authenticated=verdict.authenticated,
             username=verdict.username,

@@ -8,6 +8,7 @@
 - `POST /api/bilibili/cookie` 在 guided init 期间不再 409 丢弃异值 Cookie：暂存到 `data/runtime/staged_bilibili_cookie.json`，init 终态与 `/api/init-completed` 自动经正常 validate+persist 路径应用；`/api/runtime-status` 新增 `bilibili_cookie_staged`（纯增量字段），桌面 Web 横幅会显示「新 Cookie 已暂存」。
 - 写入探针传输失败（`validation_network`）时 B 站 Cookie 不再拒绝落盘：短退避重试两次仍以显式 unverified 标记持久化（verdict 记为 `network_error` 而非干净失败，响应带 `unverified_reason`）；账号同步每轮真实拉取仍是复检兜底。平台明确回「未登录」（真实 -101）依旧拒绝；抖音等其他活体门禁平台行为不变。
 - 凭据写入后的运行时重建失败不再被 `suppress(Exception)` 吞掉：ERROR 带 traceback 记日志并记入 `pending_runtime_rebuilds`，下一次写入（包括此前是纯 no-op 的相同 Cookie 重投）自动重试，不再静默停留在旧 Cookie 的内存运行时上。
+- 旧版 `POST /api/bilibili/cookie` 响应不再吞掉 unverified 标记：传输失败兜底落盘时响应新增 `unverified: true` 与 `unverified_reason`（纯增量字段），`message` 改用门禁自身的「已按未验证 Cookie 保存」诚实文案而非笼统的 "Cookie synced"；`ok`/`authenticated`/`error_code` 语义不变，扩展旧版本行为不受影响。
 
 ## 未发布：修复 expression drain 测试的时序 flake
 

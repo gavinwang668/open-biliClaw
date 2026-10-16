@@ -489,6 +489,11 @@ class CredentialWriteOutcome:
     persisted: bool = False
     checked: CheckDepth = "none"
     unverified_reason: str = ""
+    #: True when the value was accepted WITHOUT a definitive live verdict
+    #: (transport failure on a platform whose sync loop re-validates). The
+    #: deprecated B站 cookie route projects this onto its response so the
+    #: extension can tell "stored unchecked" from "confirmed login".
+    unverified: bool = False
     cookie_names: tuple[str, ...] = ()
     authenticated: bool = False
     username: str = ""

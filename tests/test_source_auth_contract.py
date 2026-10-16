@@ -3061,6 +3061,14 @@ def test_bilibili_transport_failure_persists_cookie_marked_unverified(
     assert body["ok"] is True
     # Persisted, but NOT reported as a confirmed login.
     assert body["authenticated"] is False
+    # The legacy response must surface the unverified outcome additively:
+    # ok stays True (the extension treats that as accepted) while the new
+    # fields name what happened, and the message is the gate's own honest
+    # copy rather than a bare "synced and refreshed".
+    assert body["error_code"] == ""
+    assert body["unverified"] is True
+    assert body["unverified_reason"] == "保存时无法连接平台完成登录验证，已按未验证凭据保存。"
+    assert "已按未验证 Cookie 保存" in body["message"]
     assert AuthManager(data_dir=contract_env.cfg.data_path).load_cookie() == _FULL_BILI_COOKIE
     # Transient blips get a couple of retries before settling for unverified.
     assert len(calls) == 1 + write_module._NETWORK_PROBE_RETRIES
@@ -3124,6 +3132,9 @@ def test_bilibili_definitive_rejection_still_refused(contract_env: _Env) -> None
     assert response.status_code == 200, response.text
     assert body["ok"] is False
     assert body["error_code"] == "cookie_invalid"
+    # A definitive refusal is the opposite of the unverified-persist outcome.
+    assert body["unverified"] is False
+    assert body["unverified_reason"] == ""
     assert AuthManager(data_dir=contract_env.cfg.data_path).load_cookie() == ""
 
 
@@ -3219,6 +3230,10 @@ class _Dynamic:
 #: and so is a key that survives with a hollowed-out value, which is why
 #: comparing key sets alone was not enough. The bodies below are all refusals,
 #: the branch where an ``error_code`` and its message have to survive intact.
+#: (The bilibili route's ``unverified`` / ``unverified_reason`` pair is the one
+#: sanctioned shape change: purely additive, both defaulting to the "nothing
+#: to say" values on every pre-existing branch, so parsers that predate them
+#: read exactly the response they always did.)
 _LEGACY_ENDPOINT_CONTRACTS: tuple[tuple[str, dict[str, object], dict[str, object]], ...] = (
     (
         "/api/bilibili/cookie",
@@ -3233,6 +3248,8 @@ _LEGACY_ENDPOINT_CONTRACTS: tuple[tuple[str, dict[str, object], dict[str, object
                 "请在已登录的浏览器重新复制完整 Cookie。"
             ),
             "error_code": "cookie_invalid",
+            "unverified": False,
+            "unverified_reason": "",
         },
     ),
     (
@@ -3337,9 +3354,14 @@ def test_legacy_credential_endpoints_keep_their_success_shape(contract_env: _Env
         "user_id",
         "message",
         "error_code",
+        # Additive unverified-persist markers; False/"" on a verified success.
+        "unverified",
+        "unverified_reason",
     }
     assert bili.json()["ok"] is True
     assert bili.json()["authenticated"] is True
+    assert bili.json()["unverified"] is False
+    assert bili.json()["unverified_reason"] == ""
     assert douyin.json()["ok"] is True
     assert douyin.json()["cookie_names"] == ["sessionid", "ttwid"]
     assert twitter.json()["ok"] is True

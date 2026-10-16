@@ -683,6 +683,13 @@ class BilibiliCookieResponse(BaseModel):
     # ``cookie_staged`` is the one code that accompanies ``ok=True``: the
     # backend accepted responsibility for the value but has not applied it.
     error_code: str = ""
+    # Additive honesty fields for the unverified-persist outcome (a transport
+    # failure on the validation probe): the cookie WAS stored, so ``ok`` stays
+    # True, but ``authenticated`` stays False and these two say why. The
+    # extension only reads ``ok``/``authenticated``/``error_code`` today, so
+    # older versions behave exactly as before.
+    unverified: bool = False
+    unverified_reason: str = ""
 
 
 class DouyinCookieIn(BaseModel):
