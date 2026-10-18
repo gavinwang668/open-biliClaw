@@ -124,7 +124,7 @@ start_background_task）、会话/任务/审批/skill 列表 markup、异步审�
 
 ### 多语言（v0.3.230+）
 
-设置 → 通用 → 语言提供 `简体中文` / `繁體中文` / `English`。切换后会立即预览并随保存写入
+设置 → 通用 → **默认语言（所有端共用）** 提供 `简体中文` / `繁體中文` / `English`。切换后会立即预览并随保存写入
 `[general].language`；桌面页在 `applyConfig()` 时读取 `GET /api/config` 的规范化 `language`，
 再调用 `/shared/i18n.js` 的 `OpenBiliClawI18n.setLocale()`。界面文案按渲染后的 DOM 文本精确
 匹配 `/i18n/ui/<locale>.json` 翻译，模型输出、内容标题与用户输入不翻译；`#language` 选择器

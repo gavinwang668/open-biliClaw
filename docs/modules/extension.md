@@ -945,7 +945,7 @@ TikTok 每 scope 的基础预算由 30 秒调整为 60 秒，覆盖新增渲染�
 
 ### 多语言（v0.3.230+）
 
-设置 → 通用 → 语言提供 `简体中文` / `繁體中文` / `English`，与 Web / CLI 共用同一份
+设置 → 通用 → **默认语言（所有端共用）** 提供 `简体中文` / `繁體中文` / `English`，与 Web / CLI 共用同一份
 `[general].language`。侧边栏在 `initializePopup()` 最先初始化 `/shared/i18n.js`，目录由构建
 脚本从 `src/openbiliclaw/i18n/ui/` 复制到 `popup/locales/`（`extension/popup/locales/` 已
 gitignore），因此后端不可达时插件自身界面仍可本地化；后端恢复后 `refreshConfig` 会按最新

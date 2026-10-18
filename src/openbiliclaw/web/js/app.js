@@ -198,7 +198,7 @@ async function openMobileSettings(opener) {
       <button class="mobile-settings-close" type="button" aria-label="关闭设置">×</button>
     </div>
     <label class="mobile-settings-field" for="mobile-language">
-      <span>界面与输出语言</span>
+      <span>默认语言（界面与输出）</span>
       <select id="mobile-language" data-i18n-skip>
         <option value="zh-Hans">简体中文</option>
         <option value="zh-Hant">繁體中文</option>
