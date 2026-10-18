@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -30,9 +30,6 @@ from openbiliclaw.i18n.catalog import (
     load_messages,
     translate,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
 
@@ -88,6 +85,74 @@ class TestConfigLanguageValidation:
         assert isinstance(detail, dict)
         assert detail["error"] == "unsupported_language"
         assert "zh-Hant" in detail["supported"]
+
+
+class TestI18nApi:
+    async def test_locales_endpoint_reports_active_and_supported(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        import httpx
+
+        from openbiliclaw.api.app import create_app
+        from openbiliclaw.config import Config, save_config
+
+        monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+        config = Config(data_dir=str(tmp_path / "data"))
+        config.language = "zh-TW"
+        save_config(config, tmp_path / "config.toml")
+
+        app = create_app()
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://127.0.0.1:8420",
+        ) as client:
+            response = await client.get("/api/i18n/locales")
+            catalog_response = await client.get("/i18n/ui/zh-Hant.json")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["default"] == "zh-Hans"
+        # Alias resolution happens at the API boundary, so clients only ever
+        # see canonical ids.
+        assert payload["active"] == "zh-Hant"
+        assert [item["id"] for item in payload["locales"]] == ["zh-Hans", "zh-Hant", "en"]
+        assert payload["locales"][1]["native_name"] == "繁體中文"
+        assert catalog_response.status_code == 200
+        assert "messages" in catalog_response.json()
+
+
+class TestClientWiring:
+    def test_every_client_loads_the_i18n_runtime(self) -> None:
+        root = Path(__file__).parents[1]
+        pages = [
+            root / "src" / "openbiliclaw" / "web" / "desktop" / "index.html",
+            root / "src" / "openbiliclaw" / "web" / "index.html",
+            root / "src" / "openbiliclaw" / "web" / "setup" / "index.html",
+            root / "extension" / "popup" / "popup.html",
+        ]
+        for page in pages:
+            assert "shared/i18n.js" in page.read_text(encoding="utf-8"), page
+
+    def test_pyinstaller_spec_bundles_the_catalogs(self) -> None:
+        spec = (Path(__file__).parents[1] / "packaging" / "openbiliclaw.spec").read_text(
+            encoding="utf-8"
+        )
+        assert "openbiliclaw/i18n" in spec, (
+            "packaging/openbiliclaw.spec must bundle i18n catalogs for the desktop app"
+        )
+
+    def test_language_pickers_offer_every_shipped_locale(self) -> None:
+        root = Path(__file__).parents[1]
+        pickers = [
+            root / "src" / "openbiliclaw" / "web" / "desktop" / "index.html",
+            root / "src" / "openbiliclaw" / "web" / "setup" / "index.html",
+            root / "src" / "openbiliclaw" / "web" / "js" / "app.js",
+            root / "extension" / "popup" / "popup.html",
+        ]
+        for picker in pickers:
+            text = picker.read_text(encoding="utf-8")
+            for locale in SUPPORTED_LOCALES:
+                assert f'value="{locale}"' in text, (picker, locale)
 
 
 class TestSemanticCatalog:

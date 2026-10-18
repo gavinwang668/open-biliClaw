@@ -128,6 +128,10 @@ a = Analysis(
         # packaged app. Dest mirrors the import path so __file__-relative
         # resolution (web_dir = .../openbiliclaw/web) works when frozen.
         (str(project_root / "src" / "openbiliclaw" / "web"), "openbiliclaw/web"),
+        # Locale contract data: Python semantic catalogs (CLI/API) and the UI
+        # catalogs served at /i18n/ui. Without this the packaged app raises
+        # CatalogError on config-show and the web UI stays in Chinese.
+        (str(project_root / "src" / "openbiliclaw" / "i18n"), "openbiliclaw/i18n"),
         # Builtin chat skills (M4): SKILL.md files loaded via
         # agent/skill.py's __file__-relative builtin_skills_dir().
         (

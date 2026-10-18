@@ -2870,9 +2870,11 @@ def create_app(
             path == "/"
             or path in {"/m", "/web", "/setup"}
             # /shared/ hosts modules the recovery shells load at parse time
-            # (e.g. source-status.js); blocking it kills the setup wizard's
-            # script and leaves the degraded config unrepairable.
-            or path.startswith(("/m/", "/web/", "/setup/", "/shared/"))
+            # (e.g. source-status.js, i18n.js); blocking it kills the setup
+            # wizard's script and leaves the degraded config unrepairable.
+            # /i18n/ui/ is the locale catalog behind that runtime — without it
+            # the recovery UI silently falls back to Simplified Chinese.
+            or path.startswith(("/m/", "/web/", "/setup/", "/shared/", "/i18n/ui/"))
         )
         allowed = (
             method == "OPTIONS"
@@ -2885,6 +2887,9 @@ def create_app(
             or path == "/favicon.ico"
             or path == "/api/autostart-status"
             or path == "/api/autostart/apply"
+            # Static locale metadata: no LLM dependency, and clients need it to
+            # render their recovery UI in the user's language.
+            or path == "/api/i18n/locales"
             or path in ("/api/init-status", "/api/init", "/api/init/cancel")
             # Update status + manual check/apply: a backend that can't build its
             # LLM registry is exactly when pulling a fix-carrying release matters,
