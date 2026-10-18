@@ -121,3 +121,61 @@ PYTHONPATH=src python scripts/validate_jev_single_pass.py --live --confirm-free-
 本地 runner 两种预算均生成完整题组，源正文保留；显式 live 命令因缺少本机 key
 返回 `not_attempted`，没有进行远端推理。未运行整个仓库的 pytest、浏览器交互或
 桌面/安装器测试；三端 UI 继续沿用既有评估模式切换，新增细粒度字段仅 TOML/API。
+
+## 2026 年 10 月 19 日：本机 Jev 假后端实测
+
+按用户要求在独立 `test/jev-fake-backend` worktree，基于 `b2d63a93` 增加测试工具。
+生产 `src/` 和官方端点均不修改，不把假服务注册成可选生产 provider。
+TDD 的测试边界是原生 HTTP 客户端与候选 claim / evaluate / complete：先测失败，
+再实现真正监听回环端口的服务，最后沿公共数据库查询接口验证持久状态。
+
+`scripts/jev_fake_backend.py` 用标准库 HTTP server，不增加依赖；监听地址固定为
+`127.0.0.1`，端口由系统分配。严格测试 transport 只接受官方原生地址与合成 key，
+再用实际 socket HTTP 转到本地；不使用 MockTransport，不允许真实 key 或其它目的地。
+服务不调用生产响应 parser 或预算计量器来生成预期结果，独立检查原生 envelope、
+Score 2–10 档和 Choice ≤255，并分别计量完整请求、state＋最长题的 canonical JSON
+字节数。容量是测试工程护栏，不是官方 token 计数实现。
+
+可重复运行：
+
+```bash
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --fake
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --fake --model jev-1.14.0
+PYTHONPATH=src pytest -q tests/test_jev_fake_backend.py
+```
+
+两组临时 SQLite、合成画像/候选，Jev 1.13 演示结果：
+
+| 场景 | 完整评估 / 入池 | 实际 HTTP | 长文已选片段 | 长文 state＋最长题字节 |
+| --- | --- | --- | --- | --- |
+| 标准预算 | 3 / 3，pending=0 | 2 次，20 题＋10 题 | 108 / 321 | 23,899 ≤24,000 |
+| 收紧至 12,000 字节 | 3 / 3，pending=0 | 2 次，20 题＋10 题 | 43 / 321 | 11,892 ≤12,000 |
+
+每个场景中每条候选只有一次完整 10 题评估；同一合成数据在两个隔离场景重复是测试
+对比，不是生产多轮评估。全量原文均保留，返回答案和 `usage=123/10` 固定为合成
+fixture。报告显式标记 `backend=local_fake`、`live=false`、`usage_is_synthetic=true`。
+
+自动化覆盖：原生三种 primitive、1.13/1.14 精确模型与 12KB/18KB 工程预算、长中文
+和显式条件保留、完整负偏好、一次完整题组、低分拒绝；缺题、多题、错模型、非法选项、
+概率分布错误、rubric 被改、HTTP 503、远端 422；不可拆正文、单题长度、必需画像
+超限时零 HTTP。技术失败留 pending，不缓存失败、不调生成/视觉 LLM；合法低分
+则进入 `rejected_low_score`。测试均使用临时数据库，不触碰真实用户信息。
+
+验收边界：证明本机协议、预算配置/打包和数据库状态流转，不证明真实模型中文效果、
+摘录语义无损、官方 tokenizer 上限、服务端错误正文形状、费用或线上时延。没有调用
+官方 API、读取真实 key、改生产配置或运行浏览器/安装器测试；运行时架构图不变。
+
+最终验证（本机 `.venv`，`PYTHONPATH=src`）：
+
+- 新增回环 HTTP 验收 18 项，纳入
+  `pytest -q tests/test_jev* tests/test_decision* tests/test_on_demand_profile_views.py tests/test_profile_views.py tests/test_profile_views_guards.py`：**420 passed**。
+  首轮为 419 passed / 1 failed，唯一失败是未修改的
+  `test_cli_per_call_transport_closed_on_exception_timeout_and_cancel[raise]`
+  （10ms 真实时钟预算）；该参数组隔离复验 3 passed，整组复跑 420 passed。
+  记录为时序敏感现象，不隐藏首轮失败，不据此改动生产 runtime。
+- `ruff check src/ tests/ scripts/jev_fake_backend.py scripts/validate_jev_single_pass.py` 通过。
+- `MYPYPATH=src:. mypy --explicit-package-bases src/ scripts/jev_fake_backend.py scripts/validate_jev_single_pass.py`：324 个文件通过。
+- `--fake` 的 1.13/1.14 两个显式模型均 `passed`，各 4 次本机 POST；默认模式仍
+  `preview`，去掉本机 key 的 `--live --confirm-free-credits` 返回 `not_attempted`
+  和退出码 2，没有远端 HTTP。
+- 没有运行全仓 pytest 或涉及真实 OAuth 凭据探测的 CLI 测试。

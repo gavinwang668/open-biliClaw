@@ -51,6 +51,10 @@ Jev 完整评估改用 `build_profile_catalog()` + `select_profile_context()` �
 单轮适配与官方多题依据见[实施契约](../plans/2026-10-14-jev-single-pass-context.md)。
 `scripts/validate_jev_single_pass.py` 默认仅本地预览；真实模式需先确认促销额度并在本机
 设置 key，使用合成画像、候选和临时 SQLite，不修改生产配置或数据。
+加 `--fake` 则自动启动本机 Jev 原生协议假后端，以真实回环 HTTP 跑完两种预算的
+完整评估与入池，不需要 key；输出 `backend=local_fake`、`live=false`、
+`usage_is_synthetic=true`。假后端有独立字节容量校验和故障注入，不能验证官方 token
+限制或推荐判断质量；它不加入生产 evaluator 配置，也不代替官方真实服务验收。
 
 > 从用户画像出发，在 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do、V2EX、微博、GitHub 和通用 Web 等来源主动寻找潜在会喜欢的内容。
 

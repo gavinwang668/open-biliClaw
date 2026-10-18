@@ -125,3 +125,12 @@ CLI 隔离问题补充：按源码异常边界推断，原样 `ConnectError` 来
 不可容纳的单段和必需约束仍 pending，无生成式补评。相关回归 1016 项及 CLI
 config-show 6 项通过，Ruff/MyPy 通过。当前缺少可用原生 key；官方未保证统一注册
 免费额度，live runner 返回 not_attempted，不代表真实 Jev 请求成功或中文质量验收。
+
+## 2026-10-19 本机协议假后端补充
+
+新增 `scripts/validate_jev_single_pass.py --fake`：真实回环 HTTP + 原生 Jev adapter +
+完整候选评估 + 临时 SQLite 入池。1.13/1.14 两个显式模型及不同工程字节预算均跑通，
+新增 18 项本机验收纳入 420 项相关回归通过，Ruff / MyPy 通过。正常和合法低分分开
+处理，坏响应/服务失败留待评估；不读真实 key、不修改生产配置/数据。
+答案/usage 是确定性合成 fixture，不能作为官方 token 容量或模型效果证明；首轮一个
+旧 10ms 用例失败及隔离/整组复跑结果也保留在[详细记录](2026-10-14-jev-single-pass-context.md)。

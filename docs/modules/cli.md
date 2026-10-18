@@ -14,6 +14,23 @@
 openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 ```
 
+## Jev 本机开发验证脚本
+
+在包含脚本的源码 worktree 根目录运行：
+
+```bash
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --fake
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --fake --model jev-1.14.0
+```
+
+`--fake` 与 `--live` 互斥，不读取真实 key，不用生产配置/数据库；自动启动临时回环
+HTTP 服务，以合成画像/三条候选跑标准和较小预算两个隔离场景，结束即关闭服务。
+报告的 `passed` 仅表示协议/完整评估/入池通过，`backend=local_fake` 和
+`usage_is_synthetic=true` 明确模型答案及 token 用量为假数据。模型 ID 由 `--model`
+显式选择，不自动切换。省略两种模式仍为无 HTTP 的 preview；真实服务运行仍需
+`--live --confirm-free-credits` 与本机 `TYPESAFE_API_KEY`。
+这不是新增 `openbiliclaw` 产品命令或 UI provider；不改变安装流程和四端设置。
+
 ## 命令一览
 
 | 命令 | 说明 | 状态 |

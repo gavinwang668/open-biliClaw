@@ -53,6 +53,7 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | 完整候选评估 | 已实现，实验性 | purpose=`EVALUATE`，纯文本受控分类；不隐式调用 LLM，详见 discovery |
 | 固定模型自适应预算 | 已实现 | 精确 ID 的双 token 容量 → 双 UTF-8 工程护栏；模型不自动切换，未知容量必须显式登记；完整评估与导演共用 |
 | 完整题组多候选合批 | 已实现，待实测 | 原文片段只传一次，公共规则/相同必需画像共享；配置题数、候选数、单题字节护栏。长内容本地摘录，不增加业务评估轮次 |
+| 本机 HTTP 协议假后端 | 开发测试工具 | `scripts/jev_fake_backend.py` 固定合成答案/usage、独立字节护栏和故障注入；不改变生产 adapter 或端点，不模拟模型推理质量 |
 | 图形界面设置与服务探测 | 部分提供 | 完整评估模式在三端设置页可切换；provider 凭据仍由 TOML/env 配置，不提供付费探测 |
 | 线上质量 / 中文效果 / 时延保证 | 未验证 | 离线 fixture 不等于真实模型验收；本轮未调用付费 API |
 
@@ -78,6 +79,17 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | `parse_jev_response(payload, request)` | 校验并绑定本次请求，返回实际模型、答案映射、用量；非法响应抛出不含敏感正文的 `ValueError` |
 | `build_decision_provider(config, *, provider_name="jev", client=None, environ=None)` | 接受 `DecisionConfig`；关闭时返回 `None`，不读取凭据、不创建 client；启用但缺凭据或 provider 未知时抛 `DecisionConfigurationError`（`ConfigError` 子类），不会借用 LLM key |
 | `ScriptedDecisionProvider(payloads, *, model="jev-fixture")` | 依次消费离线 fixture，复用真实响应校验器；`requests` 保存请求快照供状态传递断言，不请求网络 |
+
+开发测试接口 `scripts.jev_fake_backend.FakeJevBackend(model=..., mode="ok",
+max_request_bytes=48000, max_state_question_bytes=24000)` 是 context manager，
+只绑定 `127.0.0.1` 临时端口；`client()` 返回由调用方关闭的 `httpx.AsyncClient`。
+其测试 transport 只允许官方原生 URL + `synthetic-test-key`，然后通过真正的
+`AsyncHTTPTransport` 连接回环服务，禁用环境代理，不提供外网转发或真实密钥入口。
+`requests` 仅保留本轮合成请求内存快照，`records` 给出独立计量的字节数/题数/HTTP
+状态。支持 Choice / Score / Noul；`mode` 包含 `ok`、`low_score`、`server_error`、
+`missing_answer`、`extra_answer`、`wrong_model`、`unknown_choice`、`bad_distribution`、
+`bad_score_legend`。这些故障是测试输入，不是官方错误响应形态的完整模拟。
+重复使用的演示入口见 [CLI 开发验证](cli.md#jev-本机开发验证脚本)。
 
 `DecisionEvidence` 区分成功、服务不可用和响应无效，记录请求 / 输入 / schema 归因、
 实际模型、用量、时延、尝试次数、HTTP 状态和稳定 `reason_code`。失败不是全零分、

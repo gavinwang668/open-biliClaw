@@ -1,9 +1,10 @@
-"""Preview or explicitly run Jev evaluation against synthetic, temporary data.
+"""Preview, run a local fake Jev, or explicitly call the real service.
 
 Run from the checkout with PYTHONPATH=src. Live mode requires both a local
 TYPESAFE_API_KEY and --confirm-free-credits after checking the account balance.
 No account creation, top-up, production config or production database is used.
 Reports contain counts, native usage and sanitized failure codes only.
+--fake needs no key: real loopback HTTP, synthetic answers/usage, temporary DBs.
 """
 
 from __future__ import annotations
@@ -13,9 +14,10 @@ import asyncio
 import json
 import logging
 import os
+import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openbiliclaw.config import JevEvaluationConfig
 from openbiliclaw.decision.context_budget import resolve_jev_context
@@ -27,6 +29,13 @@ from openbiliclaw.discovery.engine import ContentDiscoveryEngine
 from openbiliclaw.discovery.jev_evaluator import JevContentEvaluator
 from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
 from openbiliclaw.storage.database import Database
+
+if TYPE_CHECKING:
+    import httpx
+
+# Both direct-file and ``python -m scripts...`` invocation use this checkout.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.jev_fake_backend import SYNTHETIC_KEY, FakeJevBackend  # noqa: E402
 
 
 class RecordingProvider:
@@ -45,12 +54,18 @@ class RecordingProvider:
         assert isinstance(state, dict)
         candidates = state["untrusted_candidates"]
         assert isinstance(candidates, list)
+        coverage = []
+        for candidate in candidates:
+            assert isinstance(candidate, dict)
+            content = candidate["content"]
+            assert isinstance(content, dict)
+            coverage.append(content["text_coverage"])
         row = {
             "candidates": len(candidates),
             "questions": len(request.questions),
             "request_bytes": size.request_bytes,
             "max_state_question_bytes": size.max_state_question_bytes,
-            "coverage": [candidate["content"]["text_coverage"] for candidate in candidates],
+            "coverage": coverage,
         }
         if self.native is None or self.stopped or len(self.calls) >= 6:
             result = DecisionEvidence(
@@ -82,15 +97,20 @@ class RecordingProvider:
             await self.native.aclose()
 
 
-async def run(model: str, live: bool) -> dict[str, Any]:
+async def run(
+    model: str, live: bool, *, local_client: httpx.AsyncClient | None = None
+) -> dict[str, Any]:
+    if live and local_client is not None:
+        raise ValueError("live and local fake modes are mutually exclusive")
     native = (
         JevDecisionProvider(
-            api_key=os.environ["TYPESAFE_API_KEY"],
+            api_key=SYNTHETIC_KEY if local_client is not None else os.environ["TYPESAFE_API_KEY"],
             model=model,
             max_attempts=1,
             timeout_seconds=15,
+            client=local_client,
         )
-        if live
+        if live or local_client is not None
         else None
     )
     provider = RecordingProvider(model, native)
@@ -143,13 +163,14 @@ async def run(model: str, live: bool) -> dict[str, Any]:
                     start = len(provider.calls)
                     outcome = await pipeline.evaluate_claim(claim, profile)
                     receipt = await pipeline.complete_claim(outcome, admission_limit=10)
-                    missing = db.conn.execute(
-                        "SELECT COUNT(*) FROM discovery_candidates WHERE status='pending_eval'"
-                    ).fetchone()[0]
+                    missing = db.count_discovery_candidates_by_status().get("pending_eval", 0)
+                    current = db.get_discovery_candidates_by_ids([row["id"] for row in claim.rows])
                     preserved = (
-                        db.conn.execute(
-                            "SELECT body_text FROM discovery_candidates WHERE content_id='BVJEVSYNTH2'"
-                        ).fetchone()[0]
+                        next(
+                            row["body_text"]
+                            for row in current
+                            if row["content_id"] == "BVJEVSYNTH2"
+                        )
                         == body
                     )
                     reports.append(
@@ -168,7 +189,7 @@ async def run(model: str, live: bool) -> dict[str, Any]:
     finally:
         await provider.aclose()
     passed = (
-        live
+        (live or local_client is not None)
         and len(reports) == 2
         and not provider.stopped
         and all(
@@ -187,20 +208,35 @@ async def run(model: str, live: bool) -> dict[str, Any]:
         "status": "passed"
         if passed
         else "incomplete"
-        if live
+        if live or local_client is not None
         else "preview"
         if preview_valid
         else "failed",
         "live": live,
+        "backend": "local_fake" if local_client is not None else "official" if live else "preview",
+        "usage_is_synthetic": local_client is not None,
         "model": model,
         "cases": reports,
     }
 
 
+async def run_fake(model: str) -> dict[str, Any]:
+    """Run both isolated budget cohorts over real loopback HTTP, never remote."""
+    with FakeJevBackend(model=model) as backend:
+        async with backend.client() as client:
+            report = await run(model, False, local_client=client)
+        report["local_http"] = list(backend.records)
+    return report
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", choices=("jev-1.13.0", "jev-1.14.0"), default="jev-1.13.0")
-    parser.add_argument("--live", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--live", action="store_true")
+    mode.add_argument(
+        "--fake", action="store_true", help="Use a loopback-only deterministic backend"
+    )
     parser.add_argument("--confirm-free-credits", action="store_true")
     args = parser.parse_args()
     if args.live and (not args.confirm_free_credits or not os.environ.get("TYPESAFE_API_KEY")):
@@ -215,7 +251,7 @@ def main() -> int:
         return 2
     logging.disable(logging.CRITICAL)
     try:
-        report = asyncio.run(run(args.model, args.live))
+        report = asyncio.run(run_fake(args.model) if args.fake else run(args.model, args.live))
     except Exception:
         print(json.dumps({"status": "failed", "reason": "runner_error"}))
         return 1
