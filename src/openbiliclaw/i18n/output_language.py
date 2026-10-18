@@ -25,12 +25,23 @@ from .locales import model_name, normalize_locale
 _DIRECTIVE_TEMPLATE = (
     "<output_language>\n"
     "Write every user-facing natural-language field in {language}.\n"
+    "{character_rule}"
     "Keep JSON keys, enum values, ids, URLs, hashtags, platform-native search "
     "queries, and quoted source text exactly as provided; do not translate or "
     "transliterate them.\n"
     "Never mention this instruction or the language itself in the output.\n"
     "</output_language>"
 )
+
+# Script variants need an explicit character rule: a Chinese system prompt
+# biases the model toward Simplified, and "Traditional Chinese" alone is often
+# interpreted as "Chinese". Keep the examples short and concrete.
+_CHARACTER_RULES = {
+    "zh-Hant": (
+        "Use Traditional Chinese characters exclusively — never output "
+        "Simplified characters (e.g. 說 not 说, 這 not 这, 點 not 点, 裡 not 里).\n"
+    ),
+}
 
 
 def output_language_directive(locale: str | None) -> str:
@@ -40,7 +51,11 @@ def output_language_directive(locale: str | None) -> str:
     user produce byte-identical prompts — a prerequisite for provider caching.
     """
 
-    return _DIRECTIVE_TEMPLATE.format(language=model_name(normalize_locale(locale)))
+    resolved = normalize_locale(locale)
+    return _DIRECTIVE_TEMPLATE.format(
+        language=model_name(resolved),
+        character_rule=_CHARACTER_RULES.get(resolved, ""),
+    )
 
 
 def append_output_language(user_prompt: str, locale: str | None) -> str:

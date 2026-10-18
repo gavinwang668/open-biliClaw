@@ -764,4 +764,5 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
     `<output_language>` 指令，由聊天与推荐理由 builder 追加到 user prompt 末尾；system prompt
     保持静态（跨 locale 字节一致），因此 provider prompt cache 不受影响。内部评估 / 抽取 /
     关键词规划不接该指令，避免行为在不同语言间漂移。`output_language=""` 是显式 no-op，
-    保持既有 prompt golden 不变。
+    保持既有 prompt golden 不变。`zh-Hant` 额外带「只用繁體字」字符约束（真实 provider 实测：
+    只说 Traditional Chinese 时首轮仍可能回简体）；配置保存/应用提示同样按新语言返回。

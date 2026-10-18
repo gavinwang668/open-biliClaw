@@ -3616,6 +3616,9 @@ def create_app(
 
     async def _apply_runtime_config_revision(item: _QueuedConfigApply) -> str:
         """Apply one persisted revision without owning the config-file lock."""
+        from openbiliclaw.i18n import get_translator
+
+        tr = get_translator(_canonical_locale(getattr(item.config, "language", None)))
         # Chat knobs have no dependency on profile/feedback owners. Keep the
         # same queue, lock and last-good transaction, but don't drain unrelated
         # work when the complete candidate differs only in known chat fields.
@@ -3625,9 +3628,7 @@ def create_app(
                     logger.info(
                         "Chat config applied without runtime rebuild: revision=%d", item.revision
                     )
-                    return (
-                        f"配置已保存到 {item.saved_path}。聊天设置已生效，正在进行的任务继续执行。"
-                    )
+                    return tr("api.config.saved_chat_live", path=item.saved_path)
         was_degraded = bool(getattr(ctx, "degraded", False))
         recovered_from_degraded = False
 
@@ -3649,19 +3650,15 @@ def create_app(
             if not recovered_from_degraded:
                 raise
             logger.exception("Degraded runtime recovered, but background task restart failed")
-            message = (
-                f"配置已保存到 {item.saved_path}。后端已原地恢复；"
-                "部分后台任务启动失败，将在后续配置刷新时重试，"
-                "不影响继续初始化。"
-            )
+            message = tr("api.config.saved_degraded_partial", path=item.saved_path)
         else:
-            message = f"配置已保存到 {item.saved_path}。"
+            message = tr("api.config.saved_applied", path=item.saved_path)
             if was_degraded:
-                message += " 后端已从降级模式原地恢复。"
-            message += (
-                " 除需完全重启的字段外，其余运行时组件已热重载。"
+                message += tr("api.config.recovered_from_degraded")
+            message += tr(
+                "api.config.hot_reload_restart_required"
                 if item.restart_required
-                else " 运行时组件已热重载，新配置立即生效，无需重启。"
+                else "api.config.hot_reload_ok"
             )
         logger.info("Config hot-reload succeeded: revision=%d", item.revision)
         return message
@@ -3696,11 +3693,14 @@ def create_app(
 
         try:
             while config_apply_pending is not None:
+                from openbiliclaw.i18n import get_translator
+
                 item = config_apply_pending
                 config_apply_pending = None
+                queue_tr = get_translator(_canonical_locale(getattr(item.config, "language", None)))
                 _set_config_apply_status(
                     "applying",
-                    f"正在后台应用配置修订 {item.revision}。",
+                    queue_tr("api.config.applying_revision", revision=item.revision),
                 )
                 runtime_apply_started = False
                 try:
@@ -3715,9 +3715,9 @@ def create_app(
                     config_apply_pending = item
                     _set_config_apply_status(
                         "queued",
-                        f"配置修订 {item.revision} 已保存，将在后端重启后生效。",
+                        queue_tr("api.config.revision_saved_after_restart", revision=item.revision),
                     )
-                    _settle_config_completion(item, error="配置应用已中断，重启后检查生效状态。")
+                    _settle_config_completion(item, error=queue_tr("api.config.apply_interrupted"))
                     raise
                 except Exception as exc:
                     logger.exception(
@@ -24432,6 +24432,8 @@ def create_app(
         if posture_issue is not None:
             issues.append(posture_issue)
         if any(getattr(issue, "severity", "warning") == "blocking" for issue in issues):
+            from openbiliclaw.i18n import get_translator
+
             response = ConfigUpdateResponse(
                 ok=False,
                 config=_config_to_response(
@@ -24441,7 +24443,9 @@ def create_app(
                     degraded=bool(getattr(ctx, "degraded", False)),
                     degraded_reason=str(getattr(ctx, "degraded_reason", "")),
                 ),
-                message="配置校验失败，未写入 config.toml。",
+                message=get_translator(_canonical_locale(getattr(cfg, "language", None)))(
+                    "api.config.validation_failed"
+                ),
                 reloaded=False,
                 rollback_applied=False,
                 restart_required=False,
@@ -24553,21 +24557,26 @@ def create_app(
             # 持久化与运行时应用是两个阶段。统一进入已有 latest-wins 队列，
             # 避免一次后台 LLM 或事件排空把交互式保存请求挂住数十秒。
             _enqueue_config_apply(item)
+            from openbiliclaw.i18n import get_translator
+
+            response_tr = get_translator(_canonical_locale(getattr(cfg, "language", None)))
             queued_response = ConfigUpdateResponse(
                 ok=True,
                 config=_config_to_response(cfg, issues, mask_keys=True),
                 message=(
-                    f"配置已保存到 {saved_path}；"
-                    + (
-                        "data_dir 与应用内 Tailnet 将在完全重启后生效，"
-                        if data_dir_restart_required and tailnet_restart_required
-                        else "data_dir 将在完全重启后生效，"
-                        if data_dir_restart_required
-                        else "应用内 Tailnet 将在完全重启后生效，"
+                    response_tr(
+                        "api.config.saved_queued_restart",
+                        path=saved_path,
+                        scope=response_tr(
+                            "api.config.restart.data_dir_tailnet"
+                            if data_dir_restart_required and tailnet_restart_required
+                            else "api.config.restart.data_dir"
+                            if data_dir_restart_required
+                            else "api.config.restart.tailnet"
+                        ),
                     )
-                    + "其余配置正在后台应用。"
                     if restart_required
-                    else f"配置已保存到 {saved_path}，正在后台应用。"
+                    else response_tr("api.config.saved_queued", path=saved_path)
                 ),
                 reloaded=False,
                 rollback_applied=False,

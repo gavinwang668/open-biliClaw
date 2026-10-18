@@ -252,6 +252,15 @@ class TestOutputLanguagePolicy:
         assert "English" in output_language_directive("en")
         assert "Simplified Chinese" in output_language_directive("zh")
 
+    def test_traditional_directive_forbids_simplified_characters(self) -> None:
+        directive = output_language_directive("zh-Hant")
+        assert "Traditional Chinese characters exclusively" in directive
+        assert "never output" in directive
+        # The rule is script-specific: English prompts must not carry it.
+        assert "Traditional Chinese characters exclusively" not in output_language_directive(
+            "en"
+        )
+
     def test_append_keeps_user_text_first(self) -> None:
         prompt = append_output_language("hello", "en")
         assert prompt.startswith("hello\n\n<output_language>")
