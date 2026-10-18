@@ -2078,6 +2078,7 @@
     "画像还没攒起来，先跑一遍": "Profile isn't built yet — run setup first",
     "画像还没攒起来，回到首页推荐区点「开始初始化」后再回来编辑。": "Your profile isn't built yet. Go back to the recommendations area on the home page, click “Start Setup”, then return here to edit.",
     "画质敏感度": "Quality Sensitivity",
+    "界面与输出语言": "Interface & output language",
     "界面语言初始化失败": "UI Language Initialization Failed",
     "留空 = https://api.openai.com/v1": "Blank = https://api.openai.com/v1",
     "留空 = https://dashscope.aliyuncs.com（国际站 dashscope-intl.aliyuncs.com）": "Blank = https://dashscope.aliyuncs.com (international: dashscope-intl.aliyuncs.com)",

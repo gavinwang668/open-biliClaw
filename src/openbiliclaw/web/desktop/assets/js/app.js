@@ -13991,8 +13991,10 @@ ${cardFeedbackBarHtml()}`;
         } catch {}
         void runtime
           .init({ locale: initialLocale, basePath: "/i18n/ui/" })
-          // Re-apply after init: the shell renders while the catalogs load.
-          .then(() => applyClientLocale(initialLocale))
+          // Re-apply after init (the shell renders while catalogs load), but
+          // never override a config locale that already arrived — otherwise a
+          // slow catalog fetch reverts the UI to yesterday's cached language.
+          .then(() => applyClientLocale(state.config?.language || initialLocale))
           .catch((error) => console.warn("界面语言初始化失败", error));
       }
     }

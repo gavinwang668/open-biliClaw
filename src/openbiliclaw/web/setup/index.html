@@ -308,6 +308,7 @@
     const $ = (s) => document.querySelector(s);
 
     const SETUP_LOCALE_KEY = "openbiliclaw.locale";
+    let guardLocaleApplied = false;
 
     function setupRuntime() {
       return globalThis.OpenBiliClawI18n;
@@ -350,7 +351,14 @@
       } catch {}
       void runtime
         .init({ locale: initial, basePath: "/i18n/ui/" })
-        .then(() => applySetupLocale(initial))
+        .then(() => {
+          // Only mirror the cached locale into the picker. Re-applying it here
+          // can land after the /api/config response and silently overwrite the
+          // backend language (the picker then disagreed with the page).
+          if (guardLocaleApplied) return;
+          const select = $("#setupLanguage");
+          if (select && runtime.locale) select.value = runtime.locale;
+        })
         .catch((error) => console.warn("setup: locale init failed", error));
       document.addEventListener("change", (event) => {
         if (event.target && event.target.id === "setupLanguage") {
@@ -2044,6 +2052,7 @@
           const data = await r.json();
           const currentConfig = configView(data);
           if (currentConfig?.language) {
+            guardLocaleApplied = true;
             void applySetupLocale(currentConfig.language);
           }
           const llm = currentConfig?.llm || {};

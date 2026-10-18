@@ -86,7 +86,6 @@ SKIP_TEXTS = frozenset(
         "简体中文",
         "繁體中文",
         "语言 / Language",
-        "界面与输出语言",
         # Template-literal fragment from a CSS/JS expression, not rendered copy.
         "1 时保留候选（非 B 站不降权）。",
     }
