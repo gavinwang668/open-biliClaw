@@ -38,6 +38,7 @@ from openbiliclaw.config import (
     publication_date_preference_for_source,
     source_date_preferences,
 )
+from openbiliclaw.i18n import normalize_locale
 from openbiliclaw.runtime.presence import PresenceTracker
 from openbiliclaw.runtime.presence import background_llm_work_allowed as _gate
 from openbiliclaw.runtime.source_policy import effective_pool_source_shares
@@ -1249,6 +1250,7 @@ class RuntimeContext:
             dialogue_tone_prompt=str(
                 getattr(getattr(new_config, "soul", None), "dialogue_tone_prompt", "") or ""
             ),
+            output_language=normalize_locale(getattr(new_config, "language", None)),
         )
 
         # 2. Bilibili client
@@ -1360,6 +1362,7 @@ class RuntimeContext:
             posture_gate_force_enforce=bool(getattr(soul_cfg, "posture_gate_force_enforce", False)),
             reply_style=str(getattr(soul_cfg, "reply_style", "")),
             dialogue_tone_prompt=str(getattr(soul_cfg, "dialogue_tone_prompt", "")),
+            output_language=normalize_locale(getattr(new_config, "language", None)),
             module_overrides=new_module_overrides,
             llm_concurrency=llm_concurrency,
             llm_concurrency_gate=new_llm_gate,
@@ -1504,6 +1507,7 @@ class RuntimeContext:
             ),
             serve_outbox=ServeOutbox(new_config.data_path / "runtime" / "serve_outbox.jsonl"),
             reply_style=str(getattr(soul_cfg, "reply_style", "")),
+            output_language=normalize_locale(getattr(new_config, "language", None)),
         )
 
         discovery_cfg = getattr(new_config, "discovery", None)

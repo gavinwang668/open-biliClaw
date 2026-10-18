@@ -10813,11 +10813,29 @@ ${cardFeedbackBarHtml()}`;
       syncLlmInstanceConditionalFields();
     }
 
+    const CLIENT_LOCALE_STORAGE_KEY = "openbiliclaw.locale";
+
+    function applyClientLocale(language) {
+      // The locale runtime translates rendered DOM text by exact catalog match;
+      // it is optional so a build served without /shared/i18n.js still works.
+      const runtime = globalThis.OpenBiliClawI18n;
+      if (!runtime) return Promise.resolve();
+      const normalized = runtime.normalizeLocale(language || "zh-Hans");
+      try {
+        storageSet(CLIENT_LOCALE_STORAGE_KEY, normalized);
+      } catch {}
+      if (runtime.locale === normalized && runtime.ready) return Promise.resolve();
+      return runtime.setLocale(normalized).catch((error) => {
+        console.warn("切换界面语言失败", error);
+      });
+    }
+
     function applyConfig(config) {
       if (!config || typeof config !== "object") return;
       ensureSourceDateFields();
       state.degraded = config.degraded === true;
       state.config = config;
+      void applyClientLocale(config.language);
       const scheduler = config.scheduler || {};
       setSelect("schedulerEnabled", scheduler.enabled === false ? "off" : "on");
       setSelect("pauseDisconnect", scheduler.pause_on_extension_disconnect === false ? "keep" : "pause");
@@ -13795,6 +13813,10 @@ ${cardFeedbackBarHtml()}`;
       });
     });
 
+    $("#language")?.addEventListener("change", () => {
+      void applyClientLocale($("#language").value);
+    });
+
     safeBind("#testToneBtn", "click", async () => {
       const btn = $("#testToneBtn");
       const result = $("#testToneResult");
@@ -13960,6 +13982,20 @@ ${cardFeedbackBarHtml()}`;
 
     restoreBackendEndpoint();
     restoreFrontendSettings();
+    {
+      const runtime = globalThis.OpenBiliClawI18n;
+      if (runtime) {
+        let initialLocale = document.documentElement.lang || "zh-Hans";
+        try {
+          initialLocale = storageGet(CLIENT_LOCALE_STORAGE_KEY) || initialLocale;
+        } catch {}
+        void runtime
+          .init({ locale: initialLocale, basePath: "/i18n/ui/" })
+          // Re-apply after init: the shell renders while the catalogs load.
+          .then(() => applyClientLocale(initialLocale))
+          .catch((error) => console.warn("界面语言初始化失败", error));
+      }
+    }
     setSideDrawerOpen(!isMobileViewport() && storageGet(SIDE_DRAWER_OPEN_KEY) !== "0", { persist: false });
     initBackToTop();
     startSharedChatSurfaceSync();

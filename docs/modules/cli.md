@@ -24,6 +24,7 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 | 命令 | 说明 | 状态 |
 |------|------|------|
 | `config-show` | 显示当前配置、LLM 实例、全局调用链和最终默认实例 | ✅ |
+| `language [locale]` | 查看或切换界面 / CLI / 模型输出语言（`zh-Hans` / `zh-Hant` / `en`） | ✅ |
 | `config-export-legacy` | 导出可供旧二进制读取的固定 Provider 配置副本 | ✅ |
 | `health-check` | 检查 LLM Provider 可用性 | ✅ |
 | `auth login` | 设置并验证 B 站 Cookie | ✅ |
@@ -118,6 +119,18 @@ CLI/Agent Bridge 保持兼容但不新增卡片选择 UI，也不伪造 `reply_t
 server-owned binding、context preview 与卡片 action 不改变 CLI 的既有契约。
 
 ## 详细说明
+
+### `openbiliclaw language`
+
+```bash
+openbiliclaw language              # 查看当前语言与可选值
+openbiliclaw language zh-Hant      # 写入 config.toml，立即对 Web / 插件 / CLI 生效
+OPENBILICLAW_LANG=en openbiliclaw recommend   # 单次覆盖，不写配置
+```
+
+语言解析优先级：`OPENBILICLAW_LANG` / `OPENBILICLAW_LANGUAGE` → `config.toml` 的
+`[general].language` → 简体中文。切换后新生成的聊天回复与推荐理由使用新语言；已持久化的
+历史推荐 / 画像文本保持原语言。详见 [多语言模块](i18n.md)。
 
 ### `openbiliclaw config-show`
 

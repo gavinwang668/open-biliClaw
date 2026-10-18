@@ -755,6 +755,7 @@ OpenBiliClaw/
 │   ├── runtime/               # Refresh, feedback coalescing, presence gate, shared CLI/desktop autostart reconcile, Ollama, degraded RuntimeContext
 │   ├── bilibili/              # Bilibili API layer (WBI signing · rate control)
 │   ├── llm/                   # Multi-model LLM adapters + structured JSON tolerance
+│   ├── i18n/                  # Locale contract, UI + semantic catalogs, output-language policy
 │   └── storage/               # Data storage layer
 ├── extension/                 # Chrome/Firefox/Safari extension (including Linux.do/V2EX/Weibo read-only task bridges)
 ├── extension/                 # Chrome extension (Bilibili + XHS + Douyin + YouTube + X + Zhihu + Reddit + Weibo recovery/tasks)

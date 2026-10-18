@@ -118,8 +118,28 @@
     @media (max-width: 480px) {
       .model-discovery-row { grid-template-columns: 1fr; }
       .model-discovery-row button { width: 100%; }
+    .setup-language { margin-left: auto; }
+    .setup-language select {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--text);
+      font-size: 12px;
+      padding: 4px 10px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      border: 0;
+    }
     }
   </style>
+  <script src="/shared/i18n.js"></script>
 </head>
   <body>
     <!-- weibo, instagram and tiktok are included in the shared guided-init
@@ -128,6 +148,14 @@
   <div class="card">
     <div class="head">
       <div class="brand"><img class="mark" src="/m/icon-maskable-192.png" alt=""><span>OpenBiliClaw</span></div>
+      <label class="setup-language" for="setupLanguage">
+        <span class="sr-only">语言 / Language</span>
+        <select id="setupLanguage" aria-label="语言 / Language" data-i18n-skip>
+          <option value="zh-Hans">简体中文</option>
+          <option value="zh-Hant">繁體中文</option>
+          <option value="en">English</option>
+        </select>
+      </label>
       <div class="steps">
         <div class="dot active" data-dot="0"></div>
         <div class="dot" data-dot="1"></div>
@@ -278,6 +306,58 @@
   <script src="/shared/source-status.js"></script>
   <script>
     const $ = (s) => document.querySelector(s);
+
+    const SETUP_LOCALE_KEY = "openbiliclaw.locale";
+
+    function setupRuntime() {
+      return globalThis.OpenBiliClawI18n;
+    }
+
+    async function applySetupLocale(language, { persist = false } = {}) {
+      const runtime = setupRuntime();
+      const normalized = runtime ? runtime.normalizeLocale(language) : language || "zh-Hans";
+      try {
+        localStorage.setItem(SETUP_LOCALE_KEY, normalized);
+      } catch {}
+      const select = $("#setupLanguage");
+      if (select) select.value = normalized;
+      if (!runtime) return normalized;
+      try {
+        await runtime.setLocale(normalized);
+      } catch (error) {
+        console.warn("setup: locale switch failed", error);
+      }
+      if (persist) {
+        try {
+          await fetch("/api/config", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ language: normalized }),
+          });
+        } catch (error) {
+          console.warn("setup: could not persist language", error);
+        }
+      }
+      return normalized;
+    }
+
+    (function bootstrapSetupLocale() {
+      const runtime = setupRuntime();
+      if (!runtime) return;
+      let initial = "zh-Hans";
+      try {
+        initial = localStorage.getItem(SETUP_LOCALE_KEY) || document.documentElement.lang || "zh-Hans";
+      } catch {}
+      void runtime
+        .init({ locale: initial, basePath: "/i18n/ui/" })
+        .then(() => applySetupLocale(initial))
+        .catch((error) => console.warn("setup: locale init failed", error));
+      document.addEventListener("change", (event) => {
+        if (event.target && event.target.id === "setupLanguage") {
+          void applySetupLocale(event.target.value, { persist: true });
+        }
+      });
+    })();
     async function fetchWithTimeout(url, options = {}, timeoutMs = 20000) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -1963,6 +2043,9 @@
         if (r.ok) {
           const data = await r.json();
           const currentConfig = configView(data);
+          if (currentConfig?.language) {
+            void applySetupLocale(currentConfig.language);
+          }
           const llm = currentConfig?.llm || {};
           configLoaded = true;
           backendDegraded = currentConfig?.degraded === true;

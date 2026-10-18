@@ -28,6 +28,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from openbiliclaw.i18n import normalize_locale
 from openbiliclaw.llm.base import safe_llm_failure_message
 from openbiliclaw.llm.service import _background_admission_bypass
 from openbiliclaw.published_time import format_published_time
@@ -564,7 +565,16 @@ def _print_key_value_table(title: str, rows: list[tuple[str, str]]) -> None:
     console.print(table)
 
 
-def _format_pause_on_disconnect_status(*, enabled: bool, grace_seconds: int) -> str:
+def _format_pause_on_disconnect_status(
+    *, enabled: bool, grace_seconds: int, translator: Any | None = None
+) -> str:
+    if translator is not None:
+        return str(
+            translator(
+                "cli.config_show.pause.on" if enabled else "cli.config_show.pause.off",
+                seconds=grace_seconds,
+            )
+        )
     if not enabled:
         return "关闭"
     return f"开启（宽限 {grace_seconds}s）"
@@ -902,6 +912,7 @@ def _build_soul_engine() -> Any:
         posture_gate_force_enforce=cfg.soul.posture_gate_force_enforce,
         reply_style=str(getattr(cfg.soul, "reply_style", "")),
         dialogue_tone_prompt=str(getattr(cfg.soul, "dialogue_tone_prompt", "")),
+        output_language=normalize_locale(getattr(cfg, "language", None)),
         module_overrides=module_overrides_from_config(cfg),
         llm_concurrency=cfg.llm.concurrency,
         llm_concurrency_gate=_build_llm_concurrency_gate(),
@@ -972,6 +983,7 @@ def _build_recommendation_engine() -> Any:
         concurrency_gate=_build_llm_concurrency_gate(),
         reply_style=str(getattr(cfg.soul, "reply_style", "")),
         dialogue_tone_prompt=str(getattr(cfg.soul, "dialogue_tone_prompt", "")),
+        output_language=normalize_locale(getattr(cfg, "language", None)),
     )
     from openbiliclaw.llm.registry import build_embedding_service
 
@@ -1014,6 +1026,7 @@ def _build_recommendation_engine() -> Any:
         serve_snapshot_store=ServeSnapshotStore(cfg.data_path / "runtime" / "serve_snapshot.json"),
         serve_outbox=ServeOutbox(cfg.data_path / "runtime" / "serve_outbox.jsonl"),
         reply_style=str(getattr(cfg.soul, "reply_style", "")),
+        output_language=normalize_locale(getattr(cfg, "language", None)),
     )
 
 
@@ -6894,19 +6907,43 @@ def _print_autostart_status(cfg: Any) -> None:
     _print_key_value_table("自启动状态", _autostart_status_rows(cfg))
 
 
-def _format_autostart_config_status(cfg: Any) -> str:
+def _format_autostart_config_status(cfg: Any, translator: Any | None = None) -> str:
     from openbiliclaw.runtime import autostart
+
+    def _on_off(value: bool) -> str:
+        if translator is None:
+            return "开启" if value else "关闭"
+        return str(translator("cli.config_show.value.on" if value else "cli.config_show.value.off"))
 
     try:
         state = autostart.status()
     except Exception:
-        return "开启" if bool(getattr(cfg.autostart, "enabled", False)) else "关闭"
-    enabled = "开启" if bool(getattr(cfg.autostart, "enabled", False)) else "关闭"
-    registered = "已注册" if state.registered else "未注册"
-    return f"{enabled}（{registered}，{state.mechanism}）"
+        if translator is None:
+            return "开启" if bool(getattr(cfg.autostart, "enabled", False)) else "关闭"
+        return str(
+            translator(
+                "cli.config_show.autostart.fallback", enabled=_on_off(bool(cfg.autostart.enabled))
+            )
+        )
+    enabled = _on_off(bool(getattr(cfg.autostart, "enabled", False)))
+    if translator is None:
+        registered = "已注册" if state.registered else "未注册"
+        return f"{enabled}（{registered}，{state.mechanism}）"
+    return str(
+        translator(
+            "cli.config_show.autostart.state",
+            enabled=enabled,
+            registered=translator(
+                "cli.config_show.autostart.registered"
+                if state.registered
+                else "cli.config_show.autostart.unregistered"
+            ),
+            mechanism=state.mechanism,
+        )
+    )
 
 
-def _format_source_date_preference(config: Any) -> str:
+def _format_source_date_preference(config: Any, translator: Any | None = None) -> str:
     """Render a source publication-date range for ``config-show``."""
 
     preset = str(getattr(config, "recommendation_date_preset", "all") or "all")
@@ -6918,10 +6955,17 @@ def _format_source_date_preference(config: Any) -> str:
         "last_1_year": "最近一年",
     }
     if preset != "custom":
+        if translator is not None and preset in labels:
+            return str(translator(f"cli.config_show.date.{preset}"))
         return labels.get(preset, preset)
 
-    start = str(getattr(config, "recommendation_date_start", "") or "") or "不限"
-    end = str(getattr(config, "recommendation_date_end", "") or "") or "不限"
+    unlimited = "不限"
+    if translator is not None:
+        unlimited = str(translator("cli.config_show.date.unlimited"))
+    start = str(getattr(config, "recommendation_date_start", "") or "") or unlimited
+    end = str(getattr(config, "recommendation_date_end", "") or "") or unlimited
+    if translator is not None:
+        return str(translator("cli.config_show.date.custom", start=start, end=end))
     return f"自定义：{start} 至 {end}"
 
 
@@ -7942,8 +7986,7 @@ def _ask_tiktok_inclusion() -> bool:
     console.print()
     console.print("[bold]🎬 TikTok 数据接入(可选)[/bold]")
     console.print(
-        "把你的 TikTok[bold cyan]点赞 / 收藏 / 关注[/bold cyan]混进画像,"
-        "系统能读懂你跨平台的口味。"
+        "把你的 TikTok[bold cyan]点赞 / 收藏 / 关注[/bold cyan]混进画像,系统能读懂你跨平台的口味。"
     )
     console.print()
     console.print("启用需要:")
@@ -17690,61 +17733,166 @@ def probe() -> None:
             console.print(f"  [yellow]未找到活跃的「{domain}」猜测。[/yellow]")
 
 
+@app.command("language")
+def language_command(
+    locale: str | None = typer.Argument(
+        None,
+        help="zh-Hans（简体中文）/ zh-Hant（繁體中文）/ en（English）；留空查看当前值。",
+    ),
+) -> None:
+    """查看或切换界面 / 输出语言."""
+    from openbiliclaw.cli_i18n import cli_translator
+    from openbiliclaw.config import load_config, save_config
+    from openbiliclaw.i18n import (
+        SUPPORTED_LOCALES,
+        native_name,
+        normalize_locale,
+        resolve_locale,
+    )
+
+    cfg = load_config()
+    translator = cli_translator(cfg)
+    if locale is None:
+        current = normalize_locale(cfg.language)
+        console.print(
+            translator(
+                "cli.language.current",
+                locale=current,
+                native=native_name(current),
+            )
+        )
+        for code in SUPPORTED_LOCALES:
+            console.print(f"  {code:<8} {native_name(code)}")
+        console.print(translator("cli.language.usage"))
+        return
+
+    resolved = resolve_locale(locale)
+    if resolved is None:
+        console.print(
+            translator(
+                "cli.language.unsupported",
+                value=locale,
+                supported=" / ".join(SUPPORTED_LOCALES),
+            )
+        )
+        raise typer.Exit(2)
+
+    cfg.language = resolved
+    save_config(cfg)
+    translator = cli_translator(cfg)
+    console.print(
+        translator(
+            "cli.language.changed",
+            locale=resolved,
+            native=native_name(resolved),
+        )
+    )
+    console.print(translator("cli.language.hint_restart"))
+
+
 @app.command()
 def config_show() -> None:
     """显示当前配置."""
+    from openbiliclaw.cli_i18n import cli_translator
     from openbiliclaw.config import effective_llm_default_chain, load_config_with_diagnostics
+    from openbiliclaw.i18n import native_name, normalize_locale
     from openbiliclaw.llm import RegistryBuildError, summarize_registry
 
     cfg, diagnostics = load_config_with_diagnostics()
+    translator = cli_translator(cfg)
     instance_routing = bool(getattr(cfg.llm, "instance_routing", False))
     default_chain = effective_llm_default_chain(cfg.llm)
-    llm_label = "LLM 默认调用链" if instance_routing else "LLM"
+    tr = translator
+    llm_label = tr(
+        "cli.config_show.row.llm_chain" if instance_routing else "cli.config_show.row.llm"
+    )
     llm_value = " → ".join(default_chain) if instance_routing else cfg.llm.default_provider
-    _print_page_title("当前配置概览", "运行时配置")
+    _print_page_title(tr("cli.config_show.title"), tr("cli.config_show.subtitle"))
     rows = [
-        ("语言", cfg.language),
-        (llm_label, llm_value or "未配置"),
-        ("LLM 并发", str(cfg.llm.concurrency)),
-        ("B站认证", cfg.bilibili.auth_method),
         (
-            "B站发布日期范围",
-            _format_source_date_preference(cfg.sources.bilibili),
+            tr("cli.config_show.row.language"),
+            tr(
+                "cli.config_show.value.locale_name",
+                locale=normalize_locale(cfg.language),
+                native=native_name(normalize_locale(cfg.language)),
+            ),
         ),
-        ("B站发布日期权重", str(cfg.sources.bilibili.recommendation_date_weight)),
-        ("定时任务", "开启" if cfg.scheduler.enabled else "关闭"),
-        ("停止后台 LLM 请求", "否" if cfg.scheduler.enabled else "是"),
+        (llm_label, llm_value or tr("cli.config_show.value.not_configured")),
+        (tr("cli.config_show.row.llm_concurrency"), str(cfg.llm.concurrency)),
+        (tr("cli.config_show.row.bilibili_auth"), cfg.bilibili.auth_method),
         (
-            "浏览器断开后暂停",
+            tr("cli.config_show.row.bilibili_date_range"),
+            _format_source_date_preference(cfg.sources.bilibili, translator),
+        ),
+        (
+            tr("cli.config_show.row.bilibili_date_weight"),
+            str(cfg.sources.bilibili.recommendation_date_weight),
+        ),
+        (
+            tr("cli.config_show.row.scheduler"),
+            tr(
+                "cli.config_show.value.on" if cfg.scheduler.enabled else "cli.config_show.value.off"
+            ),
+        ),
+        (
+            tr("cli.config_show.row.stop_background_llm"),
+            tr(
+                "cli.config_show.value.no" if cfg.scheduler.enabled else "cli.config_show.value.yes"
+            ),
+        ),
+        (
+            tr("cli.config_show.row.pause_on_disconnect"),
             _format_pause_on_disconnect_status(
                 enabled=cfg.scheduler.pause_on_extension_disconnect,
                 grace_seconds=cfg.scheduler.extension_disconnect_grace_seconds,
+                translator=translator,
             ),
         ),
-        ("开机自启动", _format_autostart_config_status(cfg)),
+        (tr("cli.config_show.row.autostart"), _format_autostart_config_status(cfg, translator)),
         (
-            "海外网络模式",
-            {"direct": "直连", "system": "跟随系统代理", "custom": "自定义代理"}.get(
-                cfg.network.mode, cfg.network.mode
+            tr("cli.config_show.row.network_mode"),
+            tr(f"cli.config_show.value.{cfg.network.mode}")
+            if cfg.network.mode in {"direct", "system", "custom"}
+            else cfg.network.mode,
+        ),
+        (
+            tr("cli.config_show.row.network_proxy"),
+            cfg.network.proxy or tr("cli.config_show.value.unset"),
+        ),
+        (
+            tr("cli.config_show.row.saved_sync"),
+            tr(
+                "cli.config_show.value.on"
+                if cfg.saved_sync.auto_sync_enabled
+                else "cli.config_show.value.off"
             ),
         ),
-        ("海外自定义代理", cfg.network.proxy or "未设置"),
-        ("收藏自动同步", "开启" if cfg.saved_sync.auto_sync_enabled else "关闭"),
-        ("应用内 Tailnet", "开启" if cfg.tailnet.enabled else "关闭"),
-        ("Tailnet 节点名", cfg.tailnet.hostname),
-        ("数据目录", str(cfg.data_path)),
+        (
+            tr("cli.config_show.row.tailnet"),
+            tr("cli.config_show.value.on" if cfg.tailnet.enabled else "cli.config_show.value.off"),
+        ),
+        (tr("cli.config_show.row.tailnet_hostname"), cfg.tailnet.hostname),
+        (tr("cli.config_show.row.data_dir"), str(cfg.data_path)),
     ]
     if diagnostics.config_path:
-        rows.append(("配置文件", str(diagnostics.config_path)))
-    _print_key_value_table("配置项", rows)
+        rows.append((tr("cli.config_show.row.config_file"), str(diagnostics.config_path)))
+    _print_key_value_table(tr("cli.config_show.table_title"), rows)
 
     try:
         registry = _build_registry()
         summary = summarize_registry(cfg, registry)
-        provider_label = "已注册 Provider 实例" if instance_routing else "已注册 Provider"
-        default_label = "最终默认 Provider 实例" if instance_routing else "最终默认 Provider"
+        provider_label = tr(
+            "cli.config_show.row.registered_instances"
+            if instance_routing
+            else "cli.config_show.row.registered"
+        )
+        default_label = tr(
+            "cli.config_show.row.default_instance"
+            if instance_routing
+            else "cli.config_show.row.default"
+        )
         _print_key_value_table(
-            "Provider 概览",
+            tr("cli.config_show.provider_title"),
             [
                 (provider_label, ", ".join(summary.registered_providers)),
                 (default_label, summary.effective_default),
@@ -17752,10 +17900,10 @@ def config_show() -> None:
         )
     except RegistryBuildError as exc:
         _print_key_value_table(
-            "Provider 概览",
+            tr("cli.config_show.provider_title"),
             [
-                ("已注册 Provider", "无"),
-                ("Provider 状态", str(exc)),
+                (tr("cli.config_show.row.registered"), tr("cli.config_show.value.none")),
+                (tr("cli.config_show.row.provider_status"), str(exc)),
             ],
         )
 

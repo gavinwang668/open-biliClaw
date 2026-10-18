@@ -50,7 +50,7 @@ CLI / 源码运行仍按普通错误处理：配置文件损坏时直接暴露�
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `language` | string | `"zh"` | Agent 输出语言（`zh` / `en`） |
+| `language` | string | `"zh"` | 界面 / CLI / 新生成内容的语言：`zh-Hans`（简体，默认）、`zh-Hant`（繁體・台灣）、`en`；兼容 `zh`、`zh-TW`、`en-US` 等别名，保存时规范化为规范 id |
 | `data_dir` | string | `"data"` | 数据目录（记忆、Cookie、数据库）；通过配置 API 改动时只持久化，完整重启后才切换 |
 
 ### `[api]`
@@ -1461,7 +1461,7 @@ OpenAI-compatible 协议没有列举 reasoning effort 能力的标准接口；�
 
 ```toml
 [general]
-language = "zh"
+language = "zh-Hans"
 data_dir = "data"
 
 [llm]

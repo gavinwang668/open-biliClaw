@@ -40,6 +40,11 @@ TikTok account tasks: enabled policy (startup / reload) -> bootstrap_profile(lik
                       → staged canonical result → account-scoped event receipt → profile
 TikTok native save: local membership → durable broker → exact current video → selected bookmark → reload/read-only persisted proof
 
+i18n: [general].language → locale contract (zh-Hans / zh-Hant / en)
+      ├─ UI catalogs → /i18n/ui → DOM text localization on desktop / mobile / setup / extension
+      ├─ semantic catalogs → CLI output keys
+      └─ output-language directive → user prompt tail (system prompt stays byte-static for caching)
+
 guided init: signals → preferences → full profile commit
                                   → discovery → evaluation → copy → canonical pool ready
                                   → terminal → runtime schedules optional probes
@@ -529,6 +534,15 @@ flowchart LR
 `https://linux.do/*` host permission 的唯一理由是：浏览器扩展必须在用户真实站点会话中发起这些同源只读请求；后端不能也不会接收 Cookie 后重放。自动化测试已覆盖解析、分页、cap、超时、错误映射、dispatcher 与任务 tab 隔离；2026-08-09 已用真实已登录 Chrome unpacked extension 验证 bootstrap、五路 discovery 和候选入池。E2E 同时发现 hash marker 会被 Discourse SPA 清除，任务 tab 现改用稳定 query marker，修复后真实 feed 任务的 Linux.do 行为事件增量为 0。
 
 微博的个人 bootstrap 采用同一类隔离任务边界，但不是普通行为采集：`weibo_tasks` → `/api/sources/weibo/next-task` → 带 `openbiliclaw_weibo_task=1` 的 `m.weibo.cn` tab → 同源 `/api/config` / `/api/account/getuid` 与收藏、关注、mentions GET → `/api/sources/weibo/task-result`。`SUBP + ALF` 只在扩展本地作为登录布尔提示，游客 `SUB` 不算凭据；任务结果必须带正 uid，后端按账号与 scope 去重后才进入 profile event ingress。失败/登录墙/挑战页/部分 scope 不会伪装成 healthy empty，已采 rows 仍留在 staged result 中。
+
+### Localization (`i18n/`)
+
+`i18n/locales.py` 是唯一的 locale 口径（规范 id、别名、回退链、展示名、HTML lang）；
+`i18n/catalog.py` 提供语义 key 的 `Translator`；`i18n/ui/` 是客户端 UI 目录（key = 简体原文），
+由 `scripts/build_i18n_catalogs.py` 从 web / extension 源码生成，`web/shared/i18n.js` 在浏览器里
+按渲染文本查表，`/i18n/ui` 由 FastAPI 静态挂载，插件构建时复制到 `popup/locales/`。
+`i18n/output_language.py` 把 locale 作为 `<output_language>` 指令附加到 user prompt 末尾，
+保持 system prompt 字节静态。详细契约见 [多语言模块](modules/i18n.md)。
 
 ### LLM Providers (`llm/`)
 - 统一的多模型接口（OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference）

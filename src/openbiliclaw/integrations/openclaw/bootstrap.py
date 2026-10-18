@@ -31,6 +31,7 @@ from openbiliclaw.discovery.strategies.strategies import (
     SearchStrategy,
     TrendingStrategy,
 )
+from openbiliclaw.i18n import normalize_locale
 from openbiliclaw.llm import build_llm_registry
 from openbiliclaw.llm.concurrency import LLMConcurrencyGate, background_llm_concurrency
 from openbiliclaw.llm.service import LLMService, module_overrides_from_config
@@ -159,6 +160,7 @@ def build_openclaw_adapter_services() -> OpenClawAdapterServices:
         posture_gate_force_enforce=bool(getattr(soul_cfg, "posture_gate_force_enforce", False)),
         reply_style=str(getattr(soul_cfg, "reply_style", "")),
         dialogue_tone_prompt=str(getattr(soul_cfg, "dialogue_tone_prompt", "")),
+        output_language=normalize_locale(getattr(config, "language", None)),
         module_overrides=module_overrides,
         llm_concurrency=llm_concurrency,
         llm_concurrency_gate=llm_gate,

@@ -312,6 +312,9 @@ TikTok account tasks: enabled policy (startup / reload) -> bootstrap_profile(lik
                       → staged canonical result → account-scoped event receipt → profile
 TikTok native save: local membership → durable broker → exact current video → selected bookmark → reload/read-only persisted proof
 
+i18n: [general].language → canonical locale → UI catalogs (/i18n/ui → web/extension DOM) + CLI keys
+                                         └ output_language directive → LLM user prompt (system prompt static)
+
 guided init: signals → preferences → full profile commit
                                   → discovery → evaluation → copy → canonical pool ready
                                   → terminal → runtime schedules optional probes

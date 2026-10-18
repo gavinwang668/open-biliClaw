@@ -942,3 +942,12 @@ TikTok 每 scope 的基础预算由 30 秒调整为 60 秒，覆盖新增渲染�
 | 完成与保存分开确认 | 观察请求完成不是证明服务端保存；runner 仍必须刷新并从新文档只读确认。未完成最多等待原有 100 轮/100ms 确认预算，未确认不报成功；所有退出路径释放观察器。 |
 
 只增加 content 内部环境接口，不改变后台 wire、权限、配置或跨模块架构。回归覆盖请求未完成时不刷新、旧请求/其他视频/取消收藏/异源请求不计入，以及观察器清理。实机人工点击等待响应后仍不保留收藏，详见 [TikTok 验收](../platform-source-acceptance.tiktok.md)。
+
+### 多语言（v0.3.230+）
+
+设置 → 通用 → 语言提供 `简体中文` / `繁體中文` / `English`，与 Web / CLI 共用同一份
+`[general].language`。侧边栏在 `initializePopup()` 最先初始化 `/shared/i18n.js`，目录由构建
+脚本从 `src/openbiliclaw/i18n/ui/` 复制到 `popup/locales/`（`extension/popup/locales/` 已
+gitignore），因此后端不可达时插件自身界面仍可本地化；后端恢复后 `refreshConfig` 会按最新
+`language` 再切一次。`bg` / 通知里的用户可见文案随 `/i18n/ui` 目录一起覆盖。完整契约见
+[多语言模块](i18n.md)。

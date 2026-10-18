@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { build } from "esbuild";
 
@@ -146,6 +146,15 @@ if (isSafari) {
 const sharedWebDir = resolve(root, "../src/openbiliclaw/web/shared");
 await cp(sharedWebDir, resolve(root, "popup/shared"), { recursive: true });
 console.log(`📁 Copied web/shared/ → popup/shared/`);
+
+// UI locale catalogs share one source of truth with the web surfaces. The
+// side panel bundles them so its chrome localizes even while the backend is
+// down (the exact moment users need readable connection errors).
+const i18nUiDir = resolve(root, "../src/openbiliclaw/i18n/ui");
+const popupLocalesDir = resolve(root, "popup/locales");
+await rm(popupLocalesDir, { recursive: true, force: true });
+await cp(i18nUiDir, popupLocalesDir, { recursive: true });
+console.log(`📁 Copied i18n/ui/ → popup/locales/`);
 
 for (const target of entrypoints) {
   await mkdir(dirname(target.outfile), { recursive: true });

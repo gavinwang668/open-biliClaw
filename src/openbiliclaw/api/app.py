@@ -1164,6 +1164,43 @@ _RESETTABLE_CONFIG_FIELDS = {
 }
 
 
+def _validated_config_language(value: object) -> str:
+    """Validate and canonicalize a ``language`` value from a config write.
+
+    Rejects at save time (CLAUDE.md pitfall rule 7) rather than persisting a
+    value no surface can render. Raises ``HTTPException(400)`` with the
+    supported locale list so clients can show a precise error.
+    """
+
+    from openbiliclaw.i18n import SUPPORTED_LOCALES, resolve_locale
+
+    requested = str(value or "").strip()
+    resolved = resolve_locale(requested)
+    if resolved is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unsupported_language",
+                "value": requested,
+                "supported": list(SUPPORTED_LOCALES),
+            },
+        )
+    return resolved
+
+
+def _canonical_locale(value: object) -> str:
+    """Resolve a stored/requested language value to a shipped locale id.
+
+    ``config.toml`` predates the locale contract and may still contain ``zh``
+    or ``en-US``; every API/consumer boundary funnels through this helper so
+    the rest of the codebase only ever sees ``zh-Hans`` / ``zh-Hant`` / ``en``.
+    """
+
+    from openbiliclaw.i18n import normalize_locale
+
+    return normalize_locale(value)
+
+
 def _config_backup_path(config_path: Path) -> Path:
     return config_path.with_name(f"{config_path.name}.bak")
 
@@ -20766,7 +20803,9 @@ def create_app(
             tailnet_state = str(tailnet_status.get("event") or "pending_restart")
 
         return ConfigResponse(
-            language=cfg.language,
+            # Canonical locale id: clients switch i18n on this value, while
+            # config.toml may still hold a legacy alias such as ``zh``.
+            language=_canonical_locale(cfg.language),
             data_dir=cfg.data_dir,
             degraded=degraded,
             degraded_reason=degraded_reason,
@@ -21161,6 +21200,24 @@ def create_app(
             ),
             issues=issue_list,
         )
+
+    @app.get("/api/i18n/locales")
+    def get_i18n_locales() -> dict[str, object]:
+        """Return the shipped locales, their native names, and the active one.
+
+        Clients use this instead of hardcoding the locale list, so adding a
+        language later only touches the backend catalog set and this module.
+        """
+
+        from openbiliclaw.config import load_config as _load_i18n_config
+        from openbiliclaw.i18n import locale_options
+
+        config = _load_i18n_config()
+        return {
+            "default": "zh-Hans",
+            "active": _canonical_locale(config.language),
+            "locales": [option.as_dict() for option in locale_options()],
+        }
 
     @app.get("/api/config", response_model=ConfigResponse)
     def get_config(reveal_keys: bool = False) -> ConfigResponse:
@@ -22594,7 +22651,7 @@ def create_app(
 
         # Apply top-level scalars
         if "language" in update:
-            cfg.language = str(update["language"])
+            cfg.language = _validated_config_language(update["language"])
         if "data_dir" in update:
             cfg.data_dir = str(update["data_dir"])
 
@@ -24619,6 +24676,14 @@ def create_app(
     if _shared_web_dir.is_dir():
         app.mount("/shared", _StaticFiles(directory=_shared_web_dir), name="shared-web")
 
+    # ── i18n UI catalogs ─────────────────────────────────────────
+    # The canonical UI catalog set lives with the Python package so every
+    # surface (desktop, mobile, setup, extension build) consumes one source of
+    # truth instead of three drifting copies.
+    _ui_i18n_dir = _Path(__file__).resolve().parent.parent / "i18n" / "ui"
+    if _ui_i18n_dir.is_dir():
+        app.mount("/i18n/ui", _StaticFiles(directory=_ui_i18n_dir), name="i18n-ui")
+
     # ── Desktop Web UI ───────────────────────────────────────────
     _desktop_dir = _Path(__file__).resolve().parent.parent / "web" / "desktop"
     if _desktop_dir.is_dir():
@@ -24637,6 +24702,7 @@ def create_app(
                 ("assets/js/app.js", _desktop_dir),
                 ("assets/js/chat-agent-core.js", _desktop_dir),
                 ("agent-chat.js", _shared_web_dir),
+                ("i18n.js", _shared_web_dir),
                 ("dialogue-confirmation.js", _shared_web_dir),
                 ("source-status.js", _shared_web_dir),
             ):
@@ -24673,6 +24739,10 @@ def create_app(
             html = html.replace(
                 'src="/shared/agent-chat.js"',
                 f'src="/shared/agent-chat.js?v={version}"',
+            )
+            html = html.replace(
+                'src="/shared/i18n.js"',
+                f'src="/shared/i18n.js?v={version}"',
             )
             html = html.replace(
                 'src="/shared/dialogue-confirmation.js"',
