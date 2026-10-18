@@ -1312,6 +1312,29 @@ def select_profile_context(
     return finish()
 
 
+def build_shared_evaluation_profiles(
+    contexts: dict[str, dict[str, object]],
+) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
+    """Factor identical mandatory facts once without changing any candidate view.
+
+    Only exclusions, style and current context may move to the shared profile.
+    Positive selections remain candidate-specific and never leak across peers.
+    Empty contexts support the evaluator's local budget probes.
+    """
+    snapshots = {key: _profile_context_copy(value) for key, value in contexts.items()}
+    shared: dict[str, object] = {}
+    if snapshots:
+        first = next(iter(snapshots.values()))
+        for field in ("disliked_topics", "disliked_domains", "style", "context"):
+            if field in first and all(
+                field in value and value[field] == first[field] for value in snapshots.values()
+            ):
+                shared[field] = first[field]
+                for value in snapshots.values():
+                    del value[field]
+    return shared, snapshots
+
+
 def resize_profile_context(
     payload: dict[str, object],
     *,

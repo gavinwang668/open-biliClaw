@@ -37,6 +37,10 @@ and unknown fields, rejects unknown schemas, and never fetches or invents profil
 
 ## Consumer surfaces
 
+Jev 完整评估先按候选选择不依赖同行的视图，再由具名
+`build_shared_evaluation_profiles()` 将相同负偏好/风格/场景因子化到共享 `profile`。
+各 `candidate_profiles.cN` 必须与共享块一起解释；不借用其它候选的正偏好。
+
 | Surface | Trigger cadence | View / serializer | Fields (caps) | Portrait? | LLM? |
 | --- | --- | --- | --- | --- | --- |
 | Recommendation evaluation / expression | Per candidate (discovery + serve) | `compact_content_prompt_profile_summary(build_profile_summary(...))` — `recommendation/engine.py:126-127` | compact (20 core / 48 interests / 32 domains × 16 specifics / 12 recent; dislikes uncapped) | No | Yes |

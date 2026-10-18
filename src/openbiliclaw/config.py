@@ -549,6 +549,12 @@ class JevEvaluationConfig:
     # operator-owned stricter guards; they never redefine model capacity.
     max_state_question_bytes: int = 0
     max_request_bytes: int = 0
+    # Initial engineering exposure bound, not a calibrated accuracy claim.
+    # Native Jev has no independent question-count cap; zero leaves that guard
+    # to the dual context budgets. A complete candidate currently needs 10 questions.
+    max_candidates_per_request: int = 4
+    max_questions_per_request: int = 0
+    max_question_bytes: int = 0
     max_calls: int = 32
     budget_seconds: float = 30.0
 
@@ -3083,6 +3089,7 @@ def _jev_decision_config_issues(config: JevDecisionConfig) -> list[ConfigIssue]:
     from openbiliclaw.decision.context_budget import (
         JevContextError,
         parse_jev_context_limits,
+        resolve_jev_context,
         validate_jev_model_id,
     )
 
@@ -3132,7 +3139,7 @@ def _jev_decision_config_issues(config: JevDecisionConfig) -> list[ConfigIssue]:
         for model, limits in config.context_limits.items():
             try:
                 validate_jev_model_id(model)
-                parse_jev_context_limits(limits)
+                resolve_jev_context(model, {model: parse_jev_context_limits(limits)})
             except JevContextError as exc:
                 add("context_limits", str(exc))
     return issues
@@ -3235,14 +3242,17 @@ def _jev_evaluation_config_issues(evaluation: JevEvaluationConfig) -> list[Confi
             add(name, "必须为至多 254 个非空标签，每项最多 80 UTF-8 字节；unknown 为保留结果。")
         elif len(set(labels)) != len(labels):
             add(name, "标签不能重复；不会自动截断或合并。")
-    for name in ("max_state_question_bytes", "max_request_bytes"):
+    for name in ("max_state_question_bytes", "max_request_bytes", "max_question_bytes"):
         value = getattr(evaluation, name)
         if type(value) is not int or (value != 0 and not 256 <= value <= 75_000_000):
             add(name, "必须为 0（按模型自适应）或 256..75000000 的更严字节护栏。")
-    for name, low, high in (("max_calls", 1, 64),):
+    for name, low, high in (("max_calls", 1, 64), ("max_candidates_per_request", 1, 64)):
         value = getattr(evaluation, name)
         if type(value) is not int or not low <= value <= high:
             add(name, f"必须为 {low}..{high} 的整数。")
+    questions = evaluation.max_questions_per_request
+    if type(questions) is not int or (questions != 0 and not 10 <= questions <= 640):
+        add("max_questions_per_request", "必须为 0（仅受容量限制）或 10..640；完整候选不可拆题。")
     if (
         type(evaluation.max_request_bytes) is int
         and type(evaluation.max_state_question_bytes) is int
@@ -6197,6 +6207,10 @@ def _render_config_toml(
         f"franchise_labels = {_toml_str_list(config.discovery.jev_evaluation.franchise_labels)}",
         f"max_state_question_bytes = {config.discovery.jev_evaluation.max_state_question_bytes}",
         f"max_request_bytes = {config.discovery.jev_evaluation.max_request_bytes}",
+        "max_candidates_per_request = "
+        f"{config.discovery.jev_evaluation.max_candidates_per_request}",
+        f"max_questions_per_request = {config.discovery.jev_evaluation.max_questions_per_request}",
+        f"max_question_bytes = {config.discovery.jev_evaluation.max_question_bytes}",
         f"max_calls = {config.discovery.jev_evaluation.max_calls}",
         f"budget_seconds = {config.discovery.jev_evaluation.budget_seconds}",
         "",

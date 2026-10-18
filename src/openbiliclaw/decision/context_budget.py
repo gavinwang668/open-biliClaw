@@ -128,7 +128,12 @@ class JevContextBudget:
         return replace(self, max_request_bytes=request, max_state_question_bytes=single)
 
 
-_KNOWN_LIMITS = {"jev-1.13.0": JevContextLimits(64_000, 32_000)}
+# Standard windows only (official Models, checked 2026-10-18). The experimental
+# long-context header is a separate opt-in protocol and is never enabled here.
+_KNOWN_LIMITS = {
+    "jev-1.13.0": JevContextLimits(64_000, 32_000),
+    "jev-1.14.0": JevContextLimits(64_000, 32_000),
+}
 
 
 def resolve_jev_context(
@@ -141,6 +146,12 @@ def resolve_jev_context(
         raise JevContextError("context_limits must map exact model IDs to token-limit tables")
     if overrides is not None and model in overrides:
         limits = parse_jev_context_limits(overrides[model])
+        published = _KNOWN_LIMITS.get(model)
+        if published is not None and (
+            limits.max_request_tokens > published.max_request_tokens
+            or limits.max_state_question_tokens > published.max_state_question_tokens
+        ):
+            raise JevContextError("configured limits cannot enlarge the official standard window")
         source = "operator_confirmed"
     elif model in _KNOWN_LIMITS:
         limits = _KNOWN_LIMITS[model]

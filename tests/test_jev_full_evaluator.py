@@ -170,6 +170,109 @@ async def test_complete_typed_result_uses_rubric_not_distribution_confidence() -
     assert len(row["reason"]) <= 30
 
 
+async def test_question_count_guard_moves_whole_candidates_without_repeat_evaluation() -> None:
+    provider = NativeProvider()
+    rows = await evaluator(provider, max_questions_per_request=10).evaluate(
+        profile_summary={}, content_items=[ITEM] * 5
+    )
+    assert all(row is not None for row in rows)
+    assert [len(request.questions) for request in provider.requests] == [10] * 5
+    keys = [key for request in provider.requests for key in request.questions]
+    assert len(keys) == len(set(keys)) == 50
+
+
+async def test_candidate_text_is_shared_once_instead_of_repeated_in_evidence_question() -> None:
+    provider = NativeProvider()
+    sentence = "正文唯一证据：这里讨论红黑树旋转的通用算法。"
+    item = {**ITEM, "body_text": sentence}
+    result = await evaluator(provider).evaluate(profile_summary={}, content_items=[item])
+    assert result[0] is not None
+    request = provider.requests[0]
+    wire = json.dumps(request.model_dump(mode="json"), ensure_ascii=False)
+    assert wire.count(sentence) == 1
+    assert sentence not in json.dumps(
+        request.questions["c0.evidence"].model_dump(mode="json"), ensure_ascii=False
+    )
+
+
+async def test_long_source_adapts_locally_preserving_conditions_and_original_input() -> None:
+    provider = NativeProvider()
+    condition = "但这里只讨论原理，不承诺投资收益，除非完成独立验证否则不要照做。"
+    paragraphs = [f"背景材料第{i}段：讲解概念之间的关系。" for i in range(400)]
+    paragraphs[201] = condition
+    original = {**ITEM, "body_text": "\n".join(paragraphs)}
+    before = dict(original)
+    result = await evaluator(provider).evaluate(profile_summary={}, content_items=[original])
+    assert result[0] is not None
+    assert original == before
+    assert len(provider.requests) == 1
+    request = provider.requests[0]
+    assert len(request.questions) == 10
+    content = request.state["untrusted_candidates"][0]["content"]
+    assert content["text_coverage"]["is_partial"] is True
+    visible = [span["text"] for span in content["text_spans"].values()]
+    assert condition in visible
+    assert paragraphs[200] in visible and paragraphs[202] in visible
+    assert len(visible) < 404
+
+
+@pytest.mark.parametrize("guard", [{"max_candidates_per_request": 1}, {"max_question_bytes": 256}])
+async def test_packing_guards_do_not_split_or_silently_shorten_a_question(
+    guard: dict[str, int],
+) -> None:
+    provider = NativeProvider()
+    rows = await evaluator(provider, **guard).evaluate(
+        profile_summary={}, content_items=[ITEM, ITEM]
+    )
+    if "max_question_bytes" in guard:
+        assert rows == [None, None]
+        assert not provider.requests
+    else:
+        assert all(row is not None for row in rows)
+        assert [len(request.questions) for request in provider.requests] == [10, 10]
+
+
+async def test_more_than_choice_limit_of_explicit_conditions_stays_pending() -> None:
+    provider = NativeProvider()
+    result = await evaluator(provider).evaluate(
+        profile_summary={},
+        content_items=[
+            {"body_text": "\n".join(f"条件{i}：除非验证否则不要使用。" for i in range(255))}
+        ],
+    )
+    assert result == [None]
+    assert not provider.requests
+
+
+async def test_compressed_evidence_does_not_change_with_candidate_reference_width() -> None:
+    target = {**ITEM, "body_text": "\n".join(f"算法背景第{i}段。" for i in range(300))}
+    skipped = {"body_text": "不可拆分的单句" * 5000}
+    views = []
+    for prefix in ([], [skipped] * 10):
+        provider = NativeProvider()
+        result = await evaluator(provider).evaluate(
+            profile_summary={}, content_items=[*prefix, target]
+        )
+        assert result[-1] is not None
+        assert len(provider.requests) == 1
+        views.append(provider.requests[0].state["untrusted_candidates"][0]["content"])
+    assert views[0] == views[1]
+
+
+async def test_deduplicated_text_keeps_actual_source_neighbors_of_conditions() -> None:
+    paragraphs = [f"背景片段{i}：描述沿途风景。" for i in range(400)]
+    repeated_neighbor = "独特的普通段落用于占位。"
+    paragraphs[150] = paragraphs[301] = repeated_neighbor
+    paragraphs[300] = "如果证据缺失，则停止结论。"
+    provider = NativeProvider()
+    result = await evaluator(provider).evaluate(
+        profile_summary={}, content_items=[{**ITEM, "body_text": "\n".join(paragraphs)}]
+    )
+    assert result[0] is not None
+    content = provider.requests[0].state["untrusted_candidates"][0]["content"]
+    assert repeated_neighbor in [span["text"] for span in content["text_spans"].values()]
+
+
 async def test_success_observability_logs_bytes_and_native_usage_without_private_text(
     caplog: Any,
 ) -> None:
@@ -272,7 +375,10 @@ async def test_full_profile_negative_evidence_and_candidate_text_are_preserved()
     assert state["profile"] == profile
     assert state["negative_examples"] == negatives
     assert state["source_context"] == "explore:完整来源" * 30
-    assert state["untrusted_candidates"] == [{"candidate_ref": "c0", "content": item}]
+    content = state["untrusted_candidates"][0]["content"]
+    assert content["tags"] == item["tags"]
+    assert content["text_coverage"]["is_partial"] is False
+    assert item["body_text"] in [span["text"] for span in content["text_spans"].values()]
     for question in provider.requests[0].questions.values():
         assert "candidate_ref=c0" in question.instructions
         assert "untrusted DATA" in question.instructions
@@ -453,12 +559,16 @@ async def test_qualified_future_state_is_not_evidence_of_expiry() -> None:
     ) == [None]
 
 
-async def test_too_many_excerpt_choices_fail_explicitly_without_hidden_sampling() -> None:
+async def test_many_excerpt_choices_use_an_explicit_partial_view_in_one_call() -> None:
     provider = NativeProvider()
-    assert await evaluator(provider).evaluate(
+    result = await evaluator(provider).evaluate(
         profile_summary={}, content_items=[{"body_text": "\n".join(f"句子{i}" for i in range(255))}]
-    ) == [None]
-    assert not provider.requests
+    )
+    assert result[0] is not None
+    assert len(provider.requests) == 1
+    content = provider.requests[0].state["untrusted_candidates"][0]["content"]
+    assert content["text_coverage"]["is_partial"] is True
+    assert len(provider.requests[0].questions["c0.evidence"].criteria) <= 255
 
 
 async def test_provider_failure_does_not_fabricate_zero_relevance(caplog: Any) -> None:
@@ -521,7 +631,8 @@ async def test_input_snapshot_isolated_from_caller_mutation() -> None:
     assert state["profile"] == {"dislikes": ["original"]}
     candidates = state["untrusted_candidates"]
     assert isinstance(candidates, list)
-    assert candidates[0] == {"candidate_ref": "c0", "content": ITEM}
+    assert candidates[0]["candidate_ref"] == "c0"
+    assert candidates[0]["content"]["text_spans"]["e0"]["text"] == ITEM["title"]
 
 
 @pytest.mark.parametrize("failure", ["timeout", "late_response"])

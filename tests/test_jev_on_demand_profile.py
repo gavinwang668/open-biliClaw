@@ -33,13 +33,13 @@ async def test_evaluation_loads_relevant_tail_not_entire_source_profile() -> Non
     )
     assert result[0] is not None
     state = provider.requests[0].state
-    assert state["profile"] == {}
+    assert state["profile"]["disliked_topics"] == profile.preferences.disliked_topics
     loaded = state["candidate_profiles"]["c0"]
     assert loaded["schema_version"] == PROFILE_CONTEXT_VERSION
     names = [row["name"] for row in loaded["interests"]]
     assert "古琴漆艺" in names
     assert len(names) < 300
-    assert loaded["disliked_topics"] == profile.preferences.disliked_topics
+    assert "disliked_topics" not in loaded
     assert "on-demand-profile-catalog" not in json.dumps(state)
     assert profile.to_dict() == original
     assert all(adapter._fits(request) for request in provider.requests)
@@ -65,6 +65,25 @@ async def test_same_candidate_projection_is_independent_of_batch_peers() -> None
     assert together == alone
 
 
+async def test_batched_candidates_share_explicit_exclusions_once() -> None:
+    profile = SoulProfile(
+        preferences=PreferenceLayer(
+            interests=[InterestTag("古琴", "音乐", 0.8)],
+            disliked_topics=["明确不看带货，除非只是批判分析"],
+        )
+    )
+    provider = NativeProvider()
+    adapter = JevContentEvaluator(provider, model=MODEL, config=JevEvaluationConfig())
+    rows = await adapter.evaluate(
+        profile_summary=build_profile_catalog(profile), content_items=[ITEM, ITEM]
+    )
+    assert all(row is not None for row in rows)
+    assert len(provider.requests) == 1
+    state = provider.requests[0].state
+    assert state["profile"]["disliked_topics"] == profile.preferences.disliked_topics
+    assert json.dumps(state, ensure_ascii=False).count("明确不看带货，除非只是批判分析") == 1
+
+
 async def test_selected_model_capacity_changes_projection_without_switching_model() -> None:
     loaded: list[dict[str, Any]] = []
     namespaces: list[str] = []
@@ -88,7 +107,7 @@ async def test_selected_model_capacity_changes_projection_without_switching_mode
         namespaces.append(adapter.cache_namespace)
     assert len(loaded[0]["interests"]) > len(loaded[1]["interests"])
     assert namespaces[0] != namespaces[1]
-    assert loaded[0]["disliked_topics"] == loaded[1]["disliked_topics"]
+    assert "disliked_topics" not in loaded[0] and "disliked_topics" not in loaded[1]
 
 
 @pytest.mark.parametrize("body_length", [10600, 10700, 10800, 10900])

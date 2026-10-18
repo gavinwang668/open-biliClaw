@@ -19,6 +19,10 @@ included_interest_names）；必需内容超过容量则 fits=false，不能当�
 已经加载的整条可选事实，供更长的 audit/repair 包二次适配；不补入未加载事实，未知字段
 作为必需语义保留，未知 schema 拒绝。最小必需块装不下仍返回 fits=false。
 
+`build_shared_evaluation_profiles(contexts)` 为完整 Jev 评估拆出相同的负偏好、风格和场景，
+在共享 `profile` 只发送一次；候选相关的正偏好仍保留在各自 `candidate_profiles.cN`。
+该纯函数复制输入，不修改已选事实、源画像或导演视图。
+
 `soul/` 包实现了用户理解的核心逻辑，包括：
 
 - **SoulEngine** — 编排器，从事件出发驱动各层分析

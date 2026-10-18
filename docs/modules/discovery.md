@@ -12,7 +12,9 @@
 主题来自配置中的粗分类，IP 仅从配置词表选择；未识别保留空分类和受控诊断，
 不把所有未知项归为同一个真实主题 / IP，也不让 embedding 偷填 Jev 的未知主题。
 解释是程序模板，不是 Jev 自由生成的文案。时效原文片段与完整日期候选由代码提取，
-选项超过原生上限、证据冲突或无法 grounding 时整条评估失败，不补空冒充成功。
+证据冲突或无法 grounding 时整条评估失败，不补空冒充成功。
+`jev_context.py` 将原文片段只放入 state 一次，证据 Choice 使用显式片段路径，
+返回后还原原句并对完整原文 grounding。公共规则也只传一次；每道题仍明确候选 ref。
 
 原生仅文本，不支持封面；与 `multimodal_evaluation_enabled=true` 或另一 Jev
 semantic filter 同开会报配置错误。Jev 模式暂不运行旧 embedding prefilter 的
@@ -24,13 +26,19 @@ Jev 完整评估改用 `build_profile_catalog()` + `select_profile_context()` �
 再按每条候选文本选择相关兴趣、少量全局偏好与近期事实，不调摘要 LLM、不改源画像。
 完整兴趣目录不再受旧 top-48/256 限制；当前相关性是确定性词法检索，不承诺语义同义召回。
 选中的单条事实不截字；没有加载某兴趣不等于用户不喜欢。请求中 `candidate_profiles.cN`
-只供对应候选使用，选择不依赖批次同行；原有 LLM 评估视图和召回不变。
+只供对应候选使用；`build_shared_evaluation_profiles()` 把相同负偏好、风格和场景
+移到共享 `profile` 一次。正偏好选择独立于批次同行；原有 LLM 评估视图和召回不变。
 
 共享 `decision.context_budget` 按用户选择的精确模型 ID 解析双限制，不自动切模型。
-已登记 `jev-1.13.0` 默认仍是 24,000（state＋最长题）/48,000（完整请求）UTF-8 字节护栏，
+已登记 `jev-1.13.0` / `jev-1.14.0` 标准窗口，默认为 24,000（state＋最长题）/48,000（完整请求）UTF-8 字节护栏，
 含问题、词表及 JSON 包装；其它模型按自身登记容量计算。无公开 tokenizer，字节护栏只是
-保守工程策略，不是精确 token 数。先预留候选、问题、负例，再加载画像并分批；单条候选或
-必需画像本身装不下则 missing，远端拒绝也按失败处理，不删约束、不重置预算重试。
+保守工程策略，不是精确 token 数。每条候选的 10 题是不可拆单元，多候选多题共用请求；
+整批装不下先移走完整候选，默认最多 4 条为待校准的工程上限，题数/单题字节护栏可配置。
+单条超限时本地选择完整片段，保留开头/结尾、显式否定/条件/时间线索及邻句；不截字、
+不调用摘要模型。`text_coverage` 标记局部视图、源摘要、原始/已选片段数，片段附源字段
+和字符位置，日志只记源摘要、计数及选中字符范围。这些词法锚点不是语义完整性证明；不能保证任意
+长内容无损压缩。必需画像、负例、单段或完整题义仍放不下则 missing；远端拒绝也按失败
+处理，不缩短后二次发送。
 每次 adapter evaluate 共用 30 秒 / 32 调用预算。源画像在缓存查找前冻结；完整目录摘要、
 问题版本、选择策略、模型容量、词表进入缓存身份，避免并发反馈或预算变化复用旧结果。
 成功且绑定验证通过的响应会记录实际 input/output token 与上述两种字节量，明确标记
@@ -39,6 +47,10 @@ Jev 完整评估改用 `build_profile_catalog()` + `select_profile_context()` �
 配置与能力边界见 [配置模块](config.md#discoveryjevevaluation)；来源核实见
 [Jev 完整评估研究](../plans/2026-10-02-jev-full-evaluator-research.md)。当前实现测试与
 真实模型验收必须分开记录，见[验收记录](../plans/2026-10-02-jev-full-evaluator-validation.md)。
+
+单轮适配与官方多题依据见[实施契约](../plans/2026-10-14-jev-single-pass-context.md)。
+`scripts/validate_jev_single_pass.py` 默认仅本地预览；真实模式需先确认促销额度并在本机
+设置 key，使用合成画像、候选和临时 SQLite，不修改生产配置或数据。
 
 > 从用户画像出发，在 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do、V2EX、微博、GitHub 和通用 Web 等来源主动寻找潜在会喜欢的内容。
 

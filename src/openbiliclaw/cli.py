@@ -16543,6 +16543,12 @@ def config_show() -> None:
             f"{cfg.discovery.jev_evaluation.max_state_question_bytes} / "
             f"{cfg.discovery.jev_evaluation.max_request_bytes}（非 token 计数）",
         ),
+        (
+            "Jev 合批上限（候选 / 问题 / 单题字节）",
+            f"{cfg.discovery.jev_evaluation.max_candidates_per_request} / "
+            f"{cfg.discovery.jev_evaluation.max_questions_per_request} / "
+            f"{cfg.discovery.jev_evaluation.max_question_bytes}（后两项 0=仅受容量限制）",
+        ),
         ("B站认证", cfg.bilibili.auth_method),
         (
             "B站发布日期范围",

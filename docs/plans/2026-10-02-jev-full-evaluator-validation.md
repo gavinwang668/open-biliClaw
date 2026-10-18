@@ -116,3 +116,12 @@ CLI 隔离问题补充：按源码异常边界推断，原样 `ConnectError` 来
 ## 文档和安装范围
 
 同步 README 中英版、架构 / spec、changelog、配置 / CLI / API、发现 / 决策 / 推荐 / 导演、三端 UI 与 Agent Bridge 文档、画像消费者清单。未改依赖声明、安装流程、数据库 schema 或发布入口，因此无需安装器变更；provider 复用已有 HTTP 依赖。未自动启用 Jev、执行 Jev 付费探测、推送分支或发布。
+
+## 2026 年 10 月 18 日单轮上下文适配补充
+
+后续实现见 [单轮上下文适配](2026-10-14-jev-single-pass-context.md)。
+新增完整题组合批、共享规则/必需画像、原文片段与源位置/覆盖标记，配置候选数/题数/
+单题字节护栏。模拟原生 HTTP 到临时 SQLite 验证长内容可完成一次评估、原文不改写；
+不可容纳的单段和必需约束仍 pending，无生成式补评。相关回归 1016 项及 CLI
+config-show 6 项通过，Ruff/MyPy 通过。当前缺少可用原生 key；官方未保证统一注册
+免费额度，live runner 返回 not_attempted，不代表真实 Jev 请求成功或中文质量验收。

@@ -107,7 +107,7 @@ def mock_success(http_request: httpx.Request) -> httpx.Response:
     body = json.loads(http_request.content)
     assert set(body) == {"model", "state", "questions"}
     assert body["model"] == MODEL
-    assert len(body["questions"]) == 10
+    assert len(body["questions"]) % 10 == 0
     # Reconstruct typed questions from the ACTUAL outbound JSON. The local IDs
     # below are not part of the response; the production provider binds its own.
     request = DecisionRequest.model_validate_json(
@@ -159,10 +159,12 @@ async def test_mock_native_http_complete_evaluation_is_admitted_to_real_sqlite(
             assert str(http_calls[0].url) == "https://api.typesafe.ai/v1/systemone"
             body = json.loads(http_calls[0].content)
             assert body["state"]["candidate_profiles"]["c0"]["interests"]
-            assert body["state"]["profile"] == {}  # full local catalog is never sent
-            assert body["state"]["untrusted_candidates"][0]["content"]["body_text"] == (
-                "算法与数据结构的通用概念。"
-            )
+            assert "interests" not in body["state"]["profile"]  # only common mandatory facts
+            sent = body["state"]["untrusted_candidates"][0]["content"]
+            assert "算法与数据结构的通用概念。" in [
+                span["text"] for span in sent["text_spans"].values()
+            ]
+            assert sent["text_coverage"]["is_partial"] is False
             assert pipeline.discovery_engine._eval_cache
 
             fields = (
@@ -223,6 +225,42 @@ async def test_mock_native_http_503_stays_pending_without_cache_or_llm_fallback(
             assert row["eval_error"] == "evaluation_response_missing"
             assert row["temporal_evidence_complete"] == 0
             assert "server_error" in caplog.text
+        finally:
+            await runtime.aclose()
+
+
+async def test_long_chinese_excerpts_are_evaluated_once_and_keep_original_source(
+    database: Database,
+) -> None:
+    calls: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return mock_success(request)
+
+    original = "\n".join(f"背景第{i}段讲解算法的通用概念。" for i in range(350))
+    enqueue(database, body_text=original)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle), trust_env=False) as client:
+        pipeline, runtime, llm = build_pipeline(database, client)
+        try:
+            claim = pipeline.claim_batch(limit=1)
+            assert claim is not None
+            outcome = await pipeline.evaluate_claim(claim, _build_profile())
+            result = await pipeline.complete_claim(outcome, admission_limit=10)
+            assert result["cached"] == 1
+            assert len(calls) == 1 and llm.calls == 0
+            state = json.loads(calls[0].content)["state"]
+            assert state["untrusted_candidates"][0]["content"]["text_coverage"]["is_partial"]
+            # Original source survives admission; the model's local view never
+            # replaces durable candidate or content-cache text.
+            assert (
+                database.conn.execute("SELECT body_text FROM discovery_candidates").fetchone()[0]
+                == original
+            )
+            assert (
+                database.conn.execute("SELECT body_text FROM content_cache").fetchone()[0]
+                == original
+            )
         finally:
             await runtime.aclose()
 

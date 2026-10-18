@@ -244,7 +244,7 @@ max_attempts = 2
 | `max_attempts` | int | `2` | 大于等于 1 的整数，包含第一次请求；不接受布尔或小数 |
 | `context_limits` | model ID → table | `{}` | 精确模型 ID 对应 `max_request_tokens` 和 `max_state_question_tokens`；两项均必填且为整数，后者不能大于前者 |
 
-模型始终由用户选择，程序只适应它的容量。内置登记仅含 `jev-1.13.0` 的官方
+模型始终由用户选择，程序只适应它的容量。内置登记含 `jev-1.13.0` / `jev-1.14.0` 的官方
 64k / 32k token 双限制（按十进制处理）；未知模型须按该服务官方规格在 TOML 登记，
 不能把 `G5` 猜成 GPT-5 或套用 Jev 1.13 容量。示例表名为
 `[decision.providers.jev.context_limits."实际选中的完整模型ID"]`，两个 token 数须自行核实，
@@ -286,12 +286,18 @@ readiness 信息，不返回 key。`config-show` 展示模式及非 token 的字
 | `franchise_labels` | `[]` | 受控 IP / 系列 / 品牌名称；未配词表时无法识别新 IP |
 | `max_state_question_bytes` | `0` | 0=按选定模型自动；非零是 state 加最长题的额外 UTF-8 护栏，不得超过该模型工程预算 |
 | `max_request_bytes` | `0` | 0=按选定模型自动；非零是完整原生请求的额外 UTF-8 护栏，不得超过该模型工程预算 |
+| `max_candidates_per_request` | `4` | 每批完整候选上限，1–64；初始工程上限，需中文实测校准 |
+| `max_questions_per_request` | `0` | 0=仅受容量限制；非零为 10–640。原生无独立题数上限，不能把候选的 10 题拆开 |
+| `max_question_bytes` | `0` | 0=仅受组合窗口限制；非零为单题 canonical JSON 字节护栏，至少 256 |
 | `max_calls` | `32` | 一次 evaluator 调用的子批调用数上限 |
 | `budget_seconds` | `30.0` | 一次 evaluator 共用的总预算，不是每个子批各一份 |
 
 预算与词表严格验证；词表预留 unknown 选项，不能静默截断。固定模型版本进入缓存
 身份；旧配置显式 24000/48000 会保留为更严的人工护栏，想随更大模型扩大需改为 0。
-按需画像保留必需约束，再加载相关事实；无法放下必需内容会失败，不切模型或隐式调 LLM。
+按需画像保留必需约束，再加载相关事实；批次超限先减少候选数。单条仍超限时使用带
+源位置/摘要/覆盖标记的完整原文摘录；不能放下必需内容则待评估，不切模型或隐式调 LLM。
+三个新增打包字段可由 TOML 或配置 API 更新，API 重建 evaluator 后的新任务生效，
+在飞任务使用旧快照。官方标准容量只可收紧，不能通过配置扩大；实验扩窗 header 默认不发送。
 模型容量、选择策略也进入缓存
 命名空间；完整评估拒绝 `jev-latest / jev-preview` 浮动别名。须先通过 TOML 启用
 `decision.providers.jev` 并在实际后端环境设置凭据，重启后可通过页面切换评估模式；

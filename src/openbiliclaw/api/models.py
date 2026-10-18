@@ -2622,6 +2622,9 @@ class JevEvaluationConfigOut(BaseModel):
     franchise_labels: list[str] = Field(default_factory=list)
     max_state_question_bytes: int = 0
     max_request_bytes: int = 0
+    max_candidates_per_request: int = 4
+    max_questions_per_request: int = 0
+    max_question_bytes: int = 0
     max_calls: int = 32
     budget_seconds: float = 30.0
 

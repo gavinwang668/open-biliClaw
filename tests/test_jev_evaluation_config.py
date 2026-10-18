@@ -46,6 +46,29 @@ def test_jev_evaluation_roundtrip_and_route_enablement(tmp_path: Path) -> None:
     assert "OPENBILICLAW_TEST_JEV_KEY" in target.read_text()
 
 
+def test_single_pass_packing_controls_survive_config_roundtrip(tmp_path: Path) -> None:
+    cfg = _configured()
+    cfg.discovery.jev_evaluation = build_jev_evaluation_config(
+        {
+            "max_candidates_per_request": 3,
+            "max_questions_per_request": 20,
+            "max_question_bytes": 2048,
+        }
+    )
+    target = save_config(cfg, tmp_path / "packing.toml")
+    loaded = load_config(target, consult_environment=False).discovery.jev_evaluation
+    assert loaded.max_candidates_per_request == 3
+    assert loaded.max_questions_per_request == 20
+    assert loaded.max_question_bytes == 2048
+
+
+def test_config_cannot_enlarge_an_official_models_standard_window(tmp_path: Path) -> None:
+    cfg = _configured()
+    cfg.decision.providers.jev.context_limits = {"jev-1.13.0": JevContextLimits(128_000, 64_000)}
+    with pytest.raises(ConfigError, match="context_limits"):
+        save_config(cfg, tmp_path / "invalid-capacity.toml")
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -60,6 +83,11 @@ def test_jev_evaluation_roundtrip_and_route_enablement(tmp_path: Path) -> None:
         ("max_request_bytes", 48001),
         ("max_request_bytes", 255),
         ("max_calls", True),
+        ("max_candidates_per_request", 0),
+        ("max_candidates_per_request", True),
+        ("max_questions_per_request", 9),
+        ("max_questions_per_request", True),
+        ("max_question_bytes", 255),
         ("budget_seconds", float("nan")),
     ],
 )
@@ -127,13 +155,24 @@ def test_jev_api_roundtrip_ready_and_no_secret(monkeypatch, tmp_path: Path) -> N
     response = client.put(
         "/api/config",
         json={
-            "discovery": {"eval_scorer": "jev", "jev_evaluation": {"franchise_labels": ["原神"]}}
+            "discovery": {
+                "eval_scorer": "jev",
+                "jev_evaluation": {
+                    "franchise_labels": ["原神"],
+                    "max_candidates_per_request": 2,
+                    "max_questions_per_request": 20,
+                    "max_question_bytes": 4096,
+                },
+            }
         },
     )
     assert response.status_code == 202, response.text
     returned = response.json()["config"]["discovery"]
     assert returned["eval_scorer"] == "jev"
     assert returned["jev_evaluation"]["franchise_labels"] == ["原神"]
+    assert returned["jev_evaluation"]["max_candidates_per_request"] == 2
+    assert returned["jev_evaluation"]["max_questions_per_request"] == 20
+    assert returned["jev_evaluation"]["max_question_bytes"] == 4096
     loaded = load_config(tmp_path / "config.toml")
     assert loaded.discovery.eval_scorer == "jev"
     assert loaded.discovery.jev_evaluation.topic_labels == cfg.discovery.jev_evaluation.topic_labels
