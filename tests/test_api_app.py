@@ -2509,6 +2509,7 @@ class TestBackendAPI:
                 concurrency_gate: object | None = None,
                 reply_style: str = "",
                 dialogue_tone_prompt: str = "",
+                output_language: str = "",
             ) -> None:
                 self.registry = registry
                 self.memory = memory
@@ -2518,6 +2519,7 @@ class TestBackendAPI:
                 self.concurrency_gate = concurrency_gate
                 self.reply_style = reply_style
                 self.dialogue_tone_prompt = dialogue_tone_prompt
+                self.output_language = output_language
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str, proxy: str | None = None) -> None:
@@ -2765,6 +2767,7 @@ class TestBackendAPI:
                 concurrency_gate: object | None = None,
                 reply_style: str = "",
                 dialogue_tone_prompt: str = "",
+                output_language: str = "",
             ) -> None:
                 self.registry = registry
                 self.memory = memory
@@ -2774,6 +2777,7 @@ class TestBackendAPI:
                 self.concurrency_gate = concurrency_gate
                 self.reply_style = reply_style
                 self.dialogue_tone_prompt = dialogue_tone_prompt
+                self.output_language = output_language
 
         class FakeBilibiliClient:
             def __init__(self, *, cookie: str, proxy: str | None = None) -> None:

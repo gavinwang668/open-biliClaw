@@ -121,3 +121,12 @@ start_background_task）、会话/任务/审批/skill 列表 markup、异步审�
 展示网页资料；共享渲染器也将正文中的裸 http(s) 来源转为可点击链接，跳过代码和已有
 链接，保留 HTML 转义。口味伙伴/探寻师可定位、更正聊天笔记；delete_memory 走现有审批卡，
 待批准不表示已删除，执行时原值冲突则失败并保留新笔记。本次无需额外页面入口。
+
+### 多语言（v0.3.230+）
+
+设置 → 通用 → **默认语言（所有端共用）** 提供 `简体中文` / `繁體中文` / `English`。切换后会立即预览并随保存写入
+`[general].language`；桌面页在 `applyConfig()` 时读取 `GET /api/config` 的规范化 `language`，
+再调用 `/shared/i18n.js` 的 `OpenBiliClawI18n.setLocale()`。界面文案按渲染后的 DOM 文本精确
+匹配 `/i18n/ui/<locale>.json` 翻译，模型输出、内容标题与用户输入不翻译；`#language` 选择器
+自身标记 `data-i18n-skip`，避免把「简体中文」翻成「簡體中文」。英文 tab 文案更宽，设置页
+tab 栏改为按内容宽度排布并允许横向滚动。完整契约见 [多语言模块](i18n.md)。

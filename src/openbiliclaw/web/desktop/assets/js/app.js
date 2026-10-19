@@ -1377,6 +1377,8 @@
     }
 
     function formatCountCn(n) {
+      const runtime = globalThis.OpenBiliClawI18n;
+      if (runtime && typeof runtime.formatCount === "function") return runtime.formatCount(n);
       const value = Math.floor(Number(n) || 0);
       if (value <= 0) return "";
       if (value >= 100000000) {
@@ -1397,7 +1399,13 @@
         if (diff >= 0 && diff < 604_800_000) return `${Math.floor(diff / 86_400_000)} 天前`;
         const date = new Date(parsed);
         const current = new Date(now);
-        if (date.getFullYear() === current.getFullYear()) return `${date.getMonth() + 1}月${date.getDate()}日`;
+        if (date.getFullYear() === current.getFullYear()) {
+          const runtime = globalThis.OpenBiliClawI18n;
+          if (runtime && typeof runtime.formatShortDate === "function") {
+            return runtime.formatShortDate(date);
+          }
+          return `${date.getMonth() + 1}月${date.getDate()}日`;
+        }
         return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
       }
       return String(item?.published_label || "").replace(/\s+/g, " ").trim().slice(0, 64);
@@ -10813,11 +10821,42 @@ ${cardFeedbackBarHtml()}`;
       syncLlmInstanceConditionalFields();
     }
 
+    const CLIENT_LOCALE_STORAGE_KEY = "openbiliclaw.locale";
+
+    function applyClientLocale(language) {
+      // The locale runtime translates rendered DOM text by exact catalog match;
+      // it is optional so a build served without /shared/i18n.js still works.
+      const runtime = globalThis.OpenBiliClawI18n;
+      if (!runtime) return Promise.resolve();
+      const normalized = runtime.normalizeLocale(language || "zh-Hans");
+      try {
+        storageSet(CLIENT_LOCALE_STORAGE_KEY, normalized);
+      } catch {}
+      if (runtime.locale === normalized && runtime.ready) return Promise.resolve();
+      return runtime
+        .setLocale(normalized)
+        .then(() => {
+          // Counts/dates are computed by JS (331K vs 33.1万), so a live switch
+          // must re-render once; deferred to avoid re-entering the config apply.
+          requestAnimationFrame(() => {
+            try {
+              renderAll();
+            } catch (error) {
+              console.warn("界面重绘失败", error);
+            }
+          });
+        })
+        .catch((error) => {
+          console.warn("切换界面语言失败", error);
+        });
+    }
+
     function applyConfig(config) {
       if (!config || typeof config !== "object") return;
       ensureSourceDateFields();
       state.degraded = config.degraded === true;
       state.config = config;
+      void applyClientLocale(config.language);
       const scheduler = config.scheduler || {};
       setSelect("schedulerEnabled", scheduler.enabled === false ? "off" : "on");
       setSelect("pauseDisconnect", scheduler.pause_on_extension_disconnect === false ? "keep" : "pause");
@@ -13795,6 +13834,10 @@ ${cardFeedbackBarHtml()}`;
       });
     });
 
+    $("#language")?.addEventListener("change", () => {
+      void applyClientLocale($("#language").value);
+    });
+
     safeBind("#testToneBtn", "click", async () => {
       const btn = $("#testToneBtn");
       const result = $("#testToneResult");
@@ -13960,6 +14003,22 @@ ${cardFeedbackBarHtml()}`;
 
     restoreBackendEndpoint();
     restoreFrontendSettings();
+    {
+      const runtime = globalThis.OpenBiliClawI18n;
+      if (runtime) {
+        let initialLocale = document.documentElement.lang || "zh-Hans";
+        try {
+          initialLocale = storageGet(CLIENT_LOCALE_STORAGE_KEY) || initialLocale;
+        } catch {}
+        void runtime
+          .init({ locale: initialLocale, basePath: "/i18n/ui/" })
+          // Re-apply after init (the shell renders while catalogs load), but
+          // never override a config locale that already arrived — otherwise a
+          // slow catalog fetch reverts the UI to yesterday's cached language.
+          .then(() => applyClientLocale(state.config?.language || initialLocale))
+          .catch((error) => console.warn("界面语言初始化失败", error));
+      }
+    }
     setSideDrawerOpen(!isMobileViewport() && storageGet(SIDE_DRAWER_OPEN_KEY) !== "0", { persist: false });
     initBackToTop();
     startSharedChatSurfaceSync();

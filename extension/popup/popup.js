@@ -4210,6 +4210,8 @@ function buildMessageCard(probe) {
 // Condense a raw count into Chinese-style 万/亿 units. Empty string for
 // non-positive values so callers render nothing.
 function formatCountCn(n) {
+  const runtime = globalThis.OpenBiliClawI18n;
+  if (runtime && typeof runtime.formatCount === "function") return runtime.formatCount(n);
   const value = Math.floor(Number(n) || 0);
   if (value <= 0) return "";
   if (value >= 100000000)
@@ -11156,7 +11158,8 @@ function bindSettings() {
 
     // General
     const lang = document.getElementById("cfgLanguage");
-    if (lang) lang.value = cfg.language || "zh";
+    if (lang) lang.value = cfg.language || "zh-Hans";
+    void applyPopupLocale(cfg.language || "zh-Hans");
     setVal("cfgDataDir", cfg.data_dir);
     setVal("cfgStorageDbPath", cfg.storage?.db_path);
     // Mirrors the [network].mode backend default (system since v0.3.175);
@@ -12659,7 +12662,62 @@ async function maybeShowEmbeddingBanner() {
   }
 }
 
+const POPUP_LOCALE_STORAGE_KEY = "openbiliclaw.locale";
+
+function popupLocaleRuntime() {
+  return globalThis.OpenBiliClawI18n || null;
+}
+
+function readPopupLocale() {
+  try {
+    return localStorage.getItem(POPUP_LOCALE_STORAGE_KEY) || "zh-Hans";
+  } catch {
+    return "zh-Hans";
+  }
+}
+
+async function applyPopupLocale(language) {
+  const runtime = popupLocaleRuntime();
+  if (!runtime) return;
+  const normalized = runtime.normalizeLocale(language || "zh-Hans");
+  try {
+    localStorage.setItem(POPUP_LOCALE_STORAGE_KEY, normalized);
+  } catch {}
+  if (runtime.ready && runtime.locale === normalized) return;
+  try {
+    await runtime.setLocale(normalized);
+  } catch (error) {
+    console.warn("popup: locale switch failed", error);
+  }
+}
+
+async function initPopupLocale() {
+  const runtime = popupLocaleRuntime();
+  if (!runtime) return;
+  const locale = readPopupLocale();
+  try {
+    await runtime.init({
+      locale,
+      // Catalogs are bundled next to popup.html at build time so the panel
+      // localizes even when the backend is unreachable.
+      fetchCatalog: async (requested) => {
+        const url = chrome.runtime.getURL(`popup/locales/${requested}.json`);
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`missing locale ${requested}`);
+        return response.json();
+      },
+    });
+  } catch (error) {
+    console.warn("popup: locale init failed", error);
+  }
+  document.getElementById("cfgLanguage")?.addEventListener("change", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLSelectElement) void applyPopupLocale(target.value);
+  });
+}
+
 async function initializePopup() {
+  await initPopupLocale();
   const params = new URLSearchParams(window.location.search);
   const requestedTab = params.get("tab");
   const requestedLibraryTab = params.get("section") || params.get("library") || "";

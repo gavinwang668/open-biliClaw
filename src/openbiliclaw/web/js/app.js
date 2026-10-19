@@ -197,6 +197,14 @@ async function openMobileSettings(opener) {
       <div><p class="eyebrow">Settings</p><h2>保存与同步</h2></div>
       <button class="mobile-settings-close" type="button" aria-label="关闭设置">×</button>
     </div>
+    <label class="mobile-settings-field" for="mobile-language">
+      <span>默认语言（界面与输出）</span>
+      <select id="mobile-language" data-i18n-skip>
+        <option value="zh-Hans">简体中文</option>
+        <option value="zh-Hant">繁體中文</option>
+        <option value="en">English</option>
+      </select>
+    </label>
     <label class="mobile-settings-field" for="mobile-saved-auto-sync">
       <input id="mobile-saved-auto-sync" type="checkbox">
       <span>保存时自动同步到对应平台</span>
@@ -209,6 +217,7 @@ async function openMobileSettings(opener) {
   document.body.append(overlay);
   const close = card.querySelector(".mobile-settings-close");
   const toggle = card.querySelector("#mobile-saved-auto-sync");
+  const languageSelect = card.querySelector("#mobile-language");
   const save = card.querySelector(".mobile-settings-save");
   const retry = card.querySelector(".mobile-settings-retry");
   const status = card.querySelector(".mobile-settings-status");
@@ -239,6 +248,10 @@ async function openMobileSettings(opener) {
       const config = await fetchConfig();
       storedValue = config.saved_sync?.auto_sync_enabled === true;
       toggle.checked = storedValue;
+      const runtime = globalThis.OpenBiliClawI18n;
+      languageSelect.value = runtime
+        ? runtime.normalizeLocale(config.language || readStoredLocale())
+        : config.language || "zh-Hans";
       configLoaded = true;
       save.disabled = false;
       toggle.disabled = false;
@@ -267,8 +280,12 @@ async function openMobileSettings(opener) {
     status.removeAttribute("role");
     status.textContent = "正在保存设置…";
     try {
-      await updateConfig({ saved_sync: { auto_sync_enabled: toggle.checked } });
+      await updateConfig({
+        language: languageSelect.value,
+        saved_sync: { auto_sync_enabled: toggle.checked },
+      });
       storedValue = toggle.checked;
+      await applyClientLocale(languageSelect.value);
       status.textContent = "设置已保存。手动同步始终可用。";
     } catch (error) {
       status.setAttribute("role", "alert");
@@ -444,7 +461,58 @@ export function setUnreadCount(n) {
 // ── Init ─────────────────────────────────────────────────────
 let _appStarted = false;
 
+const CLIENT_LOCALE_STORAGE_KEY = "openbiliclaw.locale";
+
+function readStoredLocale() {
+  try {
+    return localStorage.getItem(CLIENT_LOCALE_STORAGE_KEY) || document.documentElement.lang || "zh-Hans";
+  } catch {
+    return document.documentElement.lang || "zh-Hans";
+  }
+}
+
+function storeLocale(locale) {
+  try {
+    localStorage.setItem(CLIENT_LOCALE_STORAGE_KEY, locale);
+  } catch {
+    /* private mode: the locale still applies to this page */
+  }
+}
+
+async function applyClientLocale(language) {
+  const runtime = globalThis.OpenBiliClawI18n;
+  if (!runtime) return;
+  const normalized = runtime.normalizeLocale(language || "zh-Hans");
+  storeLocale(normalized);
+  if (runtime.ready && runtime.locale === normalized) return;
+  try {
+    await runtime.setLocale(normalized);
+  } catch (error) {
+    console.warn("切换界面语言失败", error);
+  }
+}
+
+async function initClientLocale() {
+  const runtime = globalThis.OpenBiliClawI18n;
+  if (!runtime) return;
+  let locale = readStoredLocale();
+  try {
+    const config = await fetchConfig();
+    if (config?.language) locale = config.language;
+  } catch {
+    /* offline shell keeps the cached locale */
+  }
+  await applyClientLocale(locale);
+  // Await init: the MutationObserver is attached inside it, and the shell
+  // renders tab labels immediately afterwards. Starting it in the background
+  // leaves those first nodes untranslated until something re-renders them.
+  await runtime.init({ locale, basePath: "/i18n/ui/" }).catch((error) => {
+    console.warn("界面语言初始化失败", error);
+  });
+}
+
 async function startApp() {
+  await initClientLocale();
   document.body.classList.remove("auth-locked");
   for (const tab of TABS) ensureView(tab.id);
 

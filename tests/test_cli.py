@@ -998,6 +998,43 @@ def test_recommend_reports_clear_config_error(
     assert "llm.openai.api_key" in result.stdout
 
 
+def test_language_command_canonicalizes_and_saves(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    cfg = config_module.Config()
+    persisted: list[str] = []
+    monkeypatch.setattr(config_module, "load_config", lambda: cfg)
+    monkeypatch.setattr(
+        config_module,
+        "save_config",
+        lambda config, *args, **kwargs: persisted.append(config.language) or "/tmp/config.toml",
+    )
+    monkeypatch.delenv("OPENBILICLAW_LANG", raising=False)
+    monkeypatch.delenv("OPENBILICLAW_LANGUAGE", raising=False)
+
+    result = runner.invoke(app, ["language", "zh-TW"])
+
+    assert result.exit_code == 0
+    assert cfg.language == "zh-Hant"
+    assert persisted == ["zh-Hant"]
+    assert "zh-Hant" in result.stdout
+
+
+def test_language_command_rejects_unknown_locale(
+    monkeypatch: pytest.MonkeyPatch, runner: CliRunner
+) -> None:
+    cfg = config_module.Config()
+    monkeypatch.setattr(config_module, "load_config", lambda: cfg)
+    monkeypatch.delenv("OPENBILICLAW_LANG", raising=False)
+    monkeypatch.delenv("OPENBILICLAW_LANGUAGE", raising=False)
+
+    result = runner.invoke(app, ["language", "klingon"])
+
+    assert result.exit_code == 2
+    assert cfg.language == "zh"
+    assert "klingon" in result.stdout
+
+
 def test_config_show_displays_registered_providers(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner
 ) -> None:
@@ -2251,6 +2288,7 @@ def test_runtime_builders_share_database_instance(
             concurrency_gate: object | None = None,
             reply_style: str = "",
             dialogue_tone_prompt: str = "",
+            output_language: str = "",
         ) -> None:
             self.registry = registry
             self.memory = memory
@@ -2260,6 +2298,7 @@ def test_runtime_builders_share_database_instance(
             self.concurrency_gate = concurrency_gate
             self.reply_style = reply_style
             self.dialogue_tone_prompt = dialogue_tone_prompt
+            self.output_language = output_language
 
     class FakeRecommendationEngine:
         def __init__(

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from openbiliclaw.discovery.style_keys import STYLE_KEY_PROMPT_TEXT, normalize_style_key
+from openbiliclaw.i18n.output_language import append_output_language
 from openbiliclaw.llm.json_utils import parse_llm_json_tolerant
 from openbiliclaw.soul.event_prompt_views import (
     build_cognition_event_view_v1,
@@ -264,6 +265,7 @@ def build_socratic_dialogue_prompt(
     reply_style: str = "",
     dialogue_tone_prompt: str = "",
     socratic: bool = True,
+    output_language: str = "",
 ) -> list[dict[str, str]]:
     """Build chat messages for Socratic dialogue generation.
 
@@ -292,6 +294,10 @@ def build_socratic_dialogue_prompt(
     ``socratic=False`` scales response depth to the current request. Both
     styles share the same follow-up and completion policy; Socratic exploration
     requires the user's intent rather than merely selecting an interview skill.
+
+    ``output_language`` appends the locale directive to the *user* message (the
+    system prompt stays byte-identical across locales, preserving provider
+    prompt caching). Empty (default) keeps the old prompt untouched.
     """
     friend_label = _friend_label_from_mix(source_platform_mix)
     tone_block = dialogue_tone_prompt.strip() or _render_tone_profile(
@@ -320,7 +326,9 @@ def build_socratic_dialogue_prompt(
     )
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
     messages.extend(history)
-    messages.append({"role": "user", "content": user_message})
+    messages.append(
+        {"role": "user", "content": append_output_language(user_message, output_language)}
+    )
     return messages
 
 
@@ -2149,7 +2157,8 @@ _RECOMMENDATION_EXPRESSION_SYSTEM_PROMPT = """
 
 <rules>
 1. 输出必须是严格 JSON,不要附带解释。
-2. expression 必须是 50 到 150 字的中文口语表达,像朋友私聊,不像算法推荐。
+2. expression 必须是 50 到 150 字的口语表达,像朋友私聊,不像算法推荐;'
+    '具体语言由 user 消息末尾的 <output_language> 决定。
    如果 source_platform 是 bilibili,可以用"老 B 友"基调和 B 站语境;
    xiaohongshu 用更生活化的姐妹/朋友语气;其他平台保持中性朋友感。
 3. expression 要解释"为什么这条内容会对上这个人的胃口",必须引用至少一个具体内容细节
@@ -2198,6 +2207,7 @@ def build_recommendation_expression_prompt(
     tone_profile: ToneProfile | None,
     source_platform: str = "bilibili",
     reply_style: str = "",
+    output_language: str = "",
 ) -> list[dict[str, str]]:
     """Build a structured prompt for friend-style recommendation expression.
 
@@ -2231,7 +2241,7 @@ def build_recommendation_expression_prompt(
         ),
         "</content_summary>",
     ]
-    user_prompt = "\n\n".join(user_blocks)
+    user_prompt = append_output_language("\n\n".join(user_blocks), output_language)
     return [
         {"role": "system", "content": _RECOMMENDATION_EXPRESSION_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},
@@ -2248,7 +2258,8 @@ _BATCH_EXPRESSION_SYSTEM_PROMPT = (
     "<rules>\n"
     "1. 输出必须是严格 JSON 数组,数组长度与输入内容数量一致,顺序一一对应。\n"
     "2. 每项必须原样带回输入里的 bvid 或 content_id,并包含 "
-    "expression(50-150字中文口语) 和 topic_label(个性化主题标签)。\n"
+    "expression(50-150 字的口语表达,语言见 user 消息末尾的 <output_language>)"
+    " 和 topic_label(个性化主题标签)。\n"
     "3. expression 像朋友私聊。bilibili 用'老 B 友'语境,xiaohongshu 用更生活化的姐妹/朋友语气,"
     "其他平台保持中性朋友感。必须引用至少一个具体内容细节(标题关键词、作者特点、独特切入角度),"
     "不要说空话。content_type 为 tweet / thread 的纯文本条目,以 body_text 字段为内容主体来引用。\n"
@@ -2287,6 +2298,7 @@ def build_batch_expression_prompt(
     tone_profile: ToneProfile | None,
     source_platform: str = "bilibili",
     reply_style: str = "",
+    output_language: str = "",
 ) -> list[dict[str, str]]:
     """Build a prompt that generates expressions for multiple items in one call.
 
@@ -2315,7 +2327,7 @@ def build_batch_expression_prompt(
         ),
         "</content_batch>",
     ]
-    user_prompt = "\n\n".join(user_blocks)
+    user_prompt = append_output_language("\n\n".join(user_blocks), output_language)
     return [
         {"role": "system", "content": _BATCH_EXPRESSION_SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},

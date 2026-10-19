@@ -20,6 +20,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
 from openbiliclaw.agent.persona import DEFAULT_CHAT_PERSONA, chat_persona_instruction
+from openbiliclaw.i18n.output_language import append_output_language
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -575,10 +576,15 @@ class SocraticDialogue:
                     if system
                     else (_AGENT_LOOP_GROUND_RULES)
                 )
+                # The locale directive travels in the user message so the
+                # system prompt (and its provider cache prefix) stays stable.
+                localized_user_message = append_output_language(
+                    prompt_user_message, str(getattr(service, "output_language", "") or "")
+                )
                 reply = ""
                 async for event in agent_loop.run(
                     system_instruction=system,
-                    user_message=prompt_user_message,
+                    user_message=localized_user_message,
                     history=prompt_history,
                     tools=tools,
                     approval_context={
@@ -667,7 +673,9 @@ class SocraticDialogue:
 
         response = await service.complete_with_tools(
             system_instruction=system,
-            user_input=user_message,
+            user_input=append_output_language(
+                user_message, str(getattr(service, "output_language", "") or "")
+            ),
             tools=self._tools,
             history=self._history_to_messages(),
             caller="soul.dialogue.tools",

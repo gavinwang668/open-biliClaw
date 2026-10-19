@@ -1164,6 +1164,43 @@ _RESETTABLE_CONFIG_FIELDS = {
 }
 
 
+def _validated_config_language(value: object) -> str:
+    """Validate and canonicalize a ``language`` value from a config write.
+
+    Rejects at save time (CLAUDE.md pitfall rule 7) rather than persisting a
+    value no surface can render. Raises ``HTTPException(400)`` with the
+    supported locale list so clients can show a precise error.
+    """
+
+    from openbiliclaw.i18n import SUPPORTED_LOCALES, resolve_locale
+
+    requested = str(value or "").strip()
+    resolved = resolve_locale(requested)
+    if resolved is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "unsupported_language",
+                "value": requested,
+                "supported": list(SUPPORTED_LOCALES),
+            },
+        )
+    return resolved
+
+
+def _canonical_locale(value: object) -> str:
+    """Resolve a stored/requested language value to a shipped locale id.
+
+    ``config.toml`` predates the locale contract and may still contain ``zh``
+    or ``en-US``; every API/consumer boundary funnels through this helper so
+    the rest of the codebase only ever sees ``zh-Hans`` / ``zh-Hant`` / ``en``.
+    """
+
+    from openbiliclaw.i18n import normalize_locale
+
+    return normalize_locale(value)
+
+
 def _config_backup_path(config_path: Path) -> Path:
     return config_path.with_name(f"{config_path.name}.bak")
 
@@ -2833,9 +2870,11 @@ def create_app(
             path == "/"
             or path in {"/m", "/web", "/setup"}
             # /shared/ hosts modules the recovery shells load at parse time
-            # (e.g. source-status.js); blocking it kills the setup wizard's
-            # script and leaves the degraded config unrepairable.
-            or path.startswith(("/m/", "/web/", "/setup/", "/shared/"))
+            # (e.g. source-status.js, i18n.js); blocking it kills the setup
+            # wizard's script and leaves the degraded config unrepairable.
+            # /i18n/ui/ is the locale catalog behind that runtime — without it
+            # the recovery UI silently falls back to Simplified Chinese.
+            or path.startswith(("/m/", "/web/", "/setup/", "/shared/", "/i18n/ui/"))
         )
         allowed = (
             method == "OPTIONS"
@@ -2848,6 +2887,9 @@ def create_app(
             or path == "/favicon.ico"
             or path == "/api/autostart-status"
             or path == "/api/autostart/apply"
+            # Static locale metadata: no LLM dependency, and clients need it to
+            # render their recovery UI in the user's language.
+            or path == "/api/i18n/locales"
             or path in ("/api/init-status", "/api/init", "/api/init/cancel")
             # Update status + manual check/apply: a backend that can't build its
             # LLM registry is exactly when pulling a fix-carrying release matters,
@@ -3574,6 +3616,9 @@ def create_app(
 
     async def _apply_runtime_config_revision(item: _QueuedConfigApply) -> str:
         """Apply one persisted revision without owning the config-file lock."""
+        from openbiliclaw.i18n import get_translator
+
+        tr = get_translator(_canonical_locale(getattr(item.config, "language", None)))
         # Chat knobs have no dependency on profile/feedback owners. Keep the
         # same queue, lock and last-good transaction, but don't drain unrelated
         # work when the complete candidate differs only in known chat fields.
@@ -3583,9 +3628,7 @@ def create_app(
                     logger.info(
                         "Chat config applied without runtime rebuild: revision=%d", item.revision
                     )
-                    return (
-                        f"配置已保存到 {item.saved_path}。聊天设置已生效，正在进行的任务继续执行。"
-                    )
+                    return tr("api.config.saved_chat_live", path=item.saved_path)
         was_degraded = bool(getattr(ctx, "degraded", False))
         recovered_from_degraded = False
 
@@ -3607,19 +3650,15 @@ def create_app(
             if not recovered_from_degraded:
                 raise
             logger.exception("Degraded runtime recovered, but background task restart failed")
-            message = (
-                f"配置已保存到 {item.saved_path}。后端已原地恢复；"
-                "部分后台任务启动失败，将在后续配置刷新时重试，"
-                "不影响继续初始化。"
-            )
+            message = tr("api.config.saved_degraded_partial", path=item.saved_path)
         else:
-            message = f"配置已保存到 {item.saved_path}。"
+            message = tr("api.config.saved_applied", path=item.saved_path)
             if was_degraded:
-                message += " 后端已从降级模式原地恢复。"
-            message += (
-                " 除需完全重启的字段外，其余运行时组件已热重载。"
+                message += tr("api.config.recovered_from_degraded")
+            message += tr(
+                "api.config.hot_reload_restart_required"
                 if item.restart_required
-                else " 运行时组件已热重载，新配置立即生效，无需重启。"
+                else "api.config.hot_reload_ok"
             )
         logger.info("Config hot-reload succeeded: revision=%d", item.revision)
         return message
@@ -3654,11 +3693,14 @@ def create_app(
 
         try:
             while config_apply_pending is not None:
+                from openbiliclaw.i18n import get_translator
+
                 item = config_apply_pending
                 config_apply_pending = None
+                queue_tr = get_translator(_canonical_locale(getattr(item.config, "language", None)))
                 _set_config_apply_status(
                     "applying",
-                    f"正在后台应用配置修订 {item.revision}。",
+                    queue_tr("api.config.applying_revision", revision=item.revision),
                 )
                 runtime_apply_started = False
                 try:
@@ -3673,9 +3715,9 @@ def create_app(
                     config_apply_pending = item
                     _set_config_apply_status(
                         "queued",
-                        f"配置修订 {item.revision} 已保存，将在后端重启后生效。",
+                        queue_tr("api.config.revision_saved_after_restart", revision=item.revision),
                     )
-                    _settle_config_completion(item, error="配置应用已中断，重启后检查生效状态。")
+                    _settle_config_completion(item, error=queue_tr("api.config.apply_interrupted"))
                     raise
                 except Exception as exc:
                     logger.exception(
@@ -20766,7 +20808,9 @@ def create_app(
             tailnet_state = str(tailnet_status.get("event") or "pending_restart")
 
         return ConfigResponse(
-            language=cfg.language,
+            # Canonical locale id: clients switch i18n on this value, while
+            # config.toml may still hold a legacy alias such as ``zh``.
+            language=_canonical_locale(cfg.language),
             data_dir=cfg.data_dir,
             degraded=degraded,
             degraded_reason=degraded_reason,
@@ -21161,6 +21205,24 @@ def create_app(
             ),
             issues=issue_list,
         )
+
+    @app.get("/api/i18n/locales")
+    def get_i18n_locales() -> dict[str, object]:
+        """Return the shipped locales, their native names, and the active one.
+
+        Clients use this instead of hardcoding the locale list, so adding a
+        language later only touches the backend catalog set and this module.
+        """
+
+        from openbiliclaw.config import load_config as _load_i18n_config
+        from openbiliclaw.i18n import locale_options
+
+        config = _load_i18n_config()
+        return {
+            "default": "zh-Hans",
+            "active": _canonical_locale(config.language),
+            "locales": [option.as_dict() for option in locale_options()],
+        }
 
     @app.get("/api/config", response_model=ConfigResponse)
     def get_config(reveal_keys: bool = False) -> ConfigResponse:
@@ -22594,7 +22656,7 @@ def create_app(
 
         # Apply top-level scalars
         if "language" in update:
-            cfg.language = str(update["language"])
+            cfg.language = _validated_config_language(update["language"])
         if "data_dir" in update:
             cfg.data_dir = str(update["data_dir"])
 
@@ -24370,6 +24432,8 @@ def create_app(
         if posture_issue is not None:
             issues.append(posture_issue)
         if any(getattr(issue, "severity", "warning") == "blocking" for issue in issues):
+            from openbiliclaw.i18n import get_translator
+
             response = ConfigUpdateResponse(
                 ok=False,
                 config=_config_to_response(
@@ -24379,7 +24443,9 @@ def create_app(
                     degraded=bool(getattr(ctx, "degraded", False)),
                     degraded_reason=str(getattr(ctx, "degraded_reason", "")),
                 ),
-                message="配置校验失败，未写入 config.toml。",
+                message=get_translator(_canonical_locale(getattr(cfg, "language", None)))(
+                    "api.config.validation_failed"
+                ),
                 reloaded=False,
                 rollback_applied=False,
                 restart_required=False,
@@ -24491,21 +24557,26 @@ def create_app(
             # 持久化与运行时应用是两个阶段。统一进入已有 latest-wins 队列，
             # 避免一次后台 LLM 或事件排空把交互式保存请求挂住数十秒。
             _enqueue_config_apply(item)
+            from openbiliclaw.i18n import get_translator
+
+            response_tr = get_translator(_canonical_locale(getattr(cfg, "language", None)))
             queued_response = ConfigUpdateResponse(
                 ok=True,
                 config=_config_to_response(cfg, issues, mask_keys=True),
                 message=(
-                    f"配置已保存到 {saved_path}；"
-                    + (
-                        "data_dir 与应用内 Tailnet 将在完全重启后生效，"
-                        if data_dir_restart_required and tailnet_restart_required
-                        else "data_dir 将在完全重启后生效，"
-                        if data_dir_restart_required
-                        else "应用内 Tailnet 将在完全重启后生效，"
+                    response_tr(
+                        "api.config.saved_queued_restart",
+                        path=saved_path,
+                        scope=response_tr(
+                            "api.config.restart.data_dir_tailnet"
+                            if data_dir_restart_required and tailnet_restart_required
+                            else "api.config.restart.data_dir"
+                            if data_dir_restart_required
+                            else "api.config.restart.tailnet"
+                        ),
                     )
-                    + "其余配置正在后台应用。"
                     if restart_required
-                    else f"配置已保存到 {saved_path}，正在后台应用。"
+                    else response_tr("api.config.saved_queued", path=saved_path)
                 ),
                 reloaded=False,
                 rollback_applied=False,
@@ -24619,6 +24690,14 @@ def create_app(
     if _shared_web_dir.is_dir():
         app.mount("/shared", _StaticFiles(directory=_shared_web_dir), name="shared-web")
 
+    # ── i18n UI catalogs ─────────────────────────────────────────
+    # The canonical UI catalog set lives with the Python package so every
+    # surface (desktop, mobile, setup, extension build) consumes one source of
+    # truth instead of three drifting copies.
+    _ui_i18n_dir = _Path(__file__).resolve().parent.parent / "i18n" / "ui"
+    if _ui_i18n_dir.is_dir():
+        app.mount("/i18n/ui", _StaticFiles(directory=_ui_i18n_dir), name="i18n-ui")
+
     # ── Desktop Web UI ───────────────────────────────────────────
     _desktop_dir = _Path(__file__).resolve().parent.parent / "web" / "desktop"
     if _desktop_dir.is_dir():
@@ -24637,6 +24716,7 @@ def create_app(
                 ("assets/js/app.js", _desktop_dir),
                 ("assets/js/chat-agent-core.js", _desktop_dir),
                 ("agent-chat.js", _shared_web_dir),
+                ("i18n.js", _shared_web_dir),
                 ("dialogue-confirmation.js", _shared_web_dir),
                 ("source-status.js", _shared_web_dir),
             ):
@@ -24673,6 +24753,10 @@ def create_app(
             html = html.replace(
                 'src="/shared/agent-chat.js"',
                 f'src="/shared/agent-chat.js?v={version}"',
+            )
+            html = html.replace(
+                'src="/shared/i18n.js"',
+                f'src="/shared/i18n.js?v={version}"',
             )
             html = html.replace(
                 'src="/shared/dialogue-confirmation.js"',

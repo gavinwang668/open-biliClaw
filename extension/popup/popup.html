@@ -8068,9 +8068,10 @@
           <p id="cfgReinitStatus" class="settings-probe-status" aria-live="polite">读取初始化状态中…</p>
         </div>
         <div class="settings-field">
-          <label for="cfgLanguage">语言</label>
-          <select id="cfgLanguage">
-            <option value="zh">中文</option>
+          <label for="cfgLanguage">默认语言（所有端共用）</label>
+          <select id="cfgLanguage" data-i18n-skip>
+            <option value="zh-Hans">简体中文</option>
+            <option value="zh-Hant">繁體中文</option>
             <option value="en">English</option>
           </select>
         </div>
@@ -8581,6 +8582,7 @@
        package by scripts/build.mjs because MV3's CSP forbids loading them from
        the backend. Classic scripts run before the module below so popup.js can
        read their globals. -->
+  <script src="shared/i18n.js"></script>
   <script src="shared/dialogue-confirmation.js"></script>
   <script src="shared/source-status.js"></script>
   <script src="shared/agent-chat.js"></script>

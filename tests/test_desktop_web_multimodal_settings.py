@@ -169,7 +169,9 @@ def test_desktop_settings_tabs_have_tabpanel_contract_and_advanced_registration(
     assert "tab.tabIndex = isActive ? 0 : -1" in js
     assert 'tab.addEventListener("click"' in js
     assert ".settings-tab:focus-visible" in css
-    assert "grid-template-columns: repeat(7, minmax(0, 1fr))" in css
+    # Columns size to their label so English tabs ("Advanced Features") stay
+    # on one line; the container scrolls horizontally instead of wrapping.
+    assert "grid-template-columns: repeat(7, minmax(max-content, 1fr))" in css
     assert "grid-template-columns: repeat(7, minmax(92px, 1fr))" in css
     assert "overflow-x: auto" in css
 

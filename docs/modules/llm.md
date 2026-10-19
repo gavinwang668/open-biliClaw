@@ -759,3 +759,10 @@ force-quit 残留场景；收养只做记录、绝不发信号，但让 watchdog
 12. **分模块链不隐式改意图**：默认 `inherit=true`；显式自定义链只在链内降级，引用失效或整链失败都不会偷跑到全局链。旧模块 model override 在迁移时成为独立派生实例，避免修改共享实例或污染其他模块。
 13. **Codex OAuth 使用独立官方传输**：`auth_mode="codex_oauth"` 不再给 `OpenAIProvider` 注入 Platform API token，而是构造 `CodexChatGPTProvider`，请求发往 `https://chatgpt.com/backend-api/codex/responses`（官方 Codex CLI 同款通道），401 时安全刷新并重试一次。该模式只允许官方 Codex 域名，防止 ChatGPT OAuth token 泄露给 OpenAI-compatible 代理或 `api.openai.com`。
 14. **失败分类先于批响应解析**：共享 classifier 保持 rate-limit / no-provider / auth / invalid-response 的特定语义优先级，并额外识别连接失败与 HTTP 500/502/503/504；调用方只把 provider transient 交给协调器退避，不把 JSON shape 错误误判成网络失败。
+
+15. **输出语言只进 user prompt**：`i18n/output_language.py` 生成按 locale 字节稳定的
+    `<output_language>` 指令，由聊天与推荐理由 builder 追加到 user prompt 末尾；system prompt
+    保持静态（跨 locale 字节一致），因此 provider prompt cache 不受影响。内部评估 / 抽取 /
+    关键词规划不接该指令，避免行为在不同语言间漂移。`output_language=""` 是显式 no-op，
+    保持既有 prompt golden 不变。`zh-Hant` 额外带「只用繁體字」字符约束（真实 provider 实测：
+    只说 Traditional Chinese 时首轮仍可能回简体）；配置保存/应用提示同样按新语言返回。
