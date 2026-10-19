@@ -99,7 +99,7 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
 
 ## 7. 安全闸（代码级，不靠提示词）
 
-1. `enabled` 关闭 → 不跑
+1. `enabled` 关闭 → 不跑（不读 Cookie、不调 nav、不写账本）
 2. 没有鱼 cookie / cookie 失效 → 不跑，返回明确原因
 3. 鱼 mid == 主号 mid → 拒绝（隔离破坏）
 4. 当日计数 ≥ `daily_limit` → 不跑

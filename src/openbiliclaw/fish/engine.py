@@ -170,6 +170,11 @@ class BlueFishEngine:
         """Run one pass. Never raises — every failure becomes a record."""
         async with self._lock:
             config = load_fish_config(self._data_dir)
+            # Off is off: do not read the fish cookie, do not call nav, do not
+            # touch the ledger. A disabled lab must have zero external effect,
+            # even when someone hits /api/fish/run manually.
+            if not config.enabled:
+                return FishRunResult(False, "disabled", "「养蓝色大肥鱼」还没开启。")
             effective_dry_run = config.dry_run if dry_run is None else bool(dry_run)
             effective_manual = trigger == "manual" if manual is None else bool(manual)
             now = self._clock()

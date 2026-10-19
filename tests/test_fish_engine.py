@@ -363,9 +363,44 @@ async def test_prompt_receives_the_pool_topic_not_a_growth_memory(tmp_path) -> N
 
 
 async def test_disabled_lab_does_nothing(tmp_path) -> None:
-    engine, client, _llm, _store = _build(tmp_path, config=FishConfig(enabled=False, dry_run=False))
+    engine, client, _llm, store = _build(tmp_path, config=FishConfig(enabled=False, dry_run=False))
 
     result = await engine.run_once(trigger="manual")
 
     assert result.status == "disabled"
     assert client.posts == []
+    assert store.read() == []
+
+
+async def test_disabled_lab_never_validates_the_fish_account(tmp_path) -> None:
+    """Off is off: no cookie read, no nav call, not even a ledger line."""
+    calls: list[str] = []
+
+    def _nav_factory(cookie: str) -> Any:
+        calls.append(cookie)
+        return _FakeNavClient(mid=222)
+
+    async def _candidates(limit: int) -> list[FishCandidate]:
+        raise AssertionError("a disabled lab must not look for candidates")
+
+    async def _main_account() -> tuple[int, str]:
+        return 111, "SESSION=owner"
+
+    save_fish_config(tmp_path, FishConfig(enabled=False, dry_run=False))
+    account = FishAccount(tmp_path, client_factory=_nav_factory)
+    account.save_cookie(FISH_COOKIE)
+    engine = BlueFishEngine(
+        data_dir=tmp_path,
+        account=account,
+        store=FishStore(tmp_path),
+        llm=_FakeLLM(_decision()),
+        candidate_provider=_candidates,
+        client_factory=lambda _cookie: _FakeClient([]),
+        clock=lambda: NOW,
+        main_account_provider=_main_account,
+    )
+
+    result = await engine.run_once(trigger="schedule")
+
+    assert result.status == "disabled"
+    assert calls == []
