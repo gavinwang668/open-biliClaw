@@ -107,3 +107,47 @@ def test_sanitize_strips_markdown_quotes_and_whitespace() -> None:
 def test_mention_prefix() -> None:
     assert mention_prefix("小白") == "@小白 "
     assert mention_prefix("   ") == ""
+
+
+def test_failure_streak_opens_the_breaker() -> None:
+    result = _run(
+        FishConfig(enabled=True),
+        failure_streak=3,
+        last_failure_at=NOW - timedelta(minutes=10),
+    )
+
+    assert result.ok is False
+    assert result.code == "failure_cooldown"
+    assert "3 次" in result.message
+
+
+def test_failure_breaker_expires_after_the_cooldown() -> None:
+    result = _run(
+        FishConfig(enabled=True),
+        failure_streak=3,
+        last_failure_at=NOW - timedelta(minutes=61),
+    )
+
+    assert result.ok is True
+
+
+def test_manual_run_bypasses_the_failure_breaker() -> None:
+    result = _run(
+        FishConfig(enabled=True),
+        failure_streak=4,
+        last_failure_at=NOW - timedelta(minutes=1),
+        manual=True,
+    )
+
+    assert result.ok is True
+
+
+def test_dry_run_bypasses_the_failure_breaker() -> None:
+    result = _run(
+        FishConfig(enabled=True),
+        failure_streak=5,
+        last_failure_at=NOW - timedelta(minutes=1),
+        dry_run=True,
+    )
+
+    assert result.ok is True

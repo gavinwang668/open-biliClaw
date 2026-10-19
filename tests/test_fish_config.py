@@ -87,3 +87,26 @@ def test_saved_file_is_readable_json(tmp_path) -> None:
 
     assert payload["persona_name"] == "小蓝"
     assert payload["dry_run"] is True
+
+
+def test_audience_prompt_defaults_to_unrestricted() -> None:
+    config, _warnings = parse_fish_config({})
+
+    assert config.audience_prompt == ""
+
+
+def test_audience_prompt_is_trimmed_and_truncated() -> None:
+    config, warnings = parse_fish_config({"audience_prompt": "  " + "想" * 400 + "  "})
+
+    assert len(config.audience_prompt) == 300
+    assert any("audience_prompt" in warning for warning in warnings)
+
+
+def test_audience_prompt_round_trips_through_save(tmp_path) -> None:
+    saved = save_fish_config(
+        tmp_path,
+        FishConfig(audience_prompt="只想回在找片单的人"),
+    )
+
+    assert saved.audience_prompt == "只想回在找片单的人"
+    assert load_fish_config(tmp_path).audience_prompt == "只想回在找片单的人"

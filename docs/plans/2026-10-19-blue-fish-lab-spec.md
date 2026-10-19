@@ -52,6 +52,7 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
 | `persona_name` | `蓝色大肥鱼` | 对外的名字 |
 | `persona_prompt` | 内置 | 人格设定，用户可改 |
 | `reply_rules` | 内置 | 额外说话规矩，用户可改 |
+| `audience_prompt` | 空 | 可选：只回哪类人；空 = 不限定 |
 | `max_chars` | `80` | 单条评论字数上限（B 站上限 1000，我们主动收窄） |
 | `daily_limit` | `3` | 每天最多发几条 |
 | `min_interval_minutes` | `30` | 两次发言的最小间隔 |
@@ -73,7 +74,8 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
 
 账本字段：`ts`、`day`、`recommendation_id`、`bvid`、`video_title`、`mode`
 （`reply` / `top_level`）、`target_rpid`、`target_uname`、`target_text`、`reply`、
-`reason`、`status`（`preview` / `published` / `failed` / `skipped`）、`dry_run`、`error`。
+`reason`、`status`（`preview` / `published` / `failed` / `skipped`）、`dry_run`、`error`、
+`reply_rpid`（发布成功后 B 站返回的评论 id，可用于以后删除/追踪）。
 `recommendation_id` 只是溯源用的 trace id，从不写回那一行。
 
 ## 6. 一轮怎么跑
@@ -81,11 +83,11 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
 ```
 守卫（启用 / 已登录 / 账号隔离 / 日配额 / 最小间隔，全部读账本）
   → 取候选视频（主链路已评估的推荐池，exclude_processed=True）
-  → 逐个视频：拉评论 → 过滤（点赞门槛 / 已回过 / 太短太长）
-  → 组 prompt → LLM 选一条 + 写回复（一次调用）
+  → 逐个视频：翻页拉评论（cursor.next，≤5 页）→ 过滤（点赞门槛 / 已回过 / 太短太长）
+  → 组 prompt（persona + audience + video + comments）→ LLM 选一条 + 写回复（一次调用）
   → 硬闸校验（字数 / 屏蔽词 / 空回复 / 只挑一条）
   → dry_run ? 记账为 preview : 调 post_comment 发出去
-  → 发布成功：只写鱼的账本（不写推荐反馈、不触发 cognition）
+  → 发布成功：只写鱼的账本（含 reply_rpid；不写推荐反馈、不触发 cognition）
   → 等级 / 经验由账本推导
 ```
 
@@ -107,9 +109,12 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
 6. 同一 `rpid` 只回一次（账本查重）
 7. 同一视频累计 ≥ `per_video_limit`（跨天累计）→ 换下一个视频
 8. 回复为空 / 超 `max_chars` / 命中屏蔽词 → 丢弃并记 `skipped`
+8b. 模型返回 `top_level` 但 `allow_top_level=false` → 记 `skipped`（代码级，不靠提示词）
 9. B 站接口报错 → 记 `failed`，本轮停止，不自动重试
 10. `dry_run` 默认开，要用户自己关掉才会真的发
 11. 写回隔离：发布成功后唯一落盘的是账本；推荐行、画像、cognition 一律不动
+12. 连续 3 条 `failed` 且最近一次在 60 分钟内 → 定时轮返回 `failure_cooldown`；
+    手动触发绕过，便于修好账号后立刻验证
 
 ## 8. API
 
@@ -148,3 +153,5 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
 - 账号隔离：绝不读主账号 cookie
 - 反馈隔离：发布后推荐行保持未处理、cognition 不被调用、该行仍出现在
   `exclude_processed=True` 的候选池里；鱼的记录只存在于账本
+- 真实账号联调（`@pytest.mark.integration`，默认跳过）：拉评论、账号隔离、
+  发一条楼中楼再删除；评论翻页另有单测守护

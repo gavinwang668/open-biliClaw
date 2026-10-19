@@ -102,6 +102,7 @@ class FishRunResult:
     bvid: str = ""
     target_rpid: int = 0
     reply: str = ""
+    reply_rpid: int = 0
     record: dict[str, Any] = field(default_factory=dict)
 
 
@@ -191,6 +192,8 @@ class BlueFishEngine:
                 now=now,
                 dry_run=effective_dry_run,
                 manual=effective_manual,
+                failure_streak=view.stats.failure_streak,
+                last_failure_at=view.stats.last_failure_at,
             )
             if not gate.ok:
                 return FishRunResult(False, gate.code, gate.message)
@@ -257,6 +260,19 @@ class BlueFishEngine:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Blue Fish comment fetch failed for %s: %s", candidate.bvid, exc)
+            # Recorded, not just returned: the failure-streak breaker reads
+            # these lines, and "nothing happened" must stay inspectable.
+            self._record(
+                candidate,
+                status="failed",
+                dry_run=dry_run,
+                target_rpid=0,
+                target_uname="",
+                target_text="",
+                reply="",
+                reason="",
+                error=f"拉不到评论：{exc}",
+            )
             return FishRunResult(
                 False,
                 "comment_fetch_failed",
@@ -287,6 +303,7 @@ class BlueFishEngine:
             persona_name=config.persona_name,
             persona_prompt=config.persona_prompt,
             reply_rules=config.reply_rules,
+            audience=config.audience_prompt,
             video={
                 "bvid": candidate.bvid,
                 "title": candidate.title,
@@ -319,20 +336,39 @@ class BlueFishEngine:
             )
             return None
 
-        target = next((item for item in usable if int(item.rpid) == target_rpid), None)
-        if target is None:
-            self._record(
-                candidate,
-                status="skipped",
-                dry_run=dry_run,
-                target_rpid=target_rpid,
-                target_uname="",
-                target_text="",
-                reply=reply,
-                reason=reason,
-                error="模型挑了一个不在候选里的 rpid",
-            )
-            return None
+        if action == "top_level":
+            # Code-level gate, not a prompt promise: the model may ignore the
+            # constraint, and a top-level comment is a different, noisier act
+            # than answering inside a thread.
+            if not config.allow_top_level:
+                self._record(
+                    candidate,
+                    status="skipped",
+                    dry_run=dry_run,
+                    target_rpid=0,
+                    target_uname="",
+                    target_text="",
+                    reply=reply,
+                    reason=reason,
+                    error="模型想发顶层评论，但配置不允许（allow_top_level=false）",
+                )
+                return None
+            target = None
+        else:
+            target = next((item for item in usable if int(item.rpid) == target_rpid), None)
+            if target is None:
+                self._record(
+                    candidate,
+                    status="skipped",
+                    dry_run=dry_run,
+                    target_rpid=target_rpid,
+                    target_uname="",
+                    target_text="",
+                    reply=reply,
+                    reason=reason,
+                    error="模型挑了一个不在候选里的 rpid",
+                )
+                return None
 
         body = sanitize_reply(reply)
         text_gate = check_reply_text(config, body)
@@ -341,28 +377,37 @@ class BlueFishEngine:
                 candidate,
                 status="skipped",
                 dry_run=dry_run,
-                target_rpid=target.rpid,
-                target_uname=target.uname,
-                target_text=target.message,
+                target_rpid=int(target.rpid) if target is not None else 0,
+                target_uname=target.uname if target is not None else "",
+                target_text=target.message if target is not None else "",
                 reply=body,
                 reason=reason,
                 error=text_gate.message,
             )
             return None
 
-        message = f"{mention_prefix(target.uname)}{body}"
-        root = int(target.root) if int(target.root) > 0 else int(target.rpid)
-        parent = int(target.rpid)
-        mode = "reply" if action != "top_level" else "top_level"
+        if target is None:
+            message = body
+            root: int | None = None
+            parent: int | None = None
+            mode = "top_level"
+        else:
+            message = f"{mention_prefix(target.uname)}{body}"
+            root = int(target.root) if int(target.root) > 0 else int(target.rpid)
+            parent = int(target.rpid)
+            mode = "reply"
+        record_target_rpid = int(target.rpid) if target is not None else 0
+        record_target_uname = target.uname if target is not None else ""
+        record_target_text = target.message if target is not None else ""
 
         if dry_run:
             record = self._record(
                 candidate,
                 status="preview",
                 dry_run=True,
-                target_rpid=target.rpid,
-                target_uname=target.uname,
-                target_text=target.message,
+                target_rpid=record_target_rpid,
+                target_uname=record_target_uname,
+                target_text=record_target_text,
                 reply=message,
                 reason=reason,
                 error="",
@@ -373,25 +418,24 @@ class BlueFishEngine:
                 "preview",
                 "预览完成（没有发出去）。",
                 bvid=candidate.bvid,
-                target_rpid=target.rpid,
+                target_rpid=record_target_rpid,
                 reply=message,
                 record=record,
             )
 
         try:
-            if mode == "top_level":
-                await client.post_comment(candidate.bvid, message=message)
-            else:
-                await client.post_comment(candidate.bvid, message=message, root=root, parent=parent)
+            posted = await client.post_comment(
+                candidate.bvid, message=message, root=root, parent=parent
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Blue Fish publish failed for %s: %s", candidate.bvid, exc)
             record = self._record(
                 candidate,
                 status="failed",
                 dry_run=False,
-                target_rpid=target.rpid,
-                target_uname=target.uname,
-                target_text=target.message,
+                target_rpid=record_target_rpid,
+                target_uname=record_target_uname,
+                target_text=record_target_text,
                 reply=message,
                 reason=reason,
                 error=str(exc),
@@ -402,7 +446,7 @@ class BlueFishEngine:
                 "publish_failed",
                 f"发出去的时候失败了：{exc}",
                 bvid=candidate.bvid,
-                target_rpid=target.rpid,
+                target_rpid=record_target_rpid,
                 reply=message,
                 record=record,
             )
@@ -410,25 +454,28 @@ class BlueFishEngine:
         # The comment is public at this point. The only durable write is the
         # fish's own ledger line: the owner's profile / recommendation state
         # must stay exactly as it was before the run.
+        reply_rpid = _posted_rpid(posted)
         record = self._record(
             candidate,
             status="published",
             dry_run=False,
-            target_rpid=target.rpid,
-            target_uname=target.uname,
-            target_text=target.message,
+            target_rpid=record_target_rpid,
+            target_uname=record_target_uname,
+            target_text=record_target_text,
             reply=message,
             reason=reason,
             error="",
             mode=mode,
+            reply_rpid=reply_rpid,
         )
         return FishRunResult(
             True,
             "published",
             f"发出去了：{message}",
             bvid=candidate.bvid,
-            target_rpid=target.rpid,
+            target_rpid=record_target_rpid,
             reply=message,
+            reply_rpid=reply_rpid,
             record=record,
         )
 
@@ -509,6 +556,7 @@ class BlueFishEngine:
         reason: str,
         error: str,
         mode: str = "reply",
+        reply_rpid: int = 0,
     ) -> dict[str, Any]:
         now = self._clock()
         record: dict[str, Any] = {
@@ -522,6 +570,7 @@ class BlueFishEngine:
             "target_uname": target_uname,
             "target_text": target_text[:300],
             "reply": reply,
+            "reply_rpid": int(reply_rpid),
             "reason": reason,
             "status": status,
             "dry_run": bool(dry_run),
@@ -532,6 +581,20 @@ class BlueFishEngine:
 
     def _today(self, now: datetime | None = None) -> date:
         return (now or self._clock()).date()
+
+
+def _posted_rpid(payload: Any) -> int:
+    """Reply id from ``/x/v2/reply/add``, tolerating int/str/missing fields."""
+    if not isinstance(payload, dict):
+        return 0
+    for key in ("rpid", "rpid_str"):
+        try:
+            value = int(str(payload.get(key) or 0).strip())
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return 0
 
 
 def _parse_decision(payload: dict[str, Any], *, max_chars: int) -> tuple[str, int, str, str] | None:
@@ -545,7 +608,7 @@ def _parse_decision(payload: dict[str, Any], *, max_chars: int) -> tuple[str, in
         target_rpid = 0
     reply = str(payload.get("reply") or "")
     reason = str(payload.get("reason") or "").strip()[:200]
-    if action != "skip" and target_rpid <= 0:
+    if action == "reply" and target_rpid <= 0:
         return None
     if action != "skip" and len(reply.strip()) > max_chars * 4:
         # A wildly over-budget reply means the model ignored the contract;

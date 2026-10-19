@@ -256,8 +256,8 @@ extension/
 
 设置浮层新增「养蓝色大肥鱼」Tab（`popup/popup-fish.js`，ES module，复用
 `popup-api.js` 的 `requestJson` 以继承可配置后端地址 / 会话令牌 / 超时）。面板与桌面 Web
-对接同一组 `/api/fish/*` 接口：开关、只预览、独立小号 Cookie、可编辑人设与规矩、配额、
-预览一轮 / 发一轮、最近账本。
+对接同一组 `/api/fish/*` 接口：开关、只预览、独立小号 Cookie、可编辑人设 / 规矩 / 可选受众
+（只回哪类人）、配额、预览一轮 / 发一轮、最近账本。
 
 该面板的输入都带 `data-settings-ignore-dirty`，不会把弹窗全局保存条标脏；保存走面板自己的
 按钮，鱼的 Cookie 与实验室字段不经过 `PUT /api/config`。

@@ -215,6 +215,29 @@ class CommentInfo:
     parent: int = 0
 
 
+# B站 caps a reply page regardless of ``ps``; 20 is the documented page size.
+_COMMENT_PAGE_SIZE = 20
+# Paging is bounded so one fish turn can never turn into an unbounded walk
+# through a hot comment section.
+_COMMENT_MAX_PAGES = 5
+
+
+def _comment_from_reply(reply: dict[str, Any]) -> CommentInfo:
+    """Project one ``/x/v2/reply/main`` reply object onto :class:`CommentInfo`."""
+    return CommentInfo(
+        mid=_int_value(reply.get("mid")),
+        uname=str(_json_object(reply.get("member", {})).get("uname", "")),
+        message=str(_json_object(reply.get("content", {})).get("message", "")),
+        like_count=_int_value(reply.get("like")),
+        ctime=_int_value(reply.get("ctime")),
+        reply_count=_int_value(reply.get("rcount")),
+        avatar=str(_json_object(reply.get("member", {})).get("avatar", "")),
+        rpid=_int_value(reply.get("rpid")),
+        root=_int_value(reply.get("root")),
+        parent=_int_value(reply.get("parent")),
+    )
+
+
 class BilibiliAPIClient:
     """Client for Bilibili's web API.
 
@@ -1677,29 +1700,47 @@ class BilibiliAPIClient:
         return _json_list(data.get("list", []))
 
     async def get_video_comments(self, bvid: str, limit: int = 20) -> list[CommentInfo]:
-        """Get the top comments for a video."""
+        """Get up to ``limit`` top comments for a video, following cursor pages.
+
+        B站's ``/x/v2/reply/main`` returns at most one page per request and
+        silently caps ``ps``, so the only way to actually receive ``limit``
+        comments is to walk ``cursor.next``. Paging stops on the API's
+        ``is_end`` flag, on a missing/zero cursor (the old single-page shape),
+        on an empty page, or after :data:`_COMMENT_MAX_PAGES` pages — a hot
+        comment section must not turn one fish turn into N requests.
+        """
         video = await self.get_video_info(bvid)
-        data = await self._get_json(
-            "/x/v2/reply/main",
-            params={"oid": video.aid, "type": 1, "mode": 3, "ps": limit},
-        )
-        replies = _json_list(data.get("replies", []))
-        comments = [
-            CommentInfo(
-                mid=int(reply.get("mid", 0)),
-                uname=str(_json_object(reply.get("member", {})).get("uname", "")),
-                message=str(_json_object(reply.get("content", {})).get("message", "")),
-                like_count=int(reply.get("like", 0)),
-                ctime=int(reply.get("ctime", 0)),
-                reply_count=int(reply.get("rcount", 0)),
-                avatar=str(_json_object(reply.get("member", {})).get("avatar", "")),
-                rpid=int(reply.get("rpid", 0) or 0),
-                root=int(reply.get("root", 0) or 0),
-                parent=int(reply.get("parent", 0) or 0),
+        comments: list[CommentInfo] = []
+        next_page = 0
+        seen_pages: set[int] = set()
+        for _ in range(_COMMENT_MAX_PAGES):
+            remaining = max(0, int(limit) - len(comments))
+            if remaining == 0:
+                break
+            if next_page in seen_pages:
+                break
+            seen_pages.add(next_page)
+            data = await self._get_json(
+                "/x/v2/reply/main",
+                params={
+                    "oid": video.aid,
+                    "type": 1,
+                    "mode": 3,
+                    "ps": min(_COMMENT_PAGE_SIZE, remaining),
+                    "next": next_page,
+                },
             )
-            for reply in replies
-        ]
-        return comments[:limit]
+            replies = _json_list(data.get("replies", []))
+            if not replies:
+                break
+            comments.extend(_comment_from_reply(reply) for reply in replies)
+            cursor = _json_object(data.get("cursor", {}))
+            if bool(cursor.get("is_end", False)):
+                break
+            next_page = _int_value(cursor.get("next"))
+            if next_page <= 0:
+                break
+        return comments[: max(0, int(limit))]
 
     async def get_video_relation_state(self, bvid: str) -> dict[str, Any]:
         """Get the logged-in user's like/coin/favorite/watch-later state."""

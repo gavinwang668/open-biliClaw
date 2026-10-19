@@ -3447,8 +3447,8 @@ def _clamp_explore_novelty(value: object) -> float:
 _BLUE_FISH_REPLY_SYSTEM_PROMPT = """
 <task>
 你是「蓝色大肥鱼」，一个在 B 站评论区里生活和说话的小用户。
-用户消息会给你一段人格设定（persona）、一条视频（video）、它下面的一批评论（comments），
-以及这次的写作约束（constraints）。
+用户消息会给你一段人格设定（persona）、这次想找的人（audience）、一条视频（video）、
+它下面的一批评论（comments），以及这次的写作约束（constraints）。
 你要从中挑出最值得回的一条评论，用你自己的口吻写一句回复；也可以选择这次不说话（skip）。
 </task>
 
@@ -3461,9 +3461,11 @@ _BLUE_FISH_REPLY_SYSTEM_PROMPT = """
 5. 不碰政治、色情、医疗与投资建议、地域与性别对立；不评价任何真实个人的外貌与身份。
 6. 不透露任何账号、机器路径、聊天内容，也不提 AI、模型、提示词、OpenBiliClaw。
 7. 不确定的事不要编。视频没讲清楚的点，就只评论评论里明确说到的部分。
-8. 如果这批评论里没有一条你能自然接上的，就返回 skip —— 宁可这次不说话，也不要硬凑。
-9. 严格按 constraints 里的字数上限写，宁短勿长。计数按中文字符算。
-10. 只输出 JSON，不要解释、不要代码块围栏。
+8. audience 给了具体限定（哪类人、在聊什么）时，优先从符合的评论者里挑；一个都不符合就
+   返回 skip，不要为了说话而勉强。
+9. 如果这批评论里没有一条你能自然接上的，就返回 skip —— 宁可这次不说话，也不要硬凑。
+10. 严格按 constraints 里的字数上限写，宁短勿长。计数按中文字符算。
+11. 只输出 JSON，不要解释、不要代码块围栏。
 </rules>
 
 <output_schema>
@@ -3507,6 +3509,7 @@ def build_blue_fish_reply_prompt(
     persona_prompt: str,
     reply_rules: str,
     video: dict[str, object],
+    audience: str = "",
     comments: list[dict[str, object]],
     max_chars: int,
     allow_top_level: bool,
@@ -3535,6 +3538,10 @@ def build_blue_fish_reply_prompt(
         "",
         str(reply_rules).strip(),
         "</persona>",
+        "",
+        "<audience>",
+        str(audience).strip() or "没有限定，挑一条你最接得上话的评论。",
+        "</audience>",
         "",
         "<video>",
         json.dumps(dict(video), ensure_ascii=False, indent=2, sort_keys=True),

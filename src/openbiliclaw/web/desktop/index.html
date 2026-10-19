@@ -1525,11 +1525,12 @@
               <p class="settings-section-kicker">Persona</p>
               <h3 id="fishPersonaHeading">人设与说话规矩</h3>
             </div>
-            <p class="settings-note-inline">这两段会原样进入提示词：人设决定它像谁，规矩决定它不做什么。改完点下面的「保存设置」即可生效，不用重启。</p>
+            <p class="settings-note-inline">这几段会原样进入提示词：人设决定它像谁，规矩决定它不做什么，受众决定它优先回谁。改完点下面的「保存设置」即可生效，不用重启。</p>
             <div class="settings-advanced-fields">
               <label class="settings-field"><span>它的名字</span><input id="fishPersonaName" type="text" maxlength="20" autocomplete="off" placeholder="蓝色大肥鱼"></label>
               <label class="settings-field full"><span>人格设定</span><textarea id="fishPersonaPrompt" rows="6" spellcheck="false" placeholder="你是一只叫「蓝色大肥鱼」的 B 站小用户…"></textarea></label>
               <label class="settings-field full"><span>额外说话规矩</span><textarea id="fishReplyRules" rows="5" spellcheck="false" placeholder="只回答摆在你面前的那一条评论…"></textarea></label>
+              <label class="settings-field full"><span>只回哪类人（可选）</span><textarea id="fishAudiencePrompt" rows="3" spellcheck="false" placeholder="留空则不限。例如：想找片单、抱怨推荐不准、在聊同一个人的人。"></textarea></label>
             </div>
           </section>
 

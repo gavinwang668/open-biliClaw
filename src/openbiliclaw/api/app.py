@@ -8845,6 +8845,7 @@ def create_app(
             "bvid": result.bvid,
             "target_rpid": result.target_rpid,
             "reply": result.reply,
+            "reply_rpid": result.reply_rpid,
             "record": result.record,
         }
 

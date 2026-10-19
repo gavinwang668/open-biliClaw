@@ -8,6 +8,8 @@
 
 `CommentInfo` 还携带 `rpid` / `root` / `parent`（2026-10-19 起，默认 `0`）：`root` 是楼层根评论、`parent` 是被回复的那条，配合 `post_comment(root=..., parent=...)` 就能发楼中楼。蓝鱼实验室是第一个消费方；旧调用方不读这三个字段时行为逐字节不变。
 
+`get_video_comments(limit=...)` 同日改为**翻页取满**：`/x/v2/reply/main` 单次最多返回一页且会忽略过大的 `ps`，所以按 `cursor.next` 走到 `is_end` / 空页 / 游标缺失 / 上限 5 页为止（每次请求 `ps ≤ 20`）。上游没有 `cursor` 字段时仍只发一次请求，老的返回结构行为不变。
+
 `bilibili/` 包是系统访问 B 站 API 的唯一出口；B 站 steady-state discovery 还会通过 `sources/bili_tasks.py`、`runtime/bilibili_producer.py` 和浏览器扩展提供搜索兜底任务桥。整体分四层：
 
 1. **AuthManager** — Cookie 管理和登录验证

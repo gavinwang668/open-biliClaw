@@ -15,6 +15,17 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .config import FishConfig
 
+# Failure breaker: N failed publisher runs since the last successful publish,
+# within the cooldown window, stop scheduled runs (previews/skips are ignored). Not empirically calibrated yet — a product guess, to be
+# revisited after real-account integration runs. Rationale: one failure is
+# usually transient (B站 5xx, one unreadable video), while three in a row has
+# so far meant a persistent cause (dead cookie, changed reply API); 60 minutes
+# is long enough for the operator to read the ledger line, short enough that a
+# transient outage does not leave the lab dark for a day. Manual runs bypass
+# the breaker on purpose.
+_FAILURE_STREAK_LIMIT = 3
+_FAILURE_COOLDOWN_MINUTES = 60
+
 _WHITESPACE_RE = re.compile(r"\s+")
 _WRAPPING_QUOTES = "\"'“”‘’「」『』"
 
@@ -62,6 +73,8 @@ def check_can_run(
     now: datetime,
     dry_run: bool,
     manual: bool,
+    failure_streak: int = 0,
+    last_failure_at: datetime | None = None,
 ) -> GateResult:
     """Decide whether this run may proceed at all."""
     if not config.enabled:
@@ -78,6 +91,17 @@ def check_can_run(
         # A preview publishes nothing, so it costs neither quota nor the
         # minimum interval. It still needs a working account to read comments.
         return _OK
+    if not manual and failure_streak >= _FAILURE_STREAK_LIMIT and last_failure_at is not None:
+        cooldown = timedelta(minutes=_FAILURE_COOLDOWN_MINUTES)
+        elapsed = now - last_failure_at
+        if elapsed < cooldown:
+            remaining = cooldown - elapsed
+            return GateResult(
+                False,
+                "failure_cooldown",
+                f"最近连续失败 {failure_streak} 次，先暂停 "
+                f"{max(1, int(remaining.total_seconds() // 60))} 分钟再试。",
+            )
     if today_published >= config.daily_limit:
         return GateResult(
             False,

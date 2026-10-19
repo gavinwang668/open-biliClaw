@@ -49,6 +49,7 @@ _COMMENTS_PER_VIDEO_BOUNDS = (1, 50)
 _MIN_COMMENT_LIKES_BOUNDS = (0, 10_000)
 
 _MAX_PERSONA_CHARS = 4_000
+_MAX_AUDIENCE_CHARS = 300
 _MAX_NAME_CHARS = 20
 _MAX_BLOCKED_WORDS = 50
 _MAX_BLOCKED_WORD_CHARS = 20
@@ -63,6 +64,9 @@ class FishConfig:
     persona_name: str = "蓝色大肥鱼"
     persona_prompt: str = DEFAULT_PERSONA_PROMPT
     reply_rules: str = DEFAULT_REPLY_RULES
+    # Optional targeting hint: "only answer people who look like X". Empty
+    # means "no restriction" — the fish just picks the most natural comment.
+    audience_prompt: str = ""
     max_chars: int = 80
     daily_limit: int = 3
     min_interval_minutes: int = 30
@@ -81,6 +85,7 @@ class FishConfig:
             "persona_name": self.persona_name,
             "persona_prompt": self.persona_prompt,
             "reply_rules": self.reply_rules,
+            "audience_prompt": self.audience_prompt,
             "max_chars": self.max_chars,
             "daily_limit": self.daily_limit,
             "min_interval_minutes": self.min_interval_minutes,
@@ -232,6 +237,13 @@ def parse_fish_config(raw: object) -> tuple[FishConfig, list[str]]:
             default=defaults.reply_rules,
             max_chars=_MAX_PERSONA_CHARS,
             field_name="reply_rules",
+            warnings=warnings,
+        ),
+        audience_prompt=_clean_text(
+            raw.get("audience_prompt"),
+            default=defaults.audience_prompt,
+            max_chars=_MAX_AUDIENCE_CHARS,
+            field_name="audience_prompt",
             warnings=warnings,
         ),
         max_chars=_clamp_int(

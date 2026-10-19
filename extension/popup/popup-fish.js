@@ -21,6 +21,7 @@ const el = {
   personaName: $("fishPersonaName"),
   personaPrompt: $("fishPersonaPrompt"),
   replyRules: $("fishReplyRules"),
+  audience: $("fishAudiencePrompt"),
   dailyLimit: $("fishDailyLimit"),
   minInterval: $("fishMinInterval"),
   perVideoLimit: $("fishPerVideoLimit"),
@@ -64,6 +65,7 @@ if (el.enabled && el.saveConfig) {
       persona_name: String(el.personaName.value || "").trim(),
       persona_prompt: String(el.personaPrompt.value || ""),
       reply_rules: String(el.replyRules.value || ""),
+      audience_prompt: String(el.audience?.value || ""),
       daily_limit: numberValue(el.dailyLimit, 3),
       min_interval_minutes: numberValue(el.minInterval, 30),
       per_video_limit: numberValue(el.perVideoLimit, 1),
@@ -86,6 +88,9 @@ if (el.enabled && el.saveConfig) {
     el.personaName.value = config.persona_name || "";
     el.personaPrompt.value = config.persona_prompt || "";
     el.replyRules.value = config.reply_rules || "";
+    if (el.audience) {
+      el.audience.value = config.audience_prompt || "";
+    }
     el.dailyLimit.value = String(config.daily_limit ?? 3);
     el.minInterval.value = String(config.min_interval_minutes ?? 30);
     el.perVideoLimit.value = String(config.per_video_limit ?? 1);

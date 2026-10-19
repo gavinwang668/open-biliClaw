@@ -41,12 +41,17 @@ class _FakeNavClient:
 
 
 class _FakeClient:
-    def __init__(self, comments: list[CommentInfo]) -> None:
+    def __init__(
+        self, comments: list[CommentInfo], *, fetch_error: Exception | None = None
+    ) -> None:
         self.comments = comments
+        self.fetch_error = fetch_error
         self.posts: list[dict[str, Any]] = []
         self.cookies: list[str] = []
 
     async def get_video_comments(self, bvid: str, limit: int = 20) -> list[CommentInfo]:
+        if self.fetch_error is not None:
+            raise self.fetch_error
         return self.comments[:limit]
 
     async def post_comment(
@@ -117,12 +122,16 @@ def _build(
     main_mid: int = 111,
     main_cookie: str = "SESSION=owner",
     candidates: list[FishCandidate] | None = None,
+    fetch_error: Exception | None = None,
 ) -> tuple[BlueFishEngine, _FakeClient, _FakeLLM, FishStore]:
     effective = config or FishConfig(enabled=True, dry_run=True)
     save_fish_config(tmp_path, effective)
     account = FishAccount(tmp_path, client_factory=lambda _cookie: _FakeNavClient(mid=account_mid))
     account.save_cookie(FISH_COOKIE)
-    client = _FakeClient(list(comments if comments is not None else COMMENTS))
+    client = _FakeClient(
+        list(comments if comments is not None else COMMENTS),
+        fetch_error=fetch_error,
+    )
     llm = _FakeLLM(decision)
     store = FishStore(tmp_path)
 
@@ -404,3 +413,153 @@ async def test_disabled_lab_never_validates_the_fish_account(tmp_path) -> None:
 
     assert result.status == "disabled"
     assert calls == []
+
+
+async def test_publish_records_the_reply_rpid(tmp_path) -> None:
+    engine, _client, _llm, store = _build(tmp_path, config=FishConfig(enabled=True, dry_run=False))
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "published"
+    assert result.reply_rpid == 900_001
+    assert store.read()[-1]["reply_rpid"] == 900_001
+
+
+async def test_top_level_comment_posts_without_root_or_parent(tmp_path) -> None:
+    engine, client, _llm, store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, allow_top_level=True),
+        decision=_decision(action="top_level", target_rpid=0),
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "published"
+    assert client.posts == [
+        {
+            "bvid": "BV1xx411c7mD",
+            "message": "那个 0.5 秒的空镜确实值得倒回去看",
+            "root": None,
+            "parent": None,
+        }
+    ]
+    assert store.read()[-1]["mode"] == "top_level"
+    assert store.read()[-1]["target_rpid"] == 0
+
+
+async def test_top_level_is_refused_when_config_disallows_it(tmp_path) -> None:
+    """The prompt says top_level is off; the engine must enforce it anyway."""
+    engine, client, _llm, store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, allow_top_level=False),
+        decision=_decision(action="top_level", target_rpid=0),
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "nothing_to_say"
+    assert client.posts == []
+    assert store.read()[-1]["status"] == "skipped"
+    assert "allow_top_level" in store.read()[-1]["error"]
+
+
+async def test_comment_fetch_failure_is_recorded_as_failed(tmp_path) -> None:
+    engine, _client, _llm, store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False),
+        fetch_error=RuntimeError("reply api down"),
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "comment_fetch_failed"
+    record = store.read()[-1]
+    assert record["status"] == "failed"
+    assert "reply api down" in record["error"]
+
+
+async def test_three_consecutive_failures_pause_scheduled_runs(tmp_path) -> None:
+    engine, client, _llm, store = _build(tmp_path, config=FishConfig(enabled=True, dry_run=False))
+    for index in range(3):
+        store.append(
+            {
+                "ts": NOW.isoformat(),
+                "day": "2026-10-19",
+                "bvid": f"BVfail{index}",
+                "status": "failed",
+                "error": "boom",
+            }
+        )
+
+    result = await engine.run_once(trigger="schedule")
+
+    assert result.status == "failure_cooldown"
+    assert client.posts == []
+
+
+async def test_previews_do_not_mask_a_failure_streak(tmp_path) -> None:
+    engine, client, _llm, store = _build(tmp_path, config=FishConfig(enabled=True, dry_run=False))
+    for index in range(3):
+        store.append(
+            {
+                "ts": NOW.isoformat(),
+                "day": "2026-10-19",
+                "bvid": f"BVfail{index}",
+                "status": "failed",
+                "error": "boom",
+            }
+        )
+    store.append(
+        {
+            "ts": NOW.isoformat(),
+            "day": "2026-10-19",
+            "bvid": "BVpreview",
+            "status": "preview",
+        }
+    )
+
+    result = await engine.run_once(trigger="schedule")
+
+    assert result.status == "failure_cooldown"
+    assert client.posts == []
+
+
+async def test_manual_run_still_allowed_during_failure_cooldown(tmp_path) -> None:
+    engine, _client, _llm, store = _build(tmp_path, config=FishConfig(enabled=True, dry_run=False))
+    for index in range(3):
+        store.append(
+            {
+                "ts": NOW.isoformat(),
+                "day": "2026-10-19",
+                "bvid": f"BVfail{index}",
+                "status": "failed",
+                "error": "boom",
+            }
+        )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "published"
+
+
+async def test_audience_prompt_reaches_the_user_message(tmp_path) -> None:
+    engine, _client, llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, audience_prompt="只想回在找片单的人"),
+    )
+
+    await engine.run_once(trigger="manual")
+
+    user_prompt = llm.calls[-1]["user_input"]
+    assert "<audience>" in user_prompt
+    assert "只想回在找片单的人" in user_prompt
+
+
+async def test_empty_audience_means_no_restriction(tmp_path) -> None:
+    engine, _client, llm, _store = _build(tmp_path, config=FishConfig(enabled=True, dry_run=False))
+
+    await engine.run_once(trigger="manual")
+
+    user_prompt = llm.calls[-1]["user_input"]
+    assert "<audience>" in user_prompt
+    assert "没有限定" in user_prompt

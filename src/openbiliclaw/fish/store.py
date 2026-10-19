@@ -54,6 +54,11 @@ class FishStats:
     today_published: int = 0
     last_run_at: str = ""
     last_published_at: datetime | None = None
+    # Trailing run of ``failed`` ledger rows. The engine refuses new publisher
+    # runs while this is high and recent (see ``fish.guard``), so a broken
+    # cookie / changed API cannot turn into a retry loop against B站.
+    failure_streak: int = 0
+    last_failure_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -151,6 +156,22 @@ class FishStore:
                 last_run_at = candidate
                 break
 
+        # Count failures since the last successful publish. Dry-run previews
+        # and model ``skipped`` rows are transparent: they neither prove the
+        # pipeline is healthy nor count as failures, so clicking "preview"
+        # cannot mask a broken account and reset the breaker.
+        failure_streak = 0
+        last_failure_at: datetime | None = None
+        for row in reversed(rows):
+            status = str(row.get("status") or "")
+            if status == "published":
+                break
+            if status != "failed":
+                continue
+            failure_streak += 1
+            if last_failure_at is None:
+                last_failure_at = _parse_dt(row.get("ts"))
+
         return FishLedgerView(
             stats=FishStats(
                 xp=xp,
@@ -159,6 +180,8 @@ class FishStore:
                 today_published=published_today,
                 last_run_at=last_run_at,
                 last_published_at=last_published_at,
+                failure_streak=failure_streak,
+                last_failure_at=last_failure_at,
             ),
             answered=frozenset(answered),
             per_video_total=per_video_total,

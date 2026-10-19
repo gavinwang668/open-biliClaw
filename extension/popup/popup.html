@@ -7996,7 +7996,7 @@
 
       <div class="settings-section">
         <h3>人设与说话规矩</h3>
-        <p class="settings-hint">这两段会原样进入提示词：人设决定它像谁，规矩决定它不做什么。改完点「保存设置」即可生效，不用重启。</p>
+        <p class="settings-hint">这几段会原样进入提示词：人设决定它像谁，规矩决定它不做什么，受众决定它优先回谁。改完点「保存设置」即可生效，不用重启。</p>
         <div class="settings-field">
           <label for="fishPersonaName">它的名字</label>
           <input id="fishPersonaName" type="text" maxlength="20" autocomplete="off" placeholder="蓝色大肥鱼" data-settings-ignore-dirty>
@@ -8008,6 +8008,10 @@
         <div class="settings-field">
           <label for="fishReplyRules">额外说话规矩</label>
           <textarea id="fishReplyRules" rows="5" spellcheck="false" placeholder="只回答摆在你面前的那一条评论…" data-settings-ignore-dirty></textarea>
+        </div>
+        <div class="settings-field">
+          <label for="fishAudiencePrompt">只回哪类人（可选）</label>
+          <textarea id="fishAudiencePrompt" rows="3" spellcheck="false" placeholder="留空则不限。例如：想找片单、抱怨推荐不准、在聊同一个人的人。" data-settings-ignore-dirty></textarea>
         </div>
       </div>
 

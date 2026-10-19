@@ -75,6 +75,7 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 | `persona_name` | `蓝色大肥鱼` | 对外名字 |
 | `persona_prompt` | 内置 | 人格设定，设置页可改 |
 | `reply_rules` | 内置 | 额外说话规矩，设置页可改 |
+| `audience_prompt` | `""` | 可选：只回哪类人。留空 = 不限定；写进 prompt 的 `<audience>` 段（≤300 字） |
 | `max_chars` | `80` | 单条字数上限（10–300） |
 | `daily_limit` | `3` | 每天最多发几条（0–20） |
 | `min_interval_minutes` | `30` | 两次发言的最小间隔（5–1440） |
@@ -93,12 +94,18 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 1. 守卫：启用 / 已登录 / 账号隔离 / 日配额 / 最小间隔（配额与间隔来自账本）
 2. 取候选：`Database.get_recommendations(exclude_processed=True)` —— 已经过主链路评分 /
    解释、且没被点赞 / 点踩 / 屏蔽 / 评论过的 B 站条目；非 B 站条目直接过滤
-3. 逐个视频拉评论，按点赞门槛、长度、是否已回过过滤
-4. 一次 LLM 调用同时完成「挑哪条」+「怎么写」（这是唯一新增的模型调用）
+3. 逐个视频拉评论（按 `cursor.next` 翻页取满 `comments_per_video` 条，最多 5 页），
+   按点赞门槛、长度、是否已回过过滤
+4. 一次 LLM 调用同时完成「挑哪条」+「怎么写」（这是唯一新增的模型调用）；
+   `audience_prompt` 会作为 `<audience>` 段进 user 消息，模型优先从符合的人里挑
 5. 硬闸校验：字数、屏蔽词、空回复、rpid 必须在候选里
 6. `dry_run` → 记 `preview`；否则 `post_comment(root, parent)` 发楼中楼
-7. 发布成功 → 只写鱼的账本。推荐行、画像、cognition 一律不动
+7. 发布成功 → 只写鱼的账本（含 B 站返回的 `reply_rpid`）。推荐行、画像、cognition
+   一律不动
 8. 等级 / 经验由账本推导（真实发布 = 3 XP，每 12 XP 一级）
+
+`allow_top_level` 是**代码级**判断，不是提示词承诺：模型返回 `top_level` 但配置没开时，
+这次直接记 `skipped`，不会悄悄变成一条顶层评论。
 
 第 7 步是隔离的关键：因为推荐行不会被标成「已评论」，那份推荐仍然留在用户的列表里、
 仍然可以被用户自己反馈；鱼的查重只能靠账本 —— 同一 `bvid:rpid` 不回第二次，
@@ -118,7 +125,10 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 7. 同一视频累计已回 ≥ `per_video_limit` → 跳过（按账本跨天累计）
 8. 回复为空 / 超字数 / 命中屏蔽词 → 丢弃并记 `skipped`
 9. B 站接口报错 → 记 `failed`，本轮停止，不自动重试
-10. `dry_run` 默认开 —— 要用户自己关掉才会真的发
+10. 自上次成功发布以来累计 3 次失败、且最后一次在 60 分钟内 → 定时轮暂停
+   （`failure_cooldown`；预览与 `skipped` 不算，也不会重置计数）；手动「跑一轮」不受限，
+   方便账号修好后立刻验证
+11. `dry_run` 默认开 —— 要用户自己关掉才会真的发
 
 `preview` 不占配额也不触发最小间隔：它没有发布任何东西。
 
@@ -164,6 +174,22 @@ CLI 若需要，后续可加 `openbiliclaw fish run`，当前只提供 HTTP 接�
 | `tests/test_fish_guard.py` | 全部守卫分支、字数 / 屏蔽词 / 清洗 |
 | `tests/test_fish_engine.py` | dry-run 不发布、发布路径的 root/parent/@、配额、跨天视频查重、账号隔离、skip、超长、只写账本 |
 | `tests/test_fish_api.py` | 路由、配置往返、空 cookie 拒绝、Cookie 文件隔离，以及**发布后不影响用户侧**（推荐行仍是未处理、cognition 没被调用、候选池仍包含它） |
+| `tests/test_fish_integration.py` | 真实账号联调（默认跳过）：拉评论、账号隔离、发一条楼中楼再删除；见下节 |
+| `tests/test_bilibili_api.py` | 评论翻页（`cursor.next`）与老返回结构不退化成循环 |
 | `tests/test_llm_prompts.py` | 新 builder 的 system 消息与入参无关 |
 
 真实发评论属于需要授权的人工验证，不在单元测试里做。
+
+## 真实账号联调
+
+单元测试全是 fake client，真实接口的形状只能靠这一组 `integration` 用例守：
+
+```bash
+export OPENBILICLAW_FISH_IT_COOKIE='SESSDATA=…; bili_jct=…; DedeUserID=…'
+export OPENBILICLAW_FISH_IT_BVID=BV1xxxxxxxxx
+pytest -m integration tests/test_fish_integration.py -v
+```
+
+默认只读（拉评论 / 校验账号）。要验证「发楼中楼 + @ + 删除」这条写路径，再加
+`OPENBILICLAW_FISH_IT_POST=1`：测试会真的发一条评论、拿到 `rpid` 后立刻删除，
+但在删除前它对外可见，也可能给对方发通知。

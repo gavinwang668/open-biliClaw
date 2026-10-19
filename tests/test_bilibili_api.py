@@ -994,6 +994,85 @@ async def test_get_video_comments_returns_top_n_comments() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_video_comments_follows_cursor_pages() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/view": [{"code": 0, "data": {"aid": 123, "stat": {}, "owner": {}}}],
+            "/x/v2/reply/main": [
+                {
+                    "code": 0,
+                    "data": {
+                        "replies": [
+                            {
+                                "mid": 1,
+                                "member": {"uname": "alice"},
+                                "content": {"message": "第一条"},
+                            }
+                        ],
+                        "cursor": {"next": 2, "is_end": False},
+                    },
+                },
+                {
+                    "code": 0,
+                    "data": {
+                        "replies": [
+                            {
+                                "mid": 2,
+                                "member": {"uname": "bob"},
+                                "content": {"message": "第二条"},
+                            }
+                        ],
+                        "cursor": {"next": 0, "is_end": True},
+                    },
+                },
+            ],
+        }
+    )
+
+    comments = await client.get_video_comments("BV1xx", limit=2)
+
+    assert [comment.uname for comment in comments] == ["alice", "bob"]
+    pages = [
+        params["next"]
+        for url, params, _headers in client._client.calls
+        if url.endswith("/x/v2/reply/main") and params is not None
+    ]
+    assert pages == [0, 2]
+
+
+@pytest.mark.asyncio
+async def test_get_video_comments_stops_when_cursor_is_missing() -> None:
+    """The pre-cursor response shape must stay a single request, not a loop."""
+    client = BilibiliAPIClient(cookie="SESSDATA=abc")
+    client._client = RouteAsyncClient(
+        {
+            "/x/web-interface/view": [{"code": 0, "data": {"aid": 123, "stat": {}, "owner": {}}}],
+            "/x/v2/reply/main": [
+                {
+                    "code": 0,
+                    "data": {
+                        "replies": [
+                            {
+                                "mid": 1,
+                                "member": {"uname": "alice"},
+                                "content": {"message": "第一条"},
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+    )
+
+    comments = await client.get_video_comments("BV1xx", limit=5)
+
+    assert len(comments) == 1
+    requests = [url for url, _params, _headers in client._client.calls]
+    assert sum(1 for url in requests if url.endswith("/x/v2/reply/main")) == 1
+
+
+@pytest.mark.asyncio
 async def test_get_ranking_returns_empty_list_when_data_is_null() -> None:
     """Regression: B站 ``ranking/v2`` may return ``"data": null`` for empty
     regions or under rate-limiting. The client must degrade to ``[]`` instead
