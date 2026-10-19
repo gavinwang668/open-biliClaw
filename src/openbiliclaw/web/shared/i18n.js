@@ -72,6 +72,8 @@
   const state = {
     locale: DEFAULT_LOCALE,
     catalog: new Map(),
+    // Compiled pattern entries: { regex, replacement, order, weight }.
+    patterns: [],
     catalogs: new Map(),
     basePath: "/i18n/ui/",
     fetchCatalog: null,
@@ -120,29 +122,71 @@
 
   async function loadCatalog(locale) {
     if (state.catalogs.has(locale)) return state.catalogs.get(locale);
-    let messages = new Map();
+    let catalog = { messages: new Map(), patterns: {} };
     try {
       if (typeof state.fetchCatalog === "function") {
-        const payload = await state.fetchCatalog(locale);
-        messages = toMap(payload);
+        catalog = toCatalog(await state.fetchCatalog(locale));
       } else {
         const response = await fetch(`${state.basePath}${locale}.json`, { cache: "no-cache" });
-        if (response.ok) messages = toMap(await response.json());
+        if (response.ok) catalog = toCatalog(await response.json());
       }
     } catch (error) {
       // A missing catalog is not fatal: the surface keeps its source copy.
       if (typeof console !== "undefined" && console.warn) {
         console.warn(`[i18n] catalog ${locale} unavailable`, error);
       }
-      messages = new Map();
     }
-    state.catalogs.set(locale, messages);
-    return messages;
+    state.catalogs.set(locale, catalog);
+    return catalog;
   }
 
-  function toMap(payload) {
+  function toCatalog(payload) {
     const messages = (payload && payload.messages) || payload || {};
-    return new Map(Object.entries(messages));
+    const patterns = (payload && payload.patterns) || {};
+    return {
+      messages: new Map(Object.entries(messages)),
+      patterns: patterns && typeof patterns === "object" ? patterns : {}
+    };
+  }
+
+  function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function compilePatterns(entries) {
+    const compiled = [];
+    entries.forEach((replacement, source) => {
+      if (typeof replacement !== "string" || !replacement) return;
+      const parts = String(source).split(/\{(\d+)\}/);
+      let regex = "^";
+      const order = [];
+      for (let index = 0; index < parts.length; index += 1) {
+        if (index % 2 === 0) {
+          regex += escapeRegExp(parts[index]);
+        } else {
+          regex += "(.*?)";
+          order.push(Number(parts[index]));
+        }
+      }
+      regex += "$";
+      compiled.push({
+        regex: new RegExp(regex, "s"),
+        replacement,
+        order,
+        // Longer literal text wins: the most specific pattern matches first.
+        weight: String(source).replace(/\{\d+\}/g, "").length
+      });
+    });
+    compiled.sort((left, right) => right.weight - left.weight);
+    return compiled;
+  }
+
+  function mergePatterns(base, extra) {
+    const merged = new Map(Object.entries(base || {}));
+    Object.entries(extra || {}).forEach(([source, replacement]) => {
+      if (typeof replacement === "string" && replacement) merged.set(source, replacement);
+    });
+    return merged;
   }
 
   async function activate(locale) {
@@ -153,7 +197,8 @@
     // incrementally, so untranslated copy falls back to the Chinese source
     // rather than disappearing.
     state.locale = normalized;
-    state.catalog = mergeCatalog(fallback, primary);
+    state.catalog = mergeCatalog(fallback.messages, primary.messages);
+    state.patterns = compilePatterns(mergePatterns(fallback.patterns, primary.patterns));
     document.documentElement.lang = normalized;
     document.documentElement.dir = "ltr";
     apply(document.documentElement);
@@ -178,6 +223,46 @@
     return typeof value === "string" && value ? value : null;
   }
 
+  // A captured value is often itself a UI label (「来源：启用」 → the value
+  // 「启用」 has its own translation). Translate exact catalog hits only; never
+  // recurse into patterns, so a capture can't re-trigger the same pattern.
+  function translateCapture(value) {
+    const text = String(value == null ? "" : value);
+    const trimmed = text.trim();
+    if (!trimmed) return text;
+    let exact = lookup(trimmed);
+    if (exact === null) {
+      // Status labels are composed as 「◆ 联网验证」 — the symbol is not part
+      // of the catalog key, so retry on the text after leading punctuation.
+      const parts = trimmed.match(/^([^\p{L}\p{N}]*)(.+)$/u);
+      if (parts) {
+        const inner = lookup(parts[2].trim());
+        if (inner !== null) exact = `${parts[1]}${inner}`;
+      }
+    }
+    if (exact === null || exact === trimmed) return text;
+    return text.replace(trimmed, exact);
+  }
+
+  function matchPattern(source) {
+    if (!state.patterns.length || !/[\u3400-\u4dbf\u4e00-\u9fff]/.test(source)) return null;
+    for (const pattern of state.patterns) {
+      const match = pattern.regex.exec(source);
+      if (!match) continue;
+      const values = {};
+      pattern.order.forEach((index, position) => {
+        values[index] = translateCapture(match[position + 1]);
+      });
+      return pattern.replacement.replace(/\{(\d+)\}/g, (_all, index) => values[Number(index)] ?? "");
+    }
+    return null;
+  }
+
+  function translateSource(source) {
+    const exact = lookup(source);
+    return exact === null ? matchPattern(source) : exact;
+  }
+
   function translateTextNode(node) {
     const parent = node.parentElement;
     if (!parent || shouldSkip(parent)) return;
@@ -197,7 +282,7 @@
       textSources.set(node, record);
     }
 
-    const translated = lookup(record.source);
+    const translated = translateSource(record.source);
     const next = translated === null ? record.source : translated;
     if (next === trimmed) {
       // Already in the desired form (source for zh-Hans / untranslated text).
@@ -228,7 +313,7 @@
         entry = { source: trimmed, rendered: trimmed };
         record[attr] = entry;
       }
-      const translated = lookup(entry.source);
+      const translated = translateSource(entry.source);
       const next = translated === null ? entry.source : translated;
       if (next === trimmed) continue;
       element.setAttribute(attr, raw.replace(trimmed, next));
@@ -331,7 +416,7 @@
   }
 
   function translate(source, params) {
-    const translated = lookup(String(source));
+    const translated = translateSource(String(source));
     let text = translated === null ? String(source) : translated;
     if (params) {
       Object.keys(params).forEach((key) => {

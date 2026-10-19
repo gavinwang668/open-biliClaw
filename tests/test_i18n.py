@@ -232,6 +232,22 @@ class TestUiCatalogs:
     def test_ui_inventory_is_not_empty(self) -> None:
         assert len(_ui_messages("zh-Hans")) > 1000
 
+    def test_traditional_patterns_cover_the_source(self) -> None:
+        source = _ui_patterns("zh-Hans")
+        traditional = _ui_patterns("zh-Hant")
+        assert set(traditional) == set(source)
+        assert all(value.strip() for value in traditional.values())
+        for pattern in source:
+            assert _placeholders(pattern) == _placeholders(traditional[pattern]), pattern
+
+    def test_english_patterns_cover_the_source(self) -> None:
+        source = _ui_patterns("zh-Hans")
+        english = _ui_patterns("en")
+        assert set(english) == set(source), sorted(set(source) - set(english))[:5]
+        for pattern in source:
+            assert _placeholders(pattern) == _placeholders(english[pattern]), pattern
+        assert not [value for value in english.values() if CJK.search(value)]
+
 
 class TestCatalogGenerator:
     def test_traditional_catalogs_match_the_opencc_generator(self) -> None:
@@ -243,6 +259,16 @@ class TestCatalogGenerator:
         assert not drifted, (
             f"zh-Hant UI catalog is stale; run python scripts/build_i18n_catalogs.py: {drifted[:5]}"
         )
+        # Patterns use the same generator; keys stay Simplified so they still
+        # match the rendered source text.
+        source_patterns = _ui_patterns("zh-Hans")
+        traditional_patterns = _ui_patterns("zh-Hant")
+        drifted_patterns = [
+            pattern
+            for pattern in source_patterns
+            if traditional_patterns.get(pattern) != converter.convert(source_patterns[pattern])
+        ]
+        assert not drifted_patterns, f"zh-Hant patterns are stale: {drifted_patterns[:5]}"
 
 
 class TestOutputLanguagePolicy:
@@ -282,8 +308,20 @@ class TestCatalogFilesAreCanonicalJson:
             payload = json.loads(raw)
             messages = payload["messages"]
             assert list(messages) == sorted(messages), f"{path} keys are not sorted"
+            patterns = payload.get("patterns")
+            if patterns is not None:
+                assert list(patterns) == sorted(patterns), f"{path} pattern keys are not sorted"
 
 
 def _ui_messages(locale: str) -> dict[str, str]:
     payload = json.loads((UI_CATALOG_DIR / f"{locale}.json").read_text(encoding="utf-8"))
     return {str(key): str(value) for key, value in payload["messages"].items()}
+
+
+def _ui_patterns(locale: str) -> dict[str, str]:
+    payload = json.loads((UI_CATALOG_DIR / f"{locale}.json").read_text(encoding="utf-8"))
+    return {str(key): str(value) for key, value in payload.get("patterns", {}).items()}
+
+
+def _placeholders(text: str) -> set[str]:
+    return set(re.findall(r"\{\d+\}", text))

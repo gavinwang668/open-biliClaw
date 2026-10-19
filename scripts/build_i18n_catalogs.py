@@ -30,6 +30,7 @@ committed, so the runtime never imports OpenCC.
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import re
 import sys
@@ -263,6 +264,74 @@ def _explode_js_literal(value: str, _depth: int = 0) -> Iterator[str]:
     yield unescaped
 
 
+_INTERPOLATION = re.compile(r"\$\{([^{}]*)\}")
+# Numeric/date suffixes need reformatting rather than literal substitution
+# (「3 万」 is not "3 ten-thousand" in English); leave those in the source
+# language until a locale-aware formatter exists.
+_PATTERN_SKIP = re.compile(
+    r"^\{\d+\}(?:万|亿|月|日|号|时|分|秒)$|^\{0\}月\{1\}日$|^\{0\}年\{1\}月"
+)
+# Structural joiners with no literal Chinese (the captures carry the copy).
+# Only this narrow shape is allowlisted: other placeholder-only templates are
+# URLs, CSS, ids, or code.
+_STRUCTURAL_PATTERNS = frozenset({"{0} · {1}"})
+_PATTERN_JUNK = re.compile(
+    r"`|=>|\bfunction\b|\bconst\b|\breturn\b|\bdocument\.|\bit\.|\$\{|<[a-zA-Z/][^>]*>"
+)
+
+
+def _literal_to_pattern(value: str) -> str | None:
+    """Turn a JS template literal into ``模型：{0}`` style pattern source.
+
+    Only single-level interpolations are considered; nested ternaries and
+    markup produce fragments that can't be matched safely against one text
+    node, so they're rejected.
+    """
+
+    if "${" not in value:
+        return None
+    unescaped = value.replace("\\n", " ").replace('\\"', '"').replace("\\'", "'")
+    if len(unescaped) > 300 or "<" in unescaped or ">" in unescaped:
+        return None
+    if not CJK.search(unescaped):
+        return None
+    counter = itertools.count()
+    pattern = _INTERPOLATION.sub(lambda _match: f"{{{next(counter)}}}", unescaped)
+    if "${" in pattern:
+        return None
+    pattern = WHITESPACE.sub(" ", pattern).strip()
+    if CJK.search(pattern) is None and pattern not in _STRUCTURAL_PATTERNS:
+        return None
+    if len(pattern) < 3:
+        return None
+    if _PATTERN_JUNK.search(pattern) or _PATTERN_SKIP.search(pattern):
+        return None
+    return pattern
+
+
+def collect_patterns() -> dict[str, str]:
+    """Return ``{pattern_source: pattern_source}`` for interpolated UI copy."""
+
+    found: set[str] = set()
+    for path in HTML_SOURCES:
+        if not path.is_file():
+            continue
+        raw = path.read_text(encoding="utf-8")
+        for script in SCRIPT_TAG.findall(raw):
+            for literal in _js_strings_from_text(script):
+                pattern = _literal_to_pattern(literal)
+                if pattern is not None:
+                    found.add(pattern)
+    for path in JS_SOURCES:
+        if not path.is_file():
+            continue
+        for literal in _js_strings(path):
+            pattern = _literal_to_pattern(literal)
+            if pattern is not None:
+                found.add(pattern)
+    return {pattern: pattern for pattern in sorted(found)}
+
+
 def collect_inventory() -> dict[str, str]:
     """Return ``{source_text: source_text}`` for every Chinese UI string."""
 
@@ -302,21 +371,28 @@ def build_traditional(inventory: Iterable[str], converter: object) -> dict[str, 
     return {text: str(convert(text)) for text in inventory}
 
 
-def _read_catalog(path: Path) -> dict[str, str]:
+def _read_catalog(path: Path, section: str = "messages") -> dict[str, str]:
     if not path.is_file():
         return {}
     raw = json.loads(path.read_text(encoding="utf-8"))
-    messages = raw.get("messages", raw)
-    if not isinstance(messages, dict):
-        raise SystemExit(f"{path}: 'messages' must be an object")
-    return {str(key): str(value) for key, value in messages.items()}
+    entries = raw.get(section, {} if section != "messages" else raw)
+    if not isinstance(entries, dict):
+        raise SystemExit(f"{path}: {section!r} must be an object")
+    return {str(key): str(value) for key, value in entries.items()}
 
 
-def _render(locale: str, messages: dict[str, str], note: str = "") -> str:
+def _render(
+    locale: str,
+    messages: dict[str, str],
+    patterns: dict[str, str] | None = None,
+    note: str = "",
+) -> str:
     payload: dict[str, object] = {"locale": locale}
     if note:
         payload["note"] = note
     payload["messages"] = dict(sorted(messages.items()))
+    if patterns is not None:
+        payload["patterns"] = dict(sorted(patterns.items()))
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=False) + "\n"
 
 
@@ -327,18 +403,26 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     inventory = collect_inventory()
+    patterns = collect_patterns()
     converter = _opencc()
     traditional = build_traditional(inventory, converter)
+    convert = converter.convert
+    # Pattern keys stay Simplified (they match the rendered source text);
+    # only the replacement values are converted.
+    traditional_patterns = {key: str(convert(value)) for key, value in patterns.items()}
 
     UI_CATALOG_DIR.mkdir(parents=True, exist_ok=True)
     hans_path = UI_CATALOG_DIR / "zh-Hans.json"
     hant_path = UI_CATALOG_DIR / "zh-Hant.json"
     en_path = UI_CATALOG_DIR / "en.json"
 
-    hans_text = _render("zh-Hans", inventory, "Generated by scripts/build_i18n_catalogs.py")
+    hans_text = _render(
+        "zh-Hans", inventory, patterns, "Generated by scripts/build_i18n_catalogs.py"
+    )
     hant_text = _render(
         "zh-Hant",
         traditional,
+        traditional_patterns,
         "Generated from zh-Hans with OpenCC s2twp; re-run the build script after copy changes.",
     )
 
@@ -355,6 +439,7 @@ def main(argv: list[str] | None = None) -> int:
     hant_messages_text = _render(
         "zh-Hant",
         hant_messages,
+        None,
         "Generated from catalogs/zh-Hans.json with OpenCC s2twp; re-run the build script after copy changes.",
     )
 
@@ -382,23 +467,36 @@ def main(argv: list[str] | None = None) -> int:
     hant_messages_path.write_text(hant_messages_text, encoding="utf-8")
     if not en_path.is_file():
         en_path.write_text(
-            _render("en", {}, "Hand-authored; missing keys fall back to zh-Hans"), encoding="utf-8"
+            _render("en", {}, {}, "Hand-authored; missing keys fall back to zh-Hans"),
+            encoding="utf-8",
         )
 
     english = _read_catalog(en_path)
+    english_patterns = _read_catalog(en_path, "patterns")
     missing = [text for text in inventory if text not in english]
     unknown = [text for text in english if text not in inventory]
+    missing_patterns = [text for text in patterns if text not in english_patterns]
+    unknown_patterns = [text for text in english_patterns if text not in patterns]
 
-    print(f"inventory: {len(inventory)} strings")
-    print(f"zh-Hant:   {len(traditional)} strings (OpenCC s2twp)")
-    print(f"en:        {len(english)} translated, {len(missing)} missing")
+    print(f"inventory: {len(inventory)} strings / {len(patterns)} patterns")
+    print(f"zh-Hant:   {len(traditional)} strings / {len(traditional_patterns)} patterns")
+    print(
+        f"en:        {len(english)} strings, {len(missing)} missing; "
+        f"{len(english_patterns)} patterns, {len(missing_patterns)} missing"
+    )
     if unknown:
-        print(f"en entries no longer present in source: {len(unknown)}")
+        print(f"en strings no longer present in source: {len(unknown)}")
         for text in unknown[:20]:
+            print(f"  - {text[:80]}")
+    if unknown_patterns:
+        print(f"en patterns no longer present in source: {len(unknown_patterns)}")
+        for text in unknown_patterns[:20]:
             print(f"  - {text[:80]}")
     if args.report:
         for text in missing:
             print(f"MISSING {text}")
+        for text in missing_patterns:
+            print(f"MISSING_PATTERN {text}")
     return 0
 
 
