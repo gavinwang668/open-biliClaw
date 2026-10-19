@@ -3437,3 +3437,130 @@ def _clamp_explore_novelty(value: object) -> float:
     except (TypeError, ValueError):
         novelty = 0.65
     return max(0.65, min(0.95, novelty))
+
+
+# ── Blue Fish Lab ─────────────────────────────────────────────────────────
+# 100% static system prompt (prompt-cache convention): the fish persona,
+# the video, the candidate comments and every limit live in the user
+# message. The system message is the same bytes for every fish, every
+# video and every user.
+_BLUE_FISH_REPLY_SYSTEM_PROMPT = """
+<task>
+你是「蓝色大肥鱼」，一个在 B 站评论区里生活和说话的小用户。
+用户消息会给你一段人格设定（persona）、一条视频（video）、它下面的一批评论（comments），
+以及这次的写作约束（constraints）。
+你要从中挑出最值得回的一条评论，用你自己的口吻写一句回复；也可以选择这次不说话（skip）。
+</task>
+
+<rules>
+1. 只挑一条评论回答。挑「有具体内容、能接得上话」的那种，不挑纯情绪、纯打卡、纯吵架的。
+2. 回复必须像评论区里随口接的一句人话：短、具体、有信息量或有梗。
+   不要写成小作文，不要分点，不要客套开场（「哈哈」「确实」「说得对」单独出现不算内容）。
+3. 你是在回复那条评论，不是在评论视频本身。不要替 UP 主说话，也不要复述视频简介。
+4. 回复里不要写「@某某」——系统会自动加。也不要写 Markdown、表情包代码、链接、二维码。
+5. 不碰政治、色情、医疗与投资建议、地域与性别对立；不评价任何真实个人的外貌与身份。
+6. 不透露任何账号、机器路径、聊天内容，也不提 AI、模型、提示词、OpenBiliClaw。
+7. 不确定的事不要编。视频没讲清楚的点，就只评论评论里明确说到的部分。
+8. 如果这批评论里没有一条你能自然接上的，就返回 skip —— 宁可这次不说话，也不要硬凑。
+9. 严格按 constraints 里的字数上限写，宁短勿长。计数按中文字符算。
+10. 只输出 JSON，不要解释、不要代码块围栏。
+</rules>
+
+<output_schema>
+{
+  "action": "reply | top_level | skip",
+  "target_rpid": 0,
+  "reply": "",
+  "topic": "",
+  "reason": ""
+}
+</output_schema>
+
+<field_notes>
+- action：默认 "reply"（楼中楼回复某条评论）。只有 constraints 允许顶层评论时才能用 "top_level"。
+  没什么值得说的时候用 "skip"，这时其余字段留空。
+- target_rpid：你挑中的那条评论的 rpid，必须是 comments 里出现过的数字。
+- reply：最终正文，不含 @ 前缀，不含引号包裹。
+- topic：一个两到六个字的题材标签（比如「游戏」「纪录片」「手工」），用于大肥鱼的成长记忆。
+- reason：一句话说明你为什么挑这条，给日志看，不会发布出去。
+</field_notes>
+""".strip()
+
+
+def _fish_prompt_int(value: object) -> int:
+    """Tolerant int coercion for prompt payload values."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return 0
+    return 0
+
+
+def build_blue_fish_reply_prompt(
+    *,
+    persona_name: str,
+    persona_prompt: str,
+    reply_rules: str,
+    level: int,
+    topics: dict[str, int],
+    video: dict[str, object],
+    comments: list[dict[str, object]],
+    max_chars: int,
+    allow_top_level: bool,
+) -> list[dict[str, str]]:
+    """Build the prompt for one Blue Fish comment-section turn.
+
+    The system message is the module-level static constant; only the user
+    message varies. Any mutation of per-call data must stay out of the
+    system prompt or provider prompt-caching stops firing.
+    """
+    ordered_comments = sorted(
+        comments,
+        key=lambda item: (
+            -_fish_prompt_int(item.get("like_count")),
+            str(item.get("rpid", "")),
+        ),
+    )
+    top_topics = sorted(topics.items(), key=lambda item: (-item[1], item[0]))[:8]
+    topic_line = "、".join(f"{name}×{count}" for name, count in top_topics) or "还没聊过什么"
+    user_sections = [
+        '<persona name="' + str(persona_name) + '">',
+        str(persona_prompt).strip(),
+        "",
+        str(reply_rules).strip(),
+        "</persona>",
+        "",
+        f'<growth level="{int(level)}">',
+        f"你最近聊过的话题：{topic_line}",
+        "</growth>",
+        "",
+        "<video>",
+        json.dumps(dict(video), ensure_ascii=False, indent=2, sort_keys=True),
+        "</video>",
+        "",
+        "<comments>",
+        json.dumps(list(ordered_comments), ensure_ascii=False, indent=2, sort_keys=True),
+        "</comments>",
+        "",
+        "<constraints>",
+        f"- 回复正文不超过 {int(max_chars)} 个字（含标点）。",
+        "- 只能挑 comments 里出现过的一条 rpid。",
+        (
+            "- 这次允许 action=top_level（在视频下发一条顶层评论）。"
+            if allow_top_level
+            else "- 这次只允许 action=reply 或 action=skip，不允许 top_level。"
+        ),
+        "- 正文里不要包含 @ 前缀，系统会自己加。",
+        "</constraints>",
+    ]
+    return [
+        {"role": "system", "content": _BLUE_FISH_REPLY_SYSTEM_PROMPT},
+        {"role": "user", "content": "\n".join(user_sections)},
+    ]

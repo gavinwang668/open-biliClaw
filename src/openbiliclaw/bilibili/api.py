@@ -195,7 +195,13 @@ class FollowingUser:
 
 @dataclass
 class CommentInfo:
-    """Basic comment info."""
+    """Basic comment info.
+
+    ``rpid`` / ``root`` / ``parent`` are the ids needed to answer a comment
+    inside its thread: ``root`` is the thread's top-level reply and
+    ``parent`` the reply being answered. They default to 0 so older callers
+    that only read ``message`` / ``uname`` keep working unchanged.
+    """
 
     mid: int
     uname: str
@@ -204,6 +210,9 @@ class CommentInfo:
     ctime: int = 0
     reply_count: int = 0
     avatar: str = ""
+    rpid: int = 0
+    root: int = 0
+    parent: int = 0
 
 
 class BilibiliAPIClient:
@@ -1684,6 +1693,9 @@ class BilibiliAPIClient:
                 ctime=int(reply.get("ctime", 0)),
                 reply_count=int(reply.get("rcount", 0)),
                 avatar=str(_json_object(reply.get("member", {})).get("avatar", "")),
+                rpid=int(reply.get("rpid", 0) or 0),
+                root=int(reply.get("root", 0) or 0),
+                parent=int(reply.get("parent", 0) or 0),
             )
             for reply in replies
         ]

@@ -6709,6 +6709,7 @@
         <button id="settingsTabSources" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelSources" tabindex="-1">平台源</button>
         <button id="settingsTabScheduler" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelScheduler" tabindex="-1">调度</button>
         <button id="settingsTabAdvanced" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelAdvanced" tabindex="-1">高级功能</button>
+        <button id="settingsTabFish" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelFish" tabindex="-1">养蓝色大肥鱼</button>
         <button id="settingsTabGeneral" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelGeneral" tabindex="-1">通用</button>
         <button id="settingsTabLogging" class="settings-tab" type="button" role="tab" aria-selected="false" aria-controls="settingsPanelLogging" tabindex="-1">日志</button>
       </div>
@@ -7963,6 +7964,106 @@
       </div>
       </div>
 
+      <div id="settingsPanelFish" class="settings-panel" data-settings-panel="fish" role="tabpanel" aria-labelledby="settingsTabFish" hidden>
+      <div class="settings-section">
+        <h3>养蓝色大肥鱼（实验室）</h3>
+        <p class="settings-hint">大肥鱼是一个独立的小号，有自己的 Cookie、自己的人设和自己的账本。</p>
+        <p class="settings-hint">它只做一件事：在你最近被推荐过的视频下面，挑一条评论回复并 @ 对方。默认只预览不发布；如果它用的账号就是你自己，它会直接拒绝运行。</p>
+        <div class="settings-field-row">
+          <input id="fishEnabled" type="checkbox" data-settings-ignore-dirty>
+          <label for="fishEnabled">启用「养蓝色大肥鱼」</label>
+        </div>
+        <div class="settings-field-row">
+          <input id="fishDryRun" type="checkbox" data-settings-ignore-dirty>
+          <label for="fishDryRun">只预览不发布（推荐保持开启）</label>
+        </div>
+        <p class="settings-hint" id="fishStatusLine" aria-live="polite">正在读取状态…</p>
+      </div>
+
+      <div class="settings-section">
+        <h3>大肥鱼的账号</h3>
+        <p class="settings-hint">粘贴大肥鱼自己那个 B 站账号的 Cookie（不是你的主账号）。它单独存在 data/fish/bilibili_cookie.json，校验通过才会保存；和主账号相同会被拒绝。</p>
+        <div class="settings-field">
+          <label for="fishCookie">大肥鱼的 Cookie</label>
+          <input id="fishCookie" type="password" autocomplete="off" spellcheck="false" placeholder="SESSDATA=…; bili_jct=…" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field-row">
+          <button class="settings-secondary-btn" id="fishSaveAccountBtn" type="button" data-settings-ignore-dirty>保存并校验</button>
+          <button class="settings-secondary-btn" id="fishClearAccountBtn" type="button" data-settings-ignore-dirty>清除登录</button>
+        </div>
+        <p class="settings-hint" id="fishAccountStatus" aria-live="polite"></p>
+      </div>
+
+      <div class="settings-section">
+        <h3>人设与说话规矩</h3>
+        <p class="settings-hint">这两段会原样进入提示词：人设决定它像谁，规矩决定它不做什么。改完点「保存设置」即可生效，不用重启。</p>
+        <div class="settings-field">
+          <label for="fishPersonaName">它的名字</label>
+          <input id="fishPersonaName" type="text" maxlength="20" autocomplete="off" placeholder="蓝色大肥鱼" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishPersonaPrompt">人格设定</label>
+          <textarea id="fishPersonaPrompt" rows="6" spellcheck="false" placeholder="你是一只叫「蓝色大肥鱼」的 B 站小用户…" data-settings-ignore-dirty></textarea>
+        </div>
+        <div class="settings-field">
+          <label for="fishReplyRules">额外说话规矩</label>
+          <textarea id="fishReplyRules" rows="5" spellcheck="false" placeholder="只回答摆在你面前的那一条评论…" data-settings-ignore-dirty></textarea>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>节奏与上限</h3>
+        <div class="settings-field">
+          <label for="fishDailyLimit">每天最多发几条</label>
+          <input id="fishDailyLimit" type="number" min="0" max="20" step="1" placeholder="3" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishMinInterval">两次发言至少隔（分钟）</label>
+          <input id="fishMinInterval" type="number" min="5" max="1440" step="1" placeholder="30" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishPerVideoLimit">同一视频最多几条</label>
+          <input id="fishPerVideoLimit" type="number" min="1" max="3" step="1" placeholder="1" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishMaxChars">单条字数上限</label>
+          <input id="fishMaxChars" type="number" min="10" max="300" step="1" placeholder="80" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishMaxCandidates">每轮看几个视频</label>
+          <input id="fishMaxCandidates" type="number" min="1" max="20" step="1" placeholder="5" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishCommentsPerVideo">每个视频看几条评论</label>
+          <input id="fishCommentsPerVideo" type="number" min="1" max="50" step="1" placeholder="10" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishMinLikes">只回点赞 ≥</label>
+          <input id="fishMinLikes" type="number" min="0" max="10000" step="1" placeholder="0" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishBlockedWords">屏蔽词（逗号分隔）</label>
+          <input id="fishBlockedWords" type="text" autocomplete="off" placeholder="剧透, 广告" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field-row">
+          <input id="fishAllowTopLevel" type="checkbox" data-settings-ignore-dirty>
+          <label for="fishAllowTopLevel">允许它在视频下发顶层评论</label>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <h3>现在跑一轮</h3>
+        <p class="settings-hint">「预览一轮」只生成不发帖，也不占配额；「发一轮」会真的用大肥鱼的账号在评论区说话，请确认人设和上限都调好了。</p>
+        <div class="settings-field-row">
+          <button class="settings-secondary-btn" id="fishSaveConfigBtn" type="button" data-settings-ignore-dirty>保存设置</button>
+          <button class="settings-secondary-btn" id="fishPreviewBtn" type="button" data-settings-ignore-dirty>预览一轮</button>
+          <button class="settings-secondary-btn" id="fishRunBtn" type="button" data-settings-ignore-dirty>发一轮</button>
+        </div>
+        <p class="settings-hint" id="fishRunResult" aria-live="polite"></p>
+        <ul id="fishLedger" style="list-style:none;padding:0;margin:8px 0 0"></ul>
+      </div>
+      </div>
+
       <div id="settingsPanelGeneral" class="settings-panel" data-settings-panel="general" role="tabpanel" aria-labelledby="settingsTabGeneral" hidden>
       <!-- General -->
       <div class="settings-section">
@@ -8587,5 +8688,6 @@
   <script src="shared/source-status.js"></script>
   <script src="shared/agent-chat.js"></script>
   <script type="module" src="popup.js"></script>
+  <script type="module" src="popup-fish.js"></script>
 </body>
 </html>

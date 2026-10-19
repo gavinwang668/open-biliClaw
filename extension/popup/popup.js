@@ -9234,6 +9234,7 @@ function bindSettings() {
     ["sources", document.getElementById("settingsTabSources")],
     ["scheduler", document.getElementById("settingsTabScheduler")],
     ["advanced", document.getElementById("settingsTabAdvanced")],
+    ["fish", document.getElementById("settingsTabFish")],
     ["general", document.getElementById("settingsTabGeneral")],
     ["logging", document.getElementById("settingsTabLogging")],
   ];

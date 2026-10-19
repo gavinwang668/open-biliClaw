@@ -6,6 +6,8 @@
 
 `BilibiliAPIClient.get_video_comments()` 在 `CommentInfo` 中保留评论 `ctime`（Unix 秒）、`reply_count` 与 `avatar`；缺失时使用 `0 / 0 / ""`，经 HTTP 评论接口透传给原生客户端展示。
 
+`CommentInfo` 还携带 `rpid` / `root` / `parent`（2026-10-19 起，默认 `0`）：`root` 是楼层根评论、`parent` 是被回复的那条，配合 `post_comment(root=..., parent=...)` 就能发楼中楼。蓝鱼实验室是第一个消费方；旧调用方不读这三个字段时行为逐字节不变。
+
 `bilibili/` 包是系统访问 B 站 API 的唯一出口；B 站 steady-state discovery 还会通过 `sources/bili_tasks.py`、`runtime/bilibili_producer.py` 和浏览器扩展提供搜索兜底任务桥。整体分四层：
 
 1. **AuthManager** — Cookie 管理和登录验证
@@ -196,7 +198,7 @@ BILI_EXTENSION_E2E=1 .venv/bin/pytest tests/test_bili_extension_browser_e2e.py -
 | `FavoriteFolder` | 收藏夹元数据（media_id, title, media_count） |
 | `FavoriteFolderWithItems` | 收藏夹 + 内容列表 + truncated 标记 |
 | `FollowingUser` | 关注用户（mid, uname, sign） |
-| `CommentInfo` | 评论（mid, uname, message, like_count） |
+| `CommentInfo` | 评论（mid, uname, message, like_count；`rpid` / `root` / `parent` 用于楼中楼回复，默认 0） |
 | `AuthStatus` | 认证状态（has_cookie, authenticated, username 等；`network_error=True` 表示校验死在传输层——代理 / 风控 / 超时——而非 Cookie 失效） |
 | `BilibiliAuthExpiredError` | 任意 `_get_json()` endpoint 返回 `-101` 时的专项异常，仍继承 `BilibiliAPIError` |
 | `BilibiliFavoriteDuplicateError` | 仅最终 `/x/v3/fav/resource/deal` POST 返回 `11201` 时产生的安全 operation-tagged 异常；folder/resolver 同码不会变成 duplicate success。 |

@@ -1029,6 +1029,31 @@ def _builder_test_inputs() -> list[tuple[str, dict, dict]]:
     """
     return [
         (
+            "build_blue_fish_reply_prompt",
+            dict(
+                persona_name="大肥鱼",
+                persona_prompt="你是一只鱼",
+                reply_rules="说短一点",
+                level=1,
+                topics={},
+                video={"bvid": "BV1xx", "title": "视频 A"},
+                comments=[{"rpid": 1, "uname": "甲", "like_count": 3, "message": "第一条"}],
+                max_chars=40,
+                allow_top_level=False,
+            ),
+            dict(
+                persona_name="小蓝",
+                persona_prompt="你是一只害羞的鱼",
+                reply_rules="不要接梗",
+                level=4,
+                topics={"游戏": 3},
+                video={"bvid": "BV2yy", "title": "视频 B"},
+                comments=[{"rpid": 9, "uname": "乙", "like_count": 30, "message": "第二条"}],
+                max_chars=120,
+                allow_top_level=True,
+            ),
+        ),
+        (
             "build_awareness_prompt",
             dict(
                 events=[{"event_type": "view", "title": "A"}],

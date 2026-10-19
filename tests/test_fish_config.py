@@ -1,0 +1,89 @@
+"""Blue Fish Lab config store: clamping, defaults, corruption tolerance."""
+
+from __future__ import annotations
+
+import json
+
+from openbiliclaw.fish.config import (
+    DEFAULT_PERSONA_PROMPT,
+    FishConfig,
+    fish_config_path,
+    load_fish_config,
+    parse_fish_config,
+    save_fish_config,
+)
+
+
+def test_parse_uses_defaults_for_missing_keys() -> None:
+    config, warnings = parse_fish_config({})
+
+    assert config == FishConfig()
+    assert warnings == []
+
+
+def test_parse_clamps_out_of_range_numbers() -> None:
+    config, warnings = parse_fish_config(
+        {"max_chars": 99_999, "daily_limit": -3, "min_interval_minutes": 1}
+    )
+
+    assert config.max_chars == 300
+    assert config.daily_limit == 0
+    assert config.min_interval_minutes == 5
+    assert any("max_chars" in warning for warning in warnings)
+    assert any("daily_limit" in warning for warning in warnings)
+
+
+def test_parse_falls_back_on_non_numeric_values() -> None:
+    config, warnings = parse_fish_config({"max_chars": "abc", "daily_limit": None})
+
+    assert config.max_chars == FishConfig().max_chars
+    assert config.daily_limit == FishConfig().daily_limit
+    # A missing key is normal and silent; only a present-but-invalid value warns.
+    assert len(warnings) == 1
+    assert "max_chars" in warnings[0]
+
+
+def test_parse_keeps_custom_persona_and_drops_blank() -> None:
+    custom, _ = parse_fish_config({"persona_prompt": "  你是一只害羞的鱼  "})
+    blank, _ = parse_fish_config({"persona_prompt": "   "})
+
+    assert custom.persona_prompt == "你是一只害羞的鱼"
+    assert blank.persona_prompt == DEFAULT_PERSONA_PROMPT
+
+
+def test_parse_dedupes_and_caps_blocked_words() -> None:
+    words = ["剧透", "剧透", "  ", *[f"w{i}" for i in range(80)]]
+    config, warnings = parse_fish_config({"blocked_words": words})
+
+    assert config.blocked_words[:2] == ["剧透", "w0"]
+    assert len(config.blocked_words) == 50
+    assert any("blocked_words" in warning for warning in warnings)
+
+
+def test_save_then_load_round_trips(tmp_path) -> None:
+    config = FishConfig(enabled=True, dry_run=False, persona_name="小蓝", blocked_words=["剧透"])
+
+    saved = save_fish_config(tmp_path, config)
+    loaded = load_fish_config(tmp_path)
+
+    assert saved.to_public_dict() == loaded.to_public_dict()
+    assert loaded.enabled is True
+    assert loaded.dry_run is False
+    assert loaded.blocked_words == ["剧透"]
+
+
+def test_load_returns_defaults_on_corrupt_json(tmp_path) -> None:
+    path = fish_config_path(tmp_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json", encoding="utf-8")
+
+    assert load_fish_config(tmp_path) == FishConfig()
+
+
+def test_saved_file_is_readable_json(tmp_path) -> None:
+    save_fish_config(tmp_path, FishConfig(persona_name="小蓝"))
+
+    payload = json.loads(fish_config_path(tmp_path).read_text(encoding="utf-8"))
+
+    assert payload["persona_name"] == "小蓝"
+    assert payload["dry_run"] is True

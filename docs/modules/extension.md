@@ -252,6 +252,16 @@ extension/
 `GET /api/chat/skills`、`GET /api/chat/personas`、`GET /api/chat/sessions`；
 不会等用户重新切 Tab，也不会在 online/degraded 之间反复读取目录。
 
+### 蓝鱼实验室设置（popup）
+
+设置浮层新增「养蓝色大肥鱼」Tab（`popup/popup-fish.js`，ES module，复用
+`popup-api.js` 的 `requestJson` 以继承可配置后端地址 / 会话令牌 / 超时）。面板与桌面 Web
+对接同一组 `/api/fish/*` 接口：开关、只预览、独立小号 Cookie、可编辑人设与规矩、配额、
+预览一轮 / 发一轮、最近账本。
+
+该面板的输入都带 `data-settings-ignore-dirty`，不会把弹窗全局保存条标脏；保存走面板自己的
+按钮，鱼的 Cookie 与实验室字段不经过 `PUT /api/config`。
+
 ### 聊一聊会话隔离与断线恢复
 
 移动 Web 与 popup 的 `streamAgentChatTurn()` 只有收到终端 `done` 才成功返回；
