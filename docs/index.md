@@ -86,7 +86,7 @@
 | 原生保存同步 | [modules/saved-sync.md](modules/saved-sync.md) | `src/openbiliclaw/saved_sync/` | ✅ canonical API + runtime + B 站 direct adapter + 六平台 extension adapter/executor + 三端后端状态驱动保存界面；GitHub repository 与微博保持 typed identity 的 local-only 保存 |
 | 灵魂管线架构 | [modules/soul-pipeline-architecture.md](modules/soul-pipeline-architecture.md) | `src/openbiliclaw/soul/` | ✅ 完成 |
 | 浏览器插件 | [modules/extension.md](modules/extension.md) | `extension/` | ✅ 支持既有来源任务桥与跨平台行为采集；GitHub 只新增 setup/status/config/repository 卡片 UI，明确不新增 host permission、content script、Cookie、任务或 native-save |
-| 蓝鱼实验室 | [modules/fish.md](modules/fish.md) | `src/openbiliclaw/fish/` | 🧪 独立小号的评论区回复 + @：默认关闭、默认只预览、账号隔离与配额硬闸 |
+| 蓝鱼实验室 | [modules/fish.md](modules/fish.md) | `src/openbiliclaw/fish/` | 🧪 独立小号的评论区回复 + @：复用主链路推荐池、反馈与画像隔离，默认关闭、默认只预览、账号隔离与配额硬闸 |
 | CLI 命令参考 | [modules/cli.md](modules/cli.md) | `src/openbiliclaw/cli.py` | 🧪 已记录 GitHub `fetch-github`、三条 discover smoke 与正式 `discover --source github`；验收状态见 ledger |
 | 配置参考 | [modules/config.md](modules/config.md) | `config.example.toml` | ✅ 持续更新（含 `[sources.github]`、固定 PAT 环境变量、三分支预算、节流、bootstrap 上限与来源占比） |
 | 局域网密码门禁 | [modules/api-auth.md](modules/api-auth.md) | `src/openbiliclaw/auth_core.py` + `src/openbiliclaw/api/auth.py` | ✅ 可选 `[api.auth]` 密码门禁 + `/api/auth/*` + `set-password` |

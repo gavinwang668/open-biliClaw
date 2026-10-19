@@ -3471,7 +3471,6 @@ _BLUE_FISH_REPLY_SYSTEM_PROMPT = """
   "action": "reply | top_level | skip",
   "target_rpid": 0,
   "reply": "",
-  "topic": "",
   "reason": ""
 }
 </output_schema>
@@ -3481,7 +3480,6 @@ _BLUE_FISH_REPLY_SYSTEM_PROMPT = """
   没什么值得说的时候用 "skip"，这时其余字段留空。
 - target_rpid：你挑中的那条评论的 rpid，必须是 comments 里出现过的数字。
 - reply：最终正文，不含 @ 前缀，不含引号包裹。
-- topic：一个两到六个字的题材标签（比如「游戏」「纪录片」「手工」），用于大肥鱼的成长记忆。
 - reason：一句话说明你为什么挑这条，给日志看，不会发布出去。
 </field_notes>
 """.strip()
@@ -3508,8 +3506,6 @@ def build_blue_fish_reply_prompt(
     persona_name: str,
     persona_prompt: str,
     reply_rules: str,
-    level: int,
-    topics: dict[str, int],
     video: dict[str, object],
     comments: list[dict[str, object]],
     max_chars: int,
@@ -3520,6 +3516,11 @@ def build_blue_fish_reply_prompt(
     The system message is the module-level static constant; only the user
     message varies. Any mutation of per-call data must stay out of the
     system prompt or provider prompt-caching stops firing.
+
+    There is no growth/topic memory block on purpose: the fish has no memory
+    of its own. What it learns travels through the shared recommendation
+    feedback pipeline, and ``video`` already carries the topic label the main
+    pipeline assigned when it ranked the content.
     """
     ordered_comments = sorted(
         comments,
@@ -3528,18 +3529,12 @@ def build_blue_fish_reply_prompt(
             str(item.get("rpid", "")),
         ),
     )
-    top_topics = sorted(topics.items(), key=lambda item: (-item[1], item[0]))[:8]
-    topic_line = "、".join(f"{name}×{count}" for name, count in top_topics) or "还没聊过什么"
     user_sections = [
         '<persona name="' + str(persona_name) + '">',
         str(persona_prompt).strip(),
         "",
         str(reply_rules).strip(),
         "</persona>",
-        "",
-        f'<growth level="{int(level)}">',
-        f"你最近聊过的话题：{topic_line}",
-        "</growth>",
         "",
         "<video>",
         json.dumps(dict(video), ensure_ascii=False, indent=2, sort_keys=True),

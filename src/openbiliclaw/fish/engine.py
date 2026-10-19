@@ -1,5 +1,19 @@
 """Blue Fish Lab engine — one fish, one comment-section turn at a time.
 
+The engine is an **action layer**, not a second pipeline. It inherits every
+decision the main flow already made:
+
+* which videos are worth visiting comes from the ranked recommendation pool
+  (``Database.get_recommendations(exclude_processed=True)``), not from a
+  re-scoring pass of its own;
+* what happened is recorded in the fish's own append-only ledger — and
+  *nowhere else*. The fish's engagement is not the owner's engagement: it does
+  not write recommendation feedback, does not touch the recommendation rows,
+  and must never move the owner's soul profile.
+
+What is genuinely new is the *external* act: pick one comment, write one
+reply, post it with an ``@`` mention.
+
 The engine is deliberately dependency-injected (LLM, candidate provider,
 Bilibili client, clock) so the whole loop is unit-testable without a
 network, a real account, or a real model.
@@ -29,7 +43,7 @@ if TYPE_CHECKING:
     from openbiliclaw.bilibili.api import CommentInfo
 
     from .account import FishAccount, FishAccountStatus
-    from .store import FishState, FishStore
+    from .store import FishLedgerView, FishStore
 
 logger = logging.getLogger(__name__)
 
@@ -63,13 +77,19 @@ CandidateProvider = Callable[[int], Awaitable[list["FishCandidate"]]]
 
 @dataclass(frozen=True)
 class FishCandidate:
-    """A video the fish may visit."""
+    """A video the fish may visit, taken from the existing ranked pool.
+
+    ``recommendation_id`` is a trace id for the ledger: it says which row the
+    main pipeline scored and explained. It is never written back.
+    """
 
     bvid: str
     title: str
     up_name: str = ""
     score: float = 0.0
     description: str = ""
+    recommendation_id: int = 0
+    topic: str = ""
 
 
 @dataclass
@@ -86,7 +106,7 @@ class FishRunResult:
 
 
 class BlueFishEngine:
-    """Runs one fish turn: gate → candidates → LLM → guard → post."""
+    """Runs one fish turn: gate → ranked candidates → LLM → guard → post."""
 
     def __init__(
         self,
@@ -115,9 +135,8 @@ class BlueFishEngine:
     async def status(self) -> dict[str, Any]:
         """Return everything the settings panel needs in one call."""
         config = load_fish_config(self._data_dir)
-        state = self._store.load_state()
+        stats = self._store.view(self._today()).stats
         account = await self._account_status()
-        today = self._today()
         return {
             "ok": True,
             "config": config.to_public_dict(),
@@ -130,11 +149,11 @@ class BlueFishEngine:
                 "isolated": account.isolated,
             },
             "state": {
-                "xp": state.xp,
-                "level": state.level,
-                "topics": dict(state.topics),
-                "today_published": state.today_count(today),
-                "last_run_at": state.last_run_at,
+                "xp": stats.xp,
+                "level": stats.level,
+                "published_total": stats.published_total,
+                "today_published": stats.today_published,
+                "last_run_at": stats.last_run_at,
             },
             "recent": self._store.recent(limit=20),
         }
@@ -153,17 +172,18 @@ class BlueFishEngine:
             config = load_fish_config(self._data_dir)
             effective_dry_run = config.dry_run if dry_run is None else bool(dry_run)
             effective_manual = trigger == "manual" if manual is None else bool(manual)
+            now = self._clock()
+            today = self._today(now)
 
             account = await self._account_status()
-            state = self._store.load_state()
-            today = self._today()
+            view = self._store.view(today)
             gate = check_can_run(
                 config,
                 authenticated=account.authenticated,
                 isolated=account.isolated,
-                today_published=state.today_count(today),
-                last_published_at=self._store.last_published_at(),
-                now=self._clock(),
+                today_published=view.stats.today_published,
+                last_published_at=view.stats.last_published_at,
+                now=now,
                 dry_run=effective_dry_run,
                 manual=effective_manual,
             )
@@ -172,9 +192,6 @@ class BlueFishEngine:
 
             if self._llm is None:
                 return FishRunResult(False, "llm_unavailable", "当前没有可用的模型，先配置 LLM。")
-
-            state.last_run_at = self._clock().isoformat()
-            self._store.save_state(state)
 
             try:
                 candidates = await self._candidate_provider(config.max_candidates)
@@ -196,9 +213,8 @@ class BlueFishEngine:
                         client,
                         candidate,
                         config=config,
-                        state=state,
+                        view=view,
                         dry_run=effective_dry_run,
-                        today=today,
                         fish_mid=account.mid,
                     )
                     if result is not None:
@@ -218,15 +234,16 @@ class BlueFishEngine:
         candidate: FishCandidate,
         *,
         config: FishConfig,
-        state: FishState,
+        view: FishLedgerView,
         dry_run: bool,
-        today: date,
         fish_mid: int,
     ) -> FishRunResult | None:
         """Try one video. Returns a result only when the run should stop."""
-        if not dry_run and (
-            self._store.published_count_for_video(candidate.bvid, today) >= config.per_video_limit
-        ):
+        # ``per_video_total`` is all-time, not today-only: once the fish has
+        # spoken under a video it does not walk back in. The recommendation row
+        # stays untouched, so this ledger check is the only thing stopping it
+        # from repeating itself there.
+        if not dry_run and view.per_video_total.get(candidate.bvid, 0) >= config.per_video_limit:
             return None
 
         try:
@@ -245,7 +262,7 @@ class BlueFishEngine:
         usable = self._usable_comments(
             comments,
             config=config,
-            answered=self._store.answered_rpids(),
+            answered=view.answered,
             bvid=candidate.bvid,
             fish_mid=fish_mid,
         )
@@ -265,13 +282,14 @@ class BlueFishEngine:
             persona_name=config.persona_name,
             persona_prompt=config.persona_prompt,
             reply_rules=config.reply_rules,
-            level=state.level,
-            topics=state.topics,
             video={
                 "bvid": candidate.bvid,
                 "title": candidate.title,
                 "up_name": candidate.up_name,
                 "description": candidate.description[:500],
+                # Carried over from the ranked pool row: reuse the main
+                # pipeline's topic label instead of guessing one again.
+                "topic": candidate.topic,
             },
             comments=payload,
             max_chars=config.max_chars,
@@ -281,7 +299,7 @@ class BlueFishEngine:
         if decision is None:
             return None
 
-        action, target_rpid, reply, topic, reason = decision
+        action, target_rpid, reply, reason = decision
         if action == "skip":
             self._record(
                 candidate,
@@ -291,7 +309,6 @@ class BlueFishEngine:
                 target_uname="",
                 target_text="",
                 reply="",
-                topic="",
                 reason=reason,
                 error="",
             )
@@ -307,7 +324,6 @@ class BlueFishEngine:
                 target_uname="",
                 target_text="",
                 reply=reply,
-                topic=topic,
                 reason=reason,
                 error="模型挑了一个不在候选里的 rpid",
             )
@@ -324,7 +340,6 @@ class BlueFishEngine:
                 target_uname=target.uname,
                 target_text=target.message,
                 reply=body,
-                topic=topic,
                 reason=reason,
                 error=text_gate.message,
             )
@@ -344,7 +359,6 @@ class BlueFishEngine:
                 target_uname=target.uname,
                 target_text=target.message,
                 reply=message,
-                topic=topic,
                 reason=reason,
                 error="",
                 mode=mode,
@@ -374,7 +388,6 @@ class BlueFishEngine:
                 target_uname=target.uname,
                 target_text=target.message,
                 reply=message,
-                topic=topic,
                 reason=reason,
                 error=str(exc),
                 mode=mode,
@@ -389,9 +402,9 @@ class BlueFishEngine:
                 record=record,
             )
 
-        xp = state.add_published(today, topic)
-        state.last_run_at = self._clock().isoformat()
-        self._store.save_state(state)
+        # The comment is public at this point. The only durable write is the
+        # fish's own ledger line: the owner's profile / recommendation state
+        # must stay exactly as it was before the run.
         record = self._record(
             candidate,
             status="published",
@@ -400,11 +413,9 @@ class BlueFishEngine:
             target_uname=target.uname,
             target_text=target.message,
             reply=message,
-            topic=topic,
             reason=reason,
             error="",
             mode=mode,
-            xp=xp,
         )
         return FishRunResult(
             True,
@@ -433,7 +444,7 @@ class BlueFishEngine:
         comments: list[CommentInfo],
         *,
         config: FishConfig,
-        answered: set[str],
+        answered: frozenset[str],
         bvid: str,
         fish_mid: int,
     ) -> list[CommentInfo]:
@@ -458,7 +469,7 @@ class BlueFishEngine:
 
     async def _ask_model(
         self, messages: list[dict[str, str]], *, config: FishConfig
-    ) -> tuple[str, int, str, str, str] | None:
+    ) -> tuple[str, int, str, str] | None:
         assert self._llm is not None
         try:
             response = await self._llm.complete_structured_task(
@@ -490,16 +501,15 @@ class BlueFishEngine:
         target_uname: str,
         target_text: str,
         reply: str,
-        topic: str,
         reason: str,
         error: str,
         mode: str = "reply",
-        xp: int = 0,
     ) -> dict[str, Any]:
         now = self._clock()
         record: dict[str, Any] = {
             "ts": now.isoformat(),
             "day": self._today(now).isoformat(),
+            "recommendation_id": int(candidate.recommendation_id),
             "bvid": candidate.bvid,
             "video_title": candidate.title,
             "mode": mode,
@@ -507,12 +517,10 @@ class BlueFishEngine:
             "target_uname": target_uname,
             "target_text": target_text[:300],
             "reply": reply,
-            "topic": topic,
             "reason": reason,
             "status": status,
             "dry_run": bool(dry_run),
             "error": error,
-            "xp": int(xp),
         }
         self._store.append(record)
         return record
@@ -521,9 +529,7 @@ class BlueFishEngine:
         return (now or self._clock()).date()
 
 
-def _parse_decision(
-    payload: dict[str, Any], *, max_chars: int
-) -> tuple[str, int, str, str, str] | None:
+def _parse_decision(payload: dict[str, Any], *, max_chars: int) -> tuple[str, int, str, str] | None:
     """Validate the model's JSON decision against a strict whitelist."""
     raw_action = str(payload.get("action") or "reply").strip().lower()
     action = raw_action if raw_action in {"reply", "top_level", "skip"} else "reply"
@@ -533,7 +539,6 @@ def _parse_decision(
     except (TypeError, ValueError):
         target_rpid = 0
     reply = str(payload.get("reply") or "")
-    topic = str(payload.get("topic") or "").strip()[:12]
     reason = str(payload.get("reason") or "").strip()[:200]
     if action != "skip" and target_rpid <= 0:
         return None
@@ -541,7 +546,7 @@ def _parse_decision(
         # A wildly over-budget reply means the model ignored the contract;
         # let the length gate record it rather than silently trimming.
         logger.warning("Blue Fish reply is far over budget (%d chars)", len(reply))
-    return action, target_rpid, reply, topic, reason
+    return action, target_rpid, reply, reason
 
 
 async def run_fish_loop(

@@ -8678,7 +8678,16 @@ def create_app(
         async def _candidates(limit: int) -> list[Any]:
             rows = []
             try:
-                rows = ctx.database.get_recommendations(limit=max(limit * 4, 12))
+                # Reuse the existing ranked pool verbatim: the main pipeline
+                # already decided what is worth visiting. ``exclude_processed``
+                # drops rows the owner already liked / disliked / dismissed /
+                # commented on, so the fish does not walk into places the owner
+                # has already reacted to. The fish's *own* history never touches
+                # these rows — it lives in ``fish/ledger.jsonl``.
+                rows = ctx.database.get_recommendations(
+                    limit=max(limit * 4, 12),
+                    exclude_processed=True,
+                )
             except Exception:  # noqa: BLE001 - empty pool is a normal state
                 rows = []
             out: list[Any] = []
@@ -8695,6 +8704,10 @@ def create_app(
                         up_name=str(row.get("up_name") or ""),
                         score=float(row.get("confidence") or 0.0),
                         description=str(row.get("description") or ""),
+                        # Trace id only: the ledger records which recommendation
+                        # the fish acted on; nothing is written back to that row.
+                        recommendation_id=int(row.get("id") or 0),
+                        topic=str(row.get("topic") or row.get("pool_topic_label") or ""),
                     )
                 )
                 if len(out) >= limit:
@@ -15522,7 +15535,7 @@ def create_app(
             format_event_context,
         )
 
-        rec_title = str(recommendation.get("title", ""))
+        rec_title = str(recommendation.get("title") or "")
         source_platform = (
             str(recommendation.get("source_platform") or SOURCE_BILIBILI).strip().lower()
             or SOURCE_BILIBILI
@@ -15541,7 +15554,7 @@ def create_app(
             context=feedback_context,
             metadata={
                 "recommendation_id": resolved_recommendation_id,
-                "bvid": recommendation.get("bvid", ""),
+                "bvid": recommendation.get("bvid") or "",
                 "feedback_type": feedback_type,
                 "feedback_note": note,
                 "event_namespace": "recommendation",
@@ -15608,7 +15621,7 @@ def create_app(
             with suppress(Exception):
                 record_immediate_feedback_cognition(
                     feedback_type=feedback_type,
-                    title=str(recommendation.get("title", "")),
+                    title=str(recommendation.get("title") or ""),
                     note=note,
                 )
         return FeedbackResponse(

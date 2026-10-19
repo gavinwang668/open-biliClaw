@@ -11,13 +11,17 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
 
 「养蓝色大肥鱼」是一个**实验室功能**：给 OpenBiliClaw 配一个**独立的小号**，
 让它以自己的人格出现在评论区，挑一条评论回复、@ 对方，并把每次行动记到账本里。
-「养」体现在：大肥鱼有自己的等级、经验值和话题记忆，越聊越有连续性。
+「养」体现在等级与经验上——但它们由账本推导，不是另一套记忆。
+
+**鱼的反馈与用户的反馈是两条线。** 推荐池是共享的（复用主链路的评估结果），
+但写回是单向隔离的：鱼的动作只落 `fish/ledger.jsonl`，不写推荐反馈、不动画像。
 
 ## 2. 非目标
 
 - 不做自动点赞 / 收藏 / 转发 / 发动态
 - 不做多只鱼、不做跨账号共享
 - 不做自动私信（评论区之外的动作一律不做）
+- 不让鱼的互动影响用户画像 / 推荐状态：这是独立的反馈线，不是「代替用户反馈」
 - 不在 v1 做人工审批队列（用 `dry_run` + 配额代替）
 
 ## 3. 账号隔离（硬要求）
@@ -63,25 +67,31 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
 
 ## 5. 运行数据
 
-- `state.json`：`xp` / `level` / `topics`（话题计数）/ `counts`（按天计数）/ `last_run_at`
-- `ledger.jsonl`：一次行动一行
+只有 `ledger.jsonl`：一次行动一行，追加写。**没有 `state.json`** —— 等级 / 经验 /
+按天计数 / 查重 / 单视频上限全部由账本推导（`FishStore.view(today)` 一次扫描）。
+鱼不维护自己的画像记忆：它的行动只留在账本里，不进入主链路的兴趣线。
 
-账本字段：`ts`、`bvid`、`video_title`、`mode`（`reply` / `top_level`）、
-`target_rpid`、`target_uname`、`target_text`、`reply`、`status`
-（`preview` / `published` / `failed` / `skipped`）、`error`、`xp`。
+账本字段：`ts`、`day`、`recommendation_id`、`bvid`、`video_title`、`mode`
+（`reply` / `top_level`）、`target_rpid`、`target_uname`、`target_text`、`reply`、
+`reason`、`status`（`preview` / `published` / `failed` / `skipped`）、`dry_run`、`error`。
+`recommendation_id` 只是溯源用的 trace id，从不写回那一行。
 
 ## 6. 一轮怎么跑
 
 ```
-守卫（启用 / 已登录 / 账号隔离 / 日配额 / 最小间隔）
-  → 取候选视频（推荐池里最近的高分内容）
+守卫（启用 / 已登录 / 账号隔离 / 日配额 / 最小间隔，全部读账本）
+  → 取候选视频（主链路已评估的推荐池，exclude_processed=True）
   → 逐个视频：拉评论 → 过滤（点赞门槛 / 已回过 / 太短太长）
   → 组 prompt → LLM 选一条 + 写回复（一次调用）
   → 硬闸校验（字数 / 屏蔽词 / 空回复 / 只挑一条）
   → dry_run ? 记账为 preview : 调 post_comment 发出去
-  → 记账 + 加经验
+  → 发布成功：只写鱼的账本（不写推荐反馈、不触发 cognition）
+  → 等级 / 经验由账本推导
 ```
 
+- 复用边界：爬取与内容评估不新增实现，候选直接来自推荐池；模型只做「挑一条 + 怎么写」。
+  写回是隔离的：鱼的评论不构成推荐反馈，`update_recommendation_feedback` 与
+  `record_immediate_feedback_cognition` 都不会被调用，用户画像不受影响。
 - LLM 一次调用同时完成「挑哪条」和「怎么写」，失败就放弃这一轮，不重试轰炸。
 - 回复写成楼中楼：`root` = 目标评论的根，`parent` = 目标评论本身；
   正文以 `@昵称` 开头（B 站的 @ 是纯文本）。
@@ -95,10 +105,11 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
 4. 当日计数 ≥ `daily_limit` → 不跑
 5. 距上次发言 < `min_interval_minutes` → 不跑
 6. 同一 `rpid` 只回一次（账本查重）
-7. 同一视频 ≥ `per_video_limit` → 换下一个视频
+7. 同一视频累计 ≥ `per_video_limit`（跨天累计）→ 换下一个视频
 8. 回复为空 / 超 `max_chars` / 命中屏蔽词 → 丢弃并记 `skipped`
 9. B 站接口报错 → 记 `failed`，本轮停止，不自动重试
 10. `dry_run` 默认开，要用户自己关掉才会真的发
+11. 写回隔离：发布成功后唯一落盘的是账本；推荐行、画像、cognition 一律不动
 
 ## 8. API
 
@@ -135,3 +146,5 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
 - 发布路径：fake client 收到正确的 `root` / `parent` / `@`
 - prompt builder：system 消息与调用参数无关（接进 `test_llm_prompts.py`）
 - 账号隔离：绝不读主账号 cookie
+- 反馈隔离：发布后推荐行保持未处理、cognition 不被调用、该行仍出现在
+  `exclude_processed=True` 的候选池里；鱼的记录只存在于账本

@@ -57,9 +57,10 @@ Instagram browser task → storage.local claim / progress / exact-result outbox
                        → missing tab: failed / partial, never an invented empty result
 
 Blue Fish Lab (lab, default off): fish/ JSON config + isolated account (data/fish/)
-                                   → recommendation pool → comments → LLM reply
-                                   → hard gates (quota / interval / dedup) → post_comment as the fish
-                                   → state.json + ledger.jsonl
+                                   → ranked recommendation pool (already evaluated) → comments
+                                   → LLM reply → hard gates (quota / interval / dedup)
+                                   → post_comment as the fish
+                                   → fish/ledger.jsonl only (profile + recommendation rows untouched)
 
 config recovery control plane (normal or degraded; business APIs stay gated)
                 ├─ draft → /api/config/probe-service → temporary registry → total gate
@@ -279,8 +280,10 @@ tag-owned 节点；`GET /api/config` 只投影 staged 布尔值和安全运行�
 
 - 实验室功能，默认关闭、默认 `dry_run`：一只**独立的小号**去 B 站评论区回复并 @ 人
 - 账号隔离是硬约束：`<data_dir>/fish/bilibili_cookie.json` + 独立 `AuthManager` / `BilibiliAPIClient`，绝不回退到主账号 cookie；鱼的 mid 与主号相同、或 cookie 与主号逐字相同都会被拒绝运行
-- 配置与状态全部在 `data/fish/`（`config.json` / `state.json` / `ledger.jsonl`），刻意不写进 `config.toml`，删目录即重置
-- 一轮：守卫 → 推荐池候选 → 拉评论 → 单次 LLM「挑一条 + 写回复」→ 代码级硬闸（字数 / 屏蔽词 / 查重 / 配额 / 间隔）→ `dry_run` 记 `preview`，否则 `post_comment(root, parent)` 发楼中楼
+- 配置与账本全部在 `data/fish/`（`config.json` / `ledger.jsonl`），刻意不写进 `config.toml`，删目录即重置；**没有 `state.json`**——配额、等级、查重全部从账本推导
+- 它是动作层，不是第二套管线：候选直接取已评估过的推荐池（`exclude_processed=True`），模型只负责挑评论和写回复
+- 反馈是**隔离**的：发布后的评论只写 `fish/ledger.jsonl`，不写推荐反馈、不把推荐行标成已评论、不触发 cognition，用户画像与推荐列表不受影响；查重因此只靠账本（`bvid:rpid` + 跨天累计的单视频上限）
+- 一轮：守卫 → 推荐池候选 → 拉评论 → 单次 LLM「挑一条 + 写回复」→ 代码级硬闸（字数 / 屏蔽词 / 查重 / 配额 / 间隔）→ `dry_run` 记 `preview`，否则 `post_comment(root, parent)` 发楼中楼并回写反馈
 - 提示词遵守缓存约定：`_BLUE_FISH_REPLY_SYSTEM_PROMPT` 是字节静态常量，人设 / 视频 / 评论 / 约束全在 user 消息
 - 后台循环 `run_fish_loop()` 每 5 分钟醒一次，只在 `enabled && !dry_run` 时动手，异常全兜住
 - 桌面 Web 与扩展 popup 各有一个「养蓝色大肥鱼」设置 Tab，都直接打 `/api/fish/*`，不混进主配置保存流程

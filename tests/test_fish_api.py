@@ -119,3 +119,124 @@ async def test_fish_cookie_never_touches_the_main_account_file(
 
     assert not (tmp_path / "data" / "fish" / "bilibili_cookie.json").exists()
     assert not (tmp_path / "data" / "bilibili_cookie.json").exists()
+
+
+async def test_fish_publish_never_touches_the_owners_profile(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """The fish's feedback is split from the owner's feedback.
+
+    Posting a comment must not project recommendation feedback, must not fire
+    the cognition hook, and must leave the recommendation actionable — the
+    owner's profile and recommendation list simply do not learn from the fish.
+    """
+    from openbiliclaw.api.app import create_app
+    from openbiliclaw.bilibili.api import BilibiliAPIClient, CommentInfo
+    from openbiliclaw.fish.account import FishAccount, FishAccountStatus
+    from openbiliclaw.fish.engine import BlueFishEngine
+    from openbiliclaw.soul.engine import SoulEngine
+
+    (tmp_path / "config.toml").write_text(
+        '[llm]\ndefault_provider = "deepseek"\n\n'
+        '[llm.deepseek]\napi_key = "sk-test"\nmodel = "deepseek-chat"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENBILICLAW_PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setenv("OPENBILICLAW_FISH_LOOP_DISABLED", "1")
+
+    cognitions: list[tuple[str, str, str]] = []
+    posted: list[str] = []
+
+    def _cognition(self: SoulEngine, *, feedback_type: str, title: str, note: str = "") -> None:
+        cognitions.append((feedback_type, title, note))
+
+    async def _account_status(
+        self: FishAccount, *, main_mid: int = 0, main_cookie: str = ""
+    ) -> FishAccountStatus:
+        return FishAccountStatus(
+            has_cookie=True,
+            authenticated=True,
+            mid=222,
+            uname="大肥鱼",
+            message="",
+            isolated=True,
+        )
+
+    async def _comments(self: BilibiliAPIClient, bvid: str, limit: int = 20) -> list[CommentInfo]:
+        return [
+            CommentInfo(
+                mid=501,
+                uname="小白",
+                message="这个转场我反复看了三遍",
+                like_count=42,
+                rpid=1001,
+            )
+        ]
+
+    async def _post(
+        self: BilibiliAPIClient,
+        bvid: str,
+        *,
+        message: str,
+        root: int | None = None,
+        parent: int | None = None,
+    ) -> dict[str, object]:
+        posted.append(message)
+        return {"rpid": 9001}
+
+    async def _close(self: BilibiliAPIClient) -> None:
+        return None
+
+    async def _ask_model(
+        self: BlueFishEngine, messages: list[dict[str, str]], *, config: object
+    ) -> tuple[str, int, str, str]:
+        return "reply", 1001, "那个空镜确实值得倒回去看", "有具体细节"
+
+    monkeypatch.setattr(SoulEngine, "record_immediate_feedback_cognition", _cognition)
+    monkeypatch.setattr(FishAccount, "status", _account_status)
+    monkeypatch.setattr(FishAccount, "load_cookie", lambda self: "SESSION=fish-only")
+    monkeypatch.setattr(BilibiliAPIClient, "get_video_comments", _comments)
+    monkeypatch.setattr(BilibiliAPIClient, "post_comment", _post)
+    monkeypatch.setattr(BilibiliAPIClient, "close", _close)
+    monkeypatch.setattr(BlueFishEngine, "_ask_model", _ask_model)
+
+    app = create_app()
+    ctx = app.state.runtime_context
+    recommendation_id = ctx.database.insert_recommendation(
+        "BV1xx411c7mD",
+        confidence=0.9,
+        topic="剪辑",
+        expression="你可能会喜欢这条的镜头语言",
+    )
+
+    client = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://127.0.0.1:8420",
+    )
+    enabled = await client.put("/api/fish/config", json={"enabled": True, "dry_run": False})
+    assert enabled.status_code == 200
+
+    response = await client.post("/api/fish/run", json={"dry_run": False})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "published", body
+    assert body["ok"] is True
+    assert posted == ["@小白 那个空镜确实值得倒回去看"]
+    assert body["record"]["recommendation_id"] == recommendation_id
+    assert "memory_recorded" not in body["record"]
+
+    # Nothing reached the owner's side of the feedback line.
+    assert cognitions == []
+    row = next(
+        item
+        for item in ctx.database.get_recommendations(limit=10)
+        if int(item["id"]) == recommendation_id
+    )
+    assert not row.get("feedback_type")
+    assert not row.get("feedback_note")
+    actionable = ctx.database.get_recommendations(limit=10, exclude_processed=True)
+    assert any(int(item["id"]) == recommendation_id for item in actionable)
+
+    # The fish's own ledger is the only record of the action.
+    ledger = (tmp_path / "data" / "fish" / "ledger.jsonl").read_text(encoding="utf-8")
+    assert f'"recommendation_id": {recommendation_id}' in ledger
+    await client.aclose()

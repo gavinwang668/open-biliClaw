@@ -10,11 +10,12 @@ from typing import Any
 from openbiliclaw.bilibili.api import CommentInfo, NavInfo
 from openbiliclaw.fish.account import FishAccount
 from openbiliclaw.fish.config import FishConfig, save_fish_config
-from openbiliclaw.fish.engine import BlueFishEngine
-from openbiliclaw.fish.store import FishState, FishStore
+from openbiliclaw.fish.engine import BlueFishEngine, FishCandidate
+from openbiliclaw.fish.store import FishStore
 
 NOW = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 FISH_COOKIE = "SESSION=fish-only"
+RECOMMENDATION_ID = 7
 
 
 class _FakeLLM:
@@ -88,11 +89,22 @@ def _decision(**overrides: object) -> str:
         "action": "reply",
         "target_rpid": 1001,
         "reply": "那个 0.5 秒的空镜确实值得倒回去看",
-        "topic": "剪辑",
         "reason": "有具体细节可接",
     }
     payload.update(overrides)
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _candidate(**overrides: object) -> FishCandidate:
+    payload: dict[str, object] = {
+        "bvid": "BV1xx411c7mD",
+        "title": "一条测试视频",
+        "up_name": "UP",
+        "recommendation_id": RECOMMENDATION_ID,
+        "topic": "剪辑",
+    }
+    payload.update(overrides)
+    return FishCandidate(**payload)  # type: ignore[arg-type]
 
 
 def _build(
@@ -104,6 +116,7 @@ def _build(
     account_mid: int = 222,
     main_mid: int = 111,
     main_cookie: str = "SESSION=owner",
+    candidates: list[FishCandidate] | None = None,
 ) -> tuple[BlueFishEngine, _FakeClient, _FakeLLM, FishStore]:
     effective = config or FishConfig(enabled=True, dry_run=True)
     save_fish_config(tmp_path, effective)
@@ -115,6 +128,10 @@ def _build(
 
     async def _main_account() -> tuple[int, str]:
         return main_mid, main_cookie
+
+    async def _candidates(limit: int) -> list[FishCandidate]:
+        pool = candidates if candidates is not None else [_candidate()]
+        return pool[:limit]
 
     engine = BlueFishEngine(
         data_dir=tmp_path,
@@ -129,15 +146,23 @@ def _build(
     return engine, client, llm, store
 
 
-async def _candidates(limit: int) -> list[Any]:
-    from openbiliclaw.fish.engine import FishCandidate
-
-    return [FishCandidate(bvid="BV1xx411c7mD", title="一条测试视频", up_name="UP")]
-
-
 def _client_with_cookie(client: _FakeClient, cookie: str) -> _FakeClient:
     client.cookies.append(cookie)
     return client
+
+
+def _seed_published(store: FishStore, *, count: int, day: str = "2026-10-19") -> None:
+    for index in range(count):
+        store.append(
+            {
+                "ts": f"{day}T0{index}:00:00+00:00",
+                "day": day,
+                "recommendation_id": RECOMMENDATION_ID,
+                "bvid": "BV1xx411c7mD",
+                "target_rpid": 5000 + index,
+                "status": "published",
+            }
+        )
 
 
 async def test_dry_run_previews_without_posting(tmp_path) -> None:
@@ -151,7 +176,8 @@ async def test_dry_run_previews_without_posting(tmp_path) -> None:
     assert result.reply.startswith("@小白 ")
     ledger = store.read()
     assert ledger[-1]["status"] == "preview"
-    assert store.load_state().xp == 0
+    assert "memory_recorded" not in ledger[-1]
+    assert store.view(NOW.date()).stats.xp == 0
 
 
 async def test_publish_replies_with_root_parent_and_mention(tmp_path) -> None:
@@ -168,11 +194,49 @@ async def test_publish_replies_with_root_parent_and_mention(tmp_path) -> None:
             "parent": 1001,
         }
     ]
-    state = store.load_state()
-    assert state.xp == 3
-    assert state.level == 1
-    assert state.counts == {"2026-10-19": 1}
-    assert state.topics == {"剪辑": 1}
+    stats = store.view(NOW.date()).stats
+    assert stats.xp == 3
+    assert stats.level == 1
+    assert stats.today_published == 1
+    assert stats.published_total == 1
+
+
+async def test_publish_writes_only_the_fish_ledger(tmp_path) -> None:
+    """The owner's profile/recommendation state must not be touched.
+
+    The engine has no feedback callback at all; the ledger line is the only
+    durable trace of the action.
+    """
+    engine, client, _llm, store = _build(tmp_path, config=FishConfig(enabled=True, dry_run=False))
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "published"
+    assert len(client.posts) == 1
+    records = store.read()
+    assert [item["status"] for item in records] == ["published"]
+    assert "memory_recorded" not in records[0]
+    assert records[0]["recommendation_id"] == RECOMMENDATION_ID
+
+
+async def test_a_video_answered_on_an_earlier_day_is_not_visited_again(tmp_path) -> None:
+    """Dedupe is ledger-only now that the recommendation row stays untouched."""
+    engine, client, _llm, store = _build(tmp_path, config=FishConfig(enabled=True, dry_run=False))
+    store.append(
+        {
+            "ts": "2026-10-18T09:00:00+00:00",
+            "day": "2026-10-18",
+            "recommendation_id": RECOMMENDATION_ID,
+            "bvid": "BV1xx411c7mD",
+            "target_rpid": 700,
+            "status": "published",
+        }
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "nothing_to_say"
+    assert client.posts == []
 
 
 async def test_publish_uses_only_the_fish_cookie(tmp_path) -> None:
@@ -216,7 +280,7 @@ async def test_daily_limit_blocks_publishing(tmp_path) -> None:
     engine, client, _llm, store = _build(
         tmp_path, config=FishConfig(enabled=True, dry_run=False, daily_limit=1)
     )
-    store.save_state(FishState(counts={"2026-10-19": 1}))
+    _seed_published(store, count=1)
 
     result = await engine.run_once(trigger="schedule")
 
@@ -271,9 +335,9 @@ async def test_too_long_reply_is_gated(tmp_path) -> None:
     assert "超过上限" in store.read()[-1]["error"]
 
 
-async def test_status_reports_account_and_growth(tmp_path) -> None:
+async def test_status_derives_growth_from_the_ledger(tmp_path) -> None:
     engine, _client, _llm, store = _build(tmp_path)
-    store.save_state(FishState(xp=15, counts={"2026-10-19": 2}))
+    _seed_published(store, count=5)
 
     status = await engine.status()
 
@@ -282,7 +346,20 @@ async def test_status_reports_account_and_growth(tmp_path) -> None:
     assert status["account"]["mid"] == 222
     assert status["state"]["xp"] == 15
     assert status["state"]["level"] == 2
-    assert status["state"]["today_published"] == 2
+    assert status["state"]["published_total"] == 5
+    assert status["state"]["today_published"] == 5
+    assert "topics" not in status["state"]
+
+
+async def test_prompt_receives_the_pool_topic_not_a_growth_memory(tmp_path) -> None:
+    engine, _client, llm, _store = _build(tmp_path, config=FishConfig(enabled=True, dry_run=False))
+
+    await engine.run_once(trigger="manual")
+
+    user_prompt = llm.calls[-1]["user_input"]
+    assert "<growth" not in user_prompt
+    assert '"topic": "剪辑"' in user_prompt
+    assert "topic" not in json.loads(_decision())
 
 
 async def test_disabled_lab_does_nothing(tmp_path) -> None:
