@@ -485,6 +485,10 @@ export function formatPublishedTime(item, now = Date.now()) {
     const date = new Date(parsed);
     const current = new Date(now);
     if (date.getFullYear() === current.getFullYear()) {
+      const runtime = globalThis.OpenBiliClawI18n;
+      if (runtime && typeof runtime.formatShortDate === "function") {
+        return runtime.formatShortDate(date);
+      }
       return `${date.getMonth() + 1}月${date.getDate()}日`;
     }
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -506,6 +510,8 @@ export function getPublishedTimeDisplay(item, now = Date.now()) {
 // Condense a raw count into Chinese-style 万/亿 units. Empty string for
 // non-positive values so callers render nothing.
 export function formatCountCn(n) {
+  const runtime = globalThis.OpenBiliClawI18n;
+  if (runtime && typeof runtime.formatCount === "function") return runtime.formatCount(n);
   const value = Math.floor(Number(n) || 0);
   if (value <= 0) return "";
   if (value >= 100000000)

@@ -1377,6 +1377,8 @@
     }
 
     function formatCountCn(n) {
+      const runtime = globalThis.OpenBiliClawI18n;
+      if (runtime && typeof runtime.formatCount === "function") return runtime.formatCount(n);
       const value = Math.floor(Number(n) || 0);
       if (value <= 0) return "";
       if (value >= 100000000) {
@@ -1397,7 +1399,13 @@
         if (diff >= 0 && diff < 604_800_000) return `${Math.floor(diff / 86_400_000)} 天前`;
         const date = new Date(parsed);
         const current = new Date(now);
-        if (date.getFullYear() === current.getFullYear()) return `${date.getMonth() + 1}月${date.getDate()}日`;
+        if (date.getFullYear() === current.getFullYear()) {
+          const runtime = globalThis.OpenBiliClawI18n;
+          if (runtime && typeof runtime.formatShortDate === "function") {
+            return runtime.formatShortDate(date);
+          }
+          return `${date.getMonth() + 1}月${date.getDate()}日`;
+        }
         return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
       }
       return String(item?.published_label || "").replace(/\s+/g, " ").trim().slice(0, 64);
@@ -10825,9 +10833,22 @@ ${cardFeedbackBarHtml()}`;
         storageSet(CLIENT_LOCALE_STORAGE_KEY, normalized);
       } catch {}
       if (runtime.locale === normalized && runtime.ready) return Promise.resolve();
-      return runtime.setLocale(normalized).catch((error) => {
-        console.warn("切换界面语言失败", error);
-      });
+      return runtime
+        .setLocale(normalized)
+        .then(() => {
+          // Counts/dates are computed by JS (331K vs 33.1万), so a live switch
+          // must re-render once; deferred to avoid re-entering the config apply.
+          requestAnimationFrame(() => {
+            try {
+              renderAll();
+            } catch (error) {
+              console.warn("界面重绘失败", error);
+            }
+          });
+        })
+        .catch((error) => {
+          console.warn("切换界面语言失败", error);
+        });
     }
 
     function applyConfig(config) {

@@ -112,6 +112,38 @@
     return option ? option.label : normalized;
   }
 
+  // Compact counts and short dates follow the active locale. Number units are
+  // not catalog strings (「33.1万」 is a computation), so they need code-level
+  // formatting: K/M/B in English, 萬/億 in Traditional, 万/亿 in Simplified.
+  function formatCount(value) {
+    const count = Math.floor(Number(value) || 0);
+    if (count <= 0) return "";
+    const compact = (number, unit) => {
+      const scaled = Math.floor(number * 10) / 10;
+      return `${scaled.toFixed(1).replace(/\.0$/, "")}${unit}`;
+    };
+    if (state.locale === "en") {
+      if (count >= 1000000000) return compact(count / 1000000000, "B");
+      if (count >= 1000000) return compact(count / 1000000, "M");
+      if (count >= 1000) return compact(count / 1000, "K");
+      return String(count);
+    }
+    const wan = state.locale === "zh-Hant" ? "萬" : "万";
+    const yi = state.locale === "zh-Hant" ? "億" : "亿";
+    if (count >= 100000000) return compact(count / 100000000, yi);
+    if (count >= 10000) return compact(count / 10000, wan);
+    return String(count);
+  }
+
+  function formatShortDate(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    if (state.locale === "en") {
+      return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(date);
+    }
+    return `${date.getMonth() + 1}月${date.getDate()}日`;
+  }
+
   function mergeCatalog(base, extra) {
     const merged = new Map(base);
     extra.forEach((value, key) => {
@@ -434,6 +466,8 @@
     setLocale,
     apply,
     translate,
+    formatCount,
+    formatShortDate,
     normalizeLocale,
     localeLabel,
     get locale() {

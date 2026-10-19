@@ -4210,6 +4210,8 @@ function buildMessageCard(probe) {
 // Condense a raw count into Chinese-style 万/亿 units. Empty string for
 // non-positive values so callers render nothing.
 function formatCountCn(n) {
+  const runtime = globalThis.OpenBiliClawI18n;
+  if (runtime && typeof runtime.formatCount === "function") return runtime.formatCount(n);
   const value = Math.floor(Number(n) || 0);
   if (value <= 0) return "";
   if (value >= 100000000)
