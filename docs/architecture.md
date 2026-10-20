@@ -57,7 +57,10 @@ Instagram browser task → storage.local claim / progress / exact-result outbox
                        → missing tab: failed / partial, never an invented empty result
 
 Blue Fish Lab (lab, default off): fish/ JSON config + isolated account (data/fish/)
-                                   → ranked recommendation pool (already evaluated) → comments
+                                   → comment_thread discovery route (read-only)
+                                       ranked-pool seeds → comment pages → BV ids → evaluator
+                                       → fish/plans.json (seed + comment snapshot)
+                                   → action pass: plan first, ranked pool otherwise
                                    → LLM reply → hard gates (quota / interval / dedup)
                                    → post_comment as the fish
                                    → fish/ledger.jsonl only (profile + recommendation rows untouched)
@@ -280,12 +283,13 @@ tag-owned 节点；`GET /api/config` 只投影 staged 布尔值和安全运行�
 
 - 实验室功能，默认关闭、默认 `dry_run`：一只**独立的小号**去 B 站评论区回复并 @ 人
 - 账号隔离是硬约束：`<data_dir>/fish/bilibili_cookie.json` + 独立 `AuthManager` / `BilibiliAPIClient`，绝不回退到主账号 cookie；鱼的 mid 与主号相同、或 cookie 与主号逐字相同都会被拒绝运行
-- 配置与账本全部在 `data/fish/`（`config.json` / `ledger.jsonl`），刻意不写进 `config.toml`，删目录即重置；**没有 `state.json`**——配额、等级、查重全部从账本推导
-- 它是动作层，不是第二套管线：候选直接取已评估过的推荐池（`exclude_processed=True`），模型只负责挑评论和写回复
+- 配置与账本全部在 `data/fish/`（`config.json` / `ledger.jsonl` / `plans.json`），刻意不写进 `config.toml`，删目录即重置；**没有 `state.json`**——配额、等级、查重全部从账本推导
+- 它同时是 B 站发现面上的一条**只读**路线：`CommentThreadStrategy`（`comment_thread`）从已评估推荐池取 1–3 个种子读评论区，把评论里点名的 BV 号还原成 `DiscoveredContent` 交给统一 batch evaluator，并把「种子 + 评论快照」写进 `fish/plans.json`（最多 3 条、45 分钟过期）；`discover()` 本身绝不发帖
+- 动作层不是第二套管线：优先消费发现计划，没有计划时回退到已评估推荐池（`exclude_processed=True`），模型只负责挑评论和写回复
 - 反馈是**隔离**的：发布后的评论只写 `fish/ledger.jsonl`，不写推荐反馈、不把推荐行标成已评论、不触发 cognition，用户画像与推荐列表不受影响；查重因此只靠账本（`bvid:rpid` + 跨天累计的单视频上限）
-- 一轮：守卫 → 推荐池候选 → 拉评论 → 单次 LLM「挑一条 + 写回复」→ 代码级硬闸（字数 / 屏蔽词 / 查重 / 配额 / 间隔）→ `dry_run` 记 `preview`，否则 `post_comment(root, parent)` 发楼中楼并回写反馈
+- 一轮：守卫 → 发现计划（无则推荐池候选）→ 拉评论 / 复用评论快照 → 单次 LLM「挑一条 + 写回复」→ 代码级硬闸（字数 / 屏蔽词 / 查重 / 配额 / 间隔）→ `dry_run` 记 `preview`，否则 `post_comment(root, parent)` 发楼中楼并回写反馈
 - 提示词遵守缓存约定：`_BLUE_FISH_REPLY_SYSTEM_PROMPT` 是字节静态常量，人设 / 视频 / 评论 / 约束全在 user 消息
-- 后台循环 `run_fish_loop()` 每 5 分钟醒一次，只在 `enabled && !dry_run` 时动手，异常全兜住
+- 后台循环 `run_fish_loop()` 每 5 分钟醒一次，只在 `enabled && !dry_run` 时动手：先跑一次 `comment_thread` 发现路线，再进入动作层；异常全兜住
 - 桌面 Web 与扩展 popup 各有一个「养蓝色大肥鱼」设置 Tab，都直接打 `/api/fish/*`，不混进主配置保存流程
 
 ### Integrations (`integrations/`)

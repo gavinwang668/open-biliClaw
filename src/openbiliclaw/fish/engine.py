@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from openbiliclaw.llm.json_utils import extract_llm_json_object
 from openbiliclaw.llm.prompts import build_blue_fish_reply_prompt
 
+from .comments import usable_comments
 from .config import FishConfig, load_fish_config
 from .guard import (
     check_can_run,
@@ -43,13 +44,12 @@ if TYPE_CHECKING:
     from openbiliclaw.bilibili.api import CommentInfo
 
     from .account import FishAccount, FishAccountStatus
+    from .plan import FishPlan, FishPlanStore
     from .store import FishLedgerView, FishStore
 
 logger = logging.getLogger(__name__)
 
 _LOOP_INTERVAL_SECONDS = 300
-_MAX_COMMENT_CHARS = 500
-_MIN_COMMENT_CHARS = 2
 
 
 class _SupportsStructuredTask(Protocol):
@@ -90,6 +90,11 @@ class FishCandidate:
     description: str = ""
     recommendation_id: int = 0
     topic: str = ""
+    # How this video reached the engine: ``pool`` (the historical ranked-pool
+    # pick) or ``plan`` (the comment-thread discovery route handed it over).
+    # Recorded in the ledger so "did discovery actually drive this?" is
+    # answerable from the file alone.
+    origin: str = "pool"
 
 
 @dataclass
@@ -120,6 +125,7 @@ class BlueFishEngine:
         client_factory: ClientFactory,
         clock: Callable[[], datetime] | None = None,
         main_account_provider: Callable[[], Awaitable[tuple[int, str]]] | None = None,
+        plan_store: FishPlanStore | None = None,
     ) -> None:
         self._data_dir = data_dir
         self._account = account
@@ -129,9 +135,25 @@ class BlueFishEngine:
         self._client_factory = client_factory
         self._clock = clock or (lambda: datetime.now(UTC))
         self._main_account_provider = main_account_provider
+        # Plans are produced by the comment-thread discovery route. The engine
+        # consumes them newest-first; ``None`` keeps the historical behaviour
+        # (pick straight from the ranked pool), which is what tests and any
+        # composition without the route get.
+        self._plan_store = plan_store
         self._lock = asyncio.Lock()
 
     # ── read-only surface ────────────────────────────────────────────────
+
+    @property
+    def llm_available(self) -> bool:
+        """Whether an LLM is wired.
+
+        The discovery tick reads B站 comment pages; without a model the action
+        pass can only answer ``llm_unavailable``, so spending those requests
+        would be pure waste.
+        """
+
+        return self._llm is not None
 
     async def status(self) -> dict[str, Any]:
         """Return everything the settings panel needs in one call."""
@@ -201,13 +223,22 @@ class BlueFishEngine:
             if self._llm is None:
                 return FishRunResult(False, "llm_unavailable", "当前没有可用的模型，先配置 LLM。")
 
+            # A discovery-produced plan is one-shot: the comment-thread route
+            # already fetched this comment section, so consuming the plan here
+            # removes a second fetch and keeps discovery and the public act in
+            # the same round. The gates above already ran; the ledger is
+            # re-checked inside ``_visit`` exactly like a pool candidate.
+            plan = self._plan_store.take_fresh(now=now) if self._plan_store is not None else None
+
             try:
                 candidates = await self._candidate_provider(config.max_candidates)
             except Exception as exc:  # noqa: BLE001 - reported, never raised
                 logger.warning("Blue Fish candidate lookup failed: %s", exc)
-                return FishRunResult(False, "candidate_error", f"拿不到候选视频：{exc}")
+                if plan is None:
+                    return FishRunResult(False, "candidate_error", f"拿不到候选视频：{exc}")
+                candidates = []
 
-            if not candidates:
+            if plan is None and not candidates:
                 return FishRunResult(
                     False,
                     "no_candidates",
@@ -216,6 +247,18 @@ class BlueFishEngine:
 
             client = self._client_factory(self._account.load_cookie())
             try:
+                if plan is not None:
+                    result = await self._visit(
+                        client,
+                        _candidate_from_plan(plan),
+                        config=config,
+                        view=view,
+                        dry_run=effective_dry_run,
+                        fish_mid=account.mid,
+                        comments=_comments_from_plan(plan),
+                    )
+                    if result is not None:
+                        return result
                 for candidate in candidates:
                     result = await self._visit(
                         client,
@@ -245,8 +288,14 @@ class BlueFishEngine:
         view: FishLedgerView,
         dry_run: bool,
         fish_mid: int,
+        comments: list[CommentInfo] | None = None,
     ) -> FishRunResult | None:
-        """Try one video. Returns a result only when the run should stop."""
+        """Try one video. Returns a result only when the run should stop.
+
+        ``comments`` carries a discovery-produced snapshot: the route already
+        paid for that fetch, so the engine reviews it instead of asking B站
+        again. ``None`` keeps the historical fetch-per-visit behaviour.
+        """
         # ``per_video_total`` is all-time, not today-only: once the fish has
         # spoken under a video it does not walk back in. The recommendation row
         # stays untouched, so this ledger check is the only thing stopping it
@@ -254,33 +303,34 @@ class BlueFishEngine:
         if not dry_run and view.per_video_total.get(candidate.bvid, 0) >= config.per_video_limit:
             return None
 
-        try:
-            comments = await client.get_video_comments(
-                candidate.bvid, limit=config.comments_per_video
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Blue Fish comment fetch failed for %s: %s", candidate.bvid, exc)
-            # Recorded, not just returned: the failure-streak breaker reads
-            # these lines, and "nothing happened" must stay inspectable.
-            self._record(
-                candidate,
-                status="failed",
-                dry_run=dry_run,
-                target_rpid=0,
-                target_uname="",
-                target_text="",
-                reply="",
-                reason="",
-                error=f"拉不到评论：{exc}",
-            )
-            return FishRunResult(
-                False,
-                "comment_fetch_failed",
-                f"拉不到 {candidate.bvid} 的评论：{exc}",
-                bvid=candidate.bvid,
-            )
+        if comments is None:
+            try:
+                comments = await client.get_video_comments(
+                    candidate.bvid, limit=config.comments_per_video
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Blue Fish comment fetch failed for %s: %s", candidate.bvid, exc)
+                # Recorded, not just returned: the failure-streak breaker reads
+                # these lines, and "nothing happened" must stay inspectable.
+                self._record(
+                    candidate,
+                    status="failed",
+                    dry_run=dry_run,
+                    target_rpid=0,
+                    target_uname="",
+                    target_text="",
+                    reply="",
+                    reason="",
+                    error=f"拉不到评论：{exc}",
+                )
+                return FishRunResult(
+                    False,
+                    "comment_fetch_failed",
+                    f"拉不到 {candidate.bvid} 的评论：{exc}",
+                    bvid=candidate.bvid,
+                )
 
-        usable = self._usable_comments(
+        usable = usable_comments(
             comments,
             config=config,
             answered=view.answered,
@@ -491,34 +541,6 @@ class BlueFishEngine:
                 main_mid, main_cookie = 0, ""
         return await self._account.status(main_mid=main_mid, main_cookie=main_cookie)
 
-    def _usable_comments(
-        self,
-        comments: list[CommentInfo],
-        *,
-        config: FishConfig,
-        answered: frozenset[str],
-        bvid: str,
-        fish_mid: int,
-    ) -> list[CommentInfo]:
-        usable: list[CommentInfo] = []
-        seen: set[int] = set()
-        for item in comments:
-            rpid = int(getattr(item, "rpid", 0) or 0)
-            if rpid <= 0 or rpid in seen:
-                continue
-            seen.add(rpid)
-            text = str(item.message or "").strip()
-            if not (_MIN_COMMENT_CHARS <= len(text) <= _MAX_COMMENT_CHARS):
-                continue
-            if int(item.like_count or 0) < config.min_comment_likes:
-                continue
-            if fish_mid and int(item.mid or 0) == fish_mid:
-                continue
-            if f"{bvid}:{rpid}" in answered:
-                continue
-            usable.append(item)
-        return usable
-
     async def _ask_model(
         self, messages: list[dict[str, str]], *, config: FishConfig
     ) -> tuple[str, int, str, str] | None:
@@ -565,6 +587,7 @@ class BlueFishEngine:
             "recommendation_id": int(candidate.recommendation_id),
             "bvid": candidate.bvid,
             "video_title": candidate.title,
+            "via": str(getattr(candidate, "origin", "pool") or "pool"),
             "mode": mode,
             "target_rpid": int(target_rpid),
             "target_uname": target_uname,
@@ -617,17 +640,65 @@ def _parse_decision(payload: dict[str, Any], *, max_chars: int) -> tuple[str, in
     return action, target_rpid, reply, reason
 
 
+def _candidate_from_plan(plan: FishPlan) -> FishCandidate:
+    """Project a discovery-produced plan onto the pool candidate shape."""
+
+    return FishCandidate(
+        bvid=plan.bvid,
+        title=plan.title,
+        up_name=plan.up_name,
+        description=plan.description,
+        recommendation_id=plan.recommendation_id,
+        topic=plan.topic,
+        origin="plan",
+    )
+
+
+def _comments_from_plan(plan: FishPlan) -> list[CommentInfo]:
+    """Rebuild the comment snapshot the discovery route fetched."""
+
+    from openbiliclaw.bilibili.api import CommentInfo
+
+    return [
+        CommentInfo(
+            mid=0,
+            uname=comment.uname,
+            message=comment.message,
+            like_count=comment.like_count,
+            ctime=comment.ctime,
+            rpid=comment.rpid,
+            root=comment.root,
+            parent=comment.parent,
+        )
+        for comment in plan.comments
+    ]
+
+
 async def run_fish_loop(
     engine: BlueFishEngine,
     *,
     data_dir: Any,
     interval_seconds: int = _LOOP_INTERVAL_SECONDS,
+    discovery_tick: Callable[[], Awaitable[Any]] | None = None,
 ) -> None:
-    """Background loop: wake up, let the engine decide, sleep again."""
+    """Background loop: discover, let the engine decide, sleep again.
+
+    ``discovery_tick`` runs the comment-thread route through the owning
+    discovery engine before the action pass. It is optional so compositions
+    without a discovery engine keep the historical behaviour; the tick itself
+    is inert unless the lab is enabled and has its own cookie.
+    """
     while True:
         try:
             config = load_fish_config(data_dir)
             if config.enabled and not config.dry_run:
+                if discovery_tick is not None and engine.llm_available:
+                    try:
+                        await discovery_tick()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:  # noqa: BLE001 - discovery is best-effort
+                        logger.warning("Blue Fish discovery tick failed", exc_info=True)
                 result = await engine.run_once(trigger="schedule", manual=False)
                 if result.status not in {"ok", "preview", "published"}:
                     logger.debug("Blue Fish scheduled pass: %s", result.message)

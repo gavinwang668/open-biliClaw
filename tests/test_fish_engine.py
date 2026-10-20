@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -11,6 +11,7 @@ from openbiliclaw.bilibili.api import CommentInfo, NavInfo
 from openbiliclaw.fish.account import FishAccount
 from openbiliclaw.fish.config import FishConfig, save_fish_config
 from openbiliclaw.fish.engine import BlueFishEngine, FishCandidate
+from openbiliclaw.fish.plan import FishPlan, FishPlanStore, PlannedComment
 from openbiliclaw.fish.store import FishStore
 
 NOW = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
@@ -48,8 +49,10 @@ class _FakeClient:
         self.fetch_error = fetch_error
         self.posts: list[dict[str, Any]] = []
         self.cookies: list[str] = []
+        self.fetch_calls: list[str] = []
 
     async def get_video_comments(self, bvid: str, limit: int = 20) -> list[CommentInfo]:
+        self.fetch_calls.append(bvid)
         if self.fetch_error is not None:
             raise self.fetch_error
         return self.comments[:limit]
@@ -123,6 +126,7 @@ def _build(
     main_cookie: str = "SESSION=owner",
     candidates: list[FishCandidate] | None = None,
     fetch_error: Exception | None = None,
+    plan_store: FishPlanStore | None = None,
 ) -> tuple[BlueFishEngine, _FakeClient, _FakeLLM, FishStore]:
     effective = config or FishConfig(enabled=True, dry_run=True)
     save_fish_config(tmp_path, effective)
@@ -151,6 +155,7 @@ def _build(
         client_factory=lambda cookie: _client_with_cookie(client, cookie),
         clock=lambda: NOW,
         main_account_provider=_main_account,
+        plan_store=plan_store,
     )
     return engine, client, llm, store
 
@@ -563,3 +568,121 @@ async def test_empty_audience_means_no_restriction(tmp_path) -> None:
     user_prompt = llm.calls[-1]["user_input"]
     assert "<audience>" in user_prompt
     assert "没有限定" in user_prompt
+
+
+# ── discovery-produced plans ────────────────────────────────────────────
+
+
+def _plan(
+    *,
+    bvid: str = "BV1plan411c7",
+    created_at: datetime = NOW,
+    rpid: int = 1001,
+) -> FishPlan:
+    return FishPlan(
+        bvid=bvid,
+        title="计划里的视频",
+        up_name="UP",
+        description="简介",
+        topic="剪辑",
+        recommendation_id=RECOMMENDATION_ID,
+        comments=(
+            PlannedComment(
+                rpid=rpid,
+                uname="小白",
+                message="这个转场我反复看了三遍",
+                like_count=42,
+            ),
+        ),
+        created_at=created_at,
+    )
+
+
+async def test_a_discovery_plan_reuses_the_fetched_comment_snapshot(tmp_path) -> None:
+    plans = FishPlanStore(tmp_path)
+    plans.enqueue(_plan())
+    engine, client, _llm, store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False),
+        plan_store=plans,
+    )
+
+    result = await engine.run_once(trigger="schedule", manual=False)
+
+    assert result.status == "published"
+    assert result.bvid == "BV1plan411c7"
+    # The route already paid for that fetch; the engine must not ask again.
+    assert client.fetch_calls == []
+    assert client.posts[0]["bvid"] == "BV1plan411c7"
+    assert store.read()[-1]["bvid"] == "BV1plan411c7"
+
+
+async def test_a_consumed_plan_is_not_replayed(tmp_path) -> None:
+    plans = FishPlanStore(tmp_path)
+    plans.enqueue(_plan(bvid="BV1plan411c7"))
+    engine, client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=True),
+        plan_store=plans,
+    )
+
+    first = await engine.run_once(trigger="manual")
+    second = await engine.run_once(trigger="manual")
+
+    assert first.bvid == "BV1plan411c7"
+    assert second.bvid == "BV1xx411c7mD"
+    assert plans.take_fresh(now=NOW) is None
+
+
+async def test_an_expired_plan_falls_back_to_the_pool(tmp_path) -> None:
+    plans = FishPlanStore(tmp_path)
+    plans.enqueue(_plan(created_at=NOW - timedelta(minutes=90)))
+    engine, _client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=True),
+        plan_store=plans,
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.bvid == "BV1xx411c7mD"
+
+
+async def test_a_plan_for_an_answered_video_still_respects_the_ledger(tmp_path) -> None:
+    plans = FishPlanStore(tmp_path)
+    plans.enqueue(_plan())
+    engine, client, _llm, store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False),
+        candidates=[_candidate(bvid="BV1plan411c7")],
+        plan_store=plans,
+    )
+    store.append(
+        {
+            "ts": NOW.isoformat(),
+            "day": "2026-10-19",
+            "bvid": "BV1plan411c7",
+            "target_rpid": 1,
+            "status": "published",
+        }
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "nothing_to_say"
+    assert client.posts == []
+
+
+async def test_the_ledger_records_which_path_produced_the_action(tmp_path) -> None:
+    plans = FishPlanStore(tmp_path)
+    plans.enqueue(_plan())
+    engine, _client, _llm, store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=True),
+        plan_store=plans,
+    )
+
+    await engine.run_once(trigger="manual")
+    await engine.run_once(trigger="manual")
+
+    assert [row["via"] for row in store.read()] == ["plan", "pool"]

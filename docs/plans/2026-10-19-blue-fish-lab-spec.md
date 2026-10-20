@@ -155,3 +155,20 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
   `exclude_processed=True` 的候选池里；鱼的记录只存在于账本
 - 真实账号联调（`@pytest.mark.integration`，默认跳过）：拉评论、账号隔离、
   发一条楼中楼再删除；评论翻页另有单测守护
+
+## 12. 2026-10-20 增补：作为 B 站发现的一路
+
+原设计把鱼完全放在推荐链路下游。实际使用中它应该同时是 B 站 discover 上的一路：
+发现的内容要经过现有评估器，互动发生在同一条链路里。落地方式是「读」「说」分离：
+
+- `discovery/strategies/comment_thread.py` 的 `CommentThreadStrategy` 是只读策略：
+  从已评估推荐池取 1–3 个种子，读评论页，把评论里点名的 BV 号还原成
+  `DiscoveredContent` 交给统一 batch evaluator；同时把「种子 + 评论快照」写进
+  `data/fish/plans.json`（最多 3 条、45 分钟过期）。
+- `BlueFishEngine.run_once()` 优先消费计划（复用评论快照，不重复抓取），
+  没有计划时回退到原来的推荐池路径；隔离 / 熔断 / 配额 / 间隔 / 账本查重全部不变。
+- 计划不在 `discover()` 里执行的原因：`discover()` 是被 refresh、初始化、候选流水线和
+  CLI 多处调用的并发只读生产者，异常还会被 `asyncio.gather` 吞掉；公开发言必须留在
+  有闸门、有账本、异常可诊断的动作层。
+- 该路线只在 API runtime 注册（CLI 没有动作层），由鱼的 5 分钟 tick 驱动而不是主
+  refresh 计划：读评论区必须用鱼的账号，且池满时主 refresh 会跳过发现。

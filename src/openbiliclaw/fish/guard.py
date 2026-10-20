@@ -16,8 +16,9 @@ if TYPE_CHECKING:
     from .config import FishConfig
 
 # Failure breaker: N failed publisher runs since the last successful publish,
-# within the cooldown window, stop scheduled runs (previews/skips are ignored). Not empirically calibrated yet — a product guess, to be
-# revisited after real-account integration runs. Rationale: one failure is
+# within the cooldown window, stop scheduled runs (previews/skips are ignored).
+# Not empirically calibrated yet — a product guess, to be revisited after
+# real-account integration runs. Rationale: one failure is
 # usually transient (B站 5xx, one unreadable video), while three in a row has
 # so far meant a persistent cause (dead cookie, changed reply API); 60 minutes
 # is long enough for the operator to read the ledger line, short enough that a

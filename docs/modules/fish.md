@@ -56,6 +56,7 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 <data_dir>/fish/
 ├── config.json            # 实验室配置（刻意不进 config.toml）
 ├── bilibili_cookie.json   # 鱼自己的 Cookie
+├── plans.json             # 发现路线留下的一条待执行计划（最多 3 条、45 分钟过期）
 └── ledger.jsonl           # 一次行动一行，追加写
 ```
 
@@ -89,27 +90,65 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 所有字段在读写两头钳制：越界就近取边界值、类型不对回落默认值，并在日志里
 `WARNING` 记一条 —— 一个坏数字不该把设置页打挂。
 
+## 作为 B 站发现的一路
+
+鱼不只是推荐链路下游的动作层：它同时是 B 站 discover 上的一个**只读**策略
+`CommentThreadStrategy`（`comment_thread`，`source_platform="bilibili"`）。
+
+```
+鱼的 5 分钟 tick
+├─ ① 发现：CommentThreadStrategy.discover()
+│     种子 = 已评估推荐池（和动作层同一份）
+│     读 1–3 个种子视频的评论区
+│     ├─ 评论里点名的 BV 号 → DiscoveredContent → 统一 batch evaluator（正常打分入池）
+│     └─ 第一条有可用评论的种子 → 写一条计划（视频 + 评论快照，不发送）
+│           ↓ fish/plans.json（最多 3 条，45 分钟过期）
+└─ ② 动作：BlueFishEngine.run_once()
+      先消费计划（评论快照直接复用，不再抓一次）
+      再走原有闸门：隔离 → 熔断 → 配额 → 间隔 → LLM → 硬校验 → 发布
+      没有计划时回退到原来的「从推荐池挑候选、自己拉评论」路径
+```
+
+为什么计划留给动作层执行，而不是在 `discover()` 里顺手发：
+
+- `discover()` 是被 refresh、初始化 bootstrap、候选流水线、CLI 多处调用的**并发只读生产者**；
+  把「拿账号在公网发言」放进去，迟早会在初始化或某次重试里多发一条；
+- 策略异常会被 `asyncio.gather(..., return_exceptions=True)` 吞掉，公开发言失败不会有任何回报；
+- 计划让「读」和「说」各自可重入：发现可以反复跑、动作只执行一次，闸门与账本仍只在动作层。
+
+范围与代价：
+
+- 每轮最多看 3 个种子、最多把 8 个 BV 号解析成候选（每个一次 `/x/web-interface/view`）；
+- 评论里提到的 BV 号必须能解析成公开视频，私密 / 已删除的跳过；
+- 它只在 API runtime 注册：CLI 发现没有动作层，注册了只会留下没人执行的计划；
+- 主 refresh 的发现计划里**不放**这一路 —— 它由鱼的 tick 驱动：读评论区必须用鱼的账号，
+  而且池满时主 refresh 会跳过发现，评论区的互动不该被池子满否掉。池满时这一路仍然扫描，
+  但点名的 BV 号不入队（没有位置），只留下计划。
+
 ## 一轮怎么跑
 
 1. 守卫：启用 / 已登录 / 账号隔离 / 日配额 / 最小间隔（配额与间隔来自账本）
-2. 取候选：`Database.get_recommendations(exclude_processed=True)` —— 已经过主链路评分 /
+2. 先消费发现计划（`fish/plans.json`）：45 分钟内的计划优先，评论快照直接复用；
+   没有计划、或计划对应的视频已被回过时，进入下面的回退路径
+3. 取候选：`Database.get_recommendations(exclude_processed=True)` —— 已经过主链路评分 /
    解释、且没被点赞 / 点踩 / 屏蔽 / 评论过的 B 站条目；非 B 站条目直接过滤
-3. 逐个视频拉评论（按 `cursor.next` 翻页取满 `comments_per_video` 条，最多 5 页），
+4. 逐个视频拉评论（按 `cursor.next` 翻页取满 `comments_per_video` 条，最多 5 页），
    按点赞门槛、长度、是否已回过过滤
-4. 一次 LLM 调用同时完成「挑哪条」+「怎么写」（这是唯一新增的模型调用）；
+5. 一次 LLM 调用同时完成「挑哪条」+「怎么写」（这是唯一新增的模型调用）；
    `audience_prompt` 会作为 `<audience>` 段进 user 消息，模型优先从符合的人里挑
-5. 硬闸校验：字数、屏蔽词、空回复、rpid 必须在候选里
-6. `dry_run` → 记 `preview`；否则 `post_comment(root, parent)` 发楼中楼
-7. 发布成功 → 只写鱼的账本（含 B 站返回的 `reply_rpid`）。推荐行、画像、cognition
-   一律不动
-8. 等级 / 经验由账本推导（真实发布 = 3 XP，每 12 XP 一级）
+6. 硬闸校验：字数、屏蔽词、空回复、rpid 必须在候选里
+7. `dry_run` → 记 `preview`；否则 `post_comment(root, parent)` 发楼中楼
+8. 发布成功 → 只写鱼的账本（含 B 站返回的 `reply_rpid`；`via` 记这次是 `plan` 还是
+   回退的 `pool` 路径）。推荐行、画像、cognition 一律不动
+9. 等级 / 经验由账本推导（真实发布 = 3 XP，每 12 XP 一级）
 
 `allow_top_level` 是**代码级**判断，不是提示词承诺：模型返回 `top_level` 但配置没开时，
 这次直接记 `skipped`，不会悄悄变成一条顶层评论。
 
-第 7 步是隔离的关键：因为推荐行不会被标成「已评论」，那份推荐仍然留在用户的列表里、
+第 8 步是隔离的关键：因为推荐行不会被标成「已评论」，那份推荐仍然留在用户的列表里、
 仍然可以被用户自己反馈；鱼的查重只能靠账本 —— 同一 `bvid:rpid` 不回第二次，
-同一视频达到 `per_video_limit`（默认 1，跨天累计）就换下一个候选。
+同一视频达到 `per_video_limit`（默认 1，跨天累计）就换下一个候选。计划路径也不例外：
+消费计划前会在 `_visit` 里重跑同一套账本判断。
 
 模型返回 `skip` 是合法结果：宁可这次不说话，也不硬凑。`skip` 会记进账本，
 所以「什么都没发生」永远有据可查。
@@ -150,8 +189,11 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 
 ## 后台循环
 
-`run_fish_loop()` 每 5 分钟醒一次，只有 `enabled && !dry_run` 才真的跑一轮。
+`run_fish_loop()` 每 5 分钟醒一次，只有 `enabled && !dry_run` 才真的跑一轮：
+先跑一次 `comment_thread` 发现路线（计划 + 待评估候选），再进入动作层。
+没有可用模型时跳过发现 —— 动作层反正只能返回 `llm_unavailable`，那些评论请求纯属浪费。
 循环挂在 FastAPI startup 上，异常全部兜住 —— 实验室循环不该把 daemon 带走。
+发现失败只记 `WARNING`，不影响这一轮用回退路径说话。
 测试用 `OPENBILICLAW_FISH_LOOP_DISABLED=1` 关掉它。
 
 ## 前端
@@ -174,6 +216,9 @@ CLI 若需要，后续可加 `openbiliclaw fish run`，当前只提供 HTTP 接�
 | `tests/test_fish_guard.py` | 全部守卫分支、字数 / 屏蔽词 / 清洗 |
 | `tests/test_fish_engine.py` | dry-run 不发布、发布路径的 root/parent/@、配额、跨天视频查重、账号隔离、skip、超长、只写账本 |
 | `tests/test_fish_api.py` | 路由、配置往返、空 cookie 拒绝、Cookie 文件隔离，以及**发布后不影响用户侧**（推荐行仍是未处理、cognition 没被调用、候选池仍包含它） |
+| `tests/test_fish_comment_thread.py` | 发现路线：BV 号抽取、去重 / 排除种子、计划交接、关闭与无 Cookie 时零网络 |
+| `tests/test_fish_plan.py` | 计划队列：往返、同视频去重、上限、过期丢弃、坏文件降级 |
+| `tests/test_fish_loop.py` | tick 顺序：先发现后动作、发现失败不挡动作、关闭时完全不动 |
 | `tests/test_fish_integration.py` | 真实账号联调（默认跳过）：拉评论、账号隔离、发一条楼中楼再删除；见下节 |
 | `tests/test_bilibili_api.py` | 评论翻页（`cursor.next`）与老返回结构不退化成循环 |
 | `tests/test_llm_prompts.py` | 新 builder 的 system 消息与入参无关 |

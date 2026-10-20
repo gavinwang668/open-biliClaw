@@ -8666,7 +8666,9 @@ def create_app(
     def _fish_engine_for(data_dir: Any) -> Any:
         from openbiliclaw.bilibili.api import BilibiliAPIClient
         from openbiliclaw.fish.account import FishAccount
-        from openbiliclaw.fish.engine import BlueFishEngine, FishCandidate
+        from openbiliclaw.fish.engine import BlueFishEngine
+        from openbiliclaw.fish.plan import FishPlanStore
+        from openbiliclaw.fish.seeds import recommendation_pool_seeds
         from openbiliclaw.fish.store import FishStore
 
         llm = getattr(ctx, "llm_service", None)
@@ -8676,7 +8678,6 @@ def create_app(
             return cached[1]
 
         async def _candidates(limit: int) -> list[Any]:
-            rows = []
             try:
                 # Reuse the existing ranked pool verbatim: the main pipeline
                 # already decided what is worth visiting. ``exclude_processed``
@@ -8684,35 +8685,9 @@ def create_app(
                 # commented on, so the fish does not walk into places the owner
                 # has already reacted to. The fish's *own* history never touches
                 # these rows — it lives in ``fish/ledger.jsonl``.
-                rows = ctx.database.get_recommendations(
-                    limit=max(limit * 4, 12),
-                    exclude_processed=True,
-                )
+                return recommendation_pool_seeds(ctx.database, limit)
             except Exception:  # noqa: BLE001 - empty pool is a normal state
-                rows = []
-            out: list[Any] = []
-            for row in rows:
-                if str(row.get("source_platform") or "bilibili") != "bilibili":
-                    continue
-                bvid = str(row.get("bvid") or row.get("content_id") or "")
-                if not bvid.startswith("BV"):
-                    continue
-                out.append(
-                    FishCandidate(
-                        bvid=bvid,
-                        title=str(row.get("title") or ""),
-                        up_name=str(row.get("up_name") or ""),
-                        score=float(row.get("confidence") or 0.0),
-                        description=str(row.get("description") or ""),
-                        # Trace id only: the ledger records which recommendation
-                        # the fish acted on; nothing is written back to that row.
-                        recommendation_id=int(row.get("id") or 0),
-                        topic=str(row.get("topic") or row.get("pool_topic_label") or ""),
-                    )
-                )
-                if len(out) >= limit:
-                    break
-            return out
+                return []
 
         engine = BlueFishEngine(
             data_dir=data_dir,
@@ -8725,6 +8700,10 @@ def create_app(
                 proxy=_fish_bilibili_proxy(),
             ),
             main_account_provider=_fish_main_account,
+            # Plans are written by the comment-thread discovery route into the
+            # same ``fish/`` directory; consuming one here skips a second
+            # comment fetch and acts in the same round that discovered it.
+            plan_store=FishPlanStore(data_dir),
         )
         app.state.fish_engine_cache = (signature, engine)
         return engine
@@ -25068,8 +25047,20 @@ def create_app(
                 from openbiliclaw.fish.engine import run_fish_loop
 
                 data_dir = _fish_data_dir()
+
+                async def _fish_discovery_tick() -> None:
+                    # One route through the standard discovery pipeline: the
+                    # comment-thread strategy returns BV ids for the batch
+                    # evaluator and leaves a reply plan for the action pass
+                    # right after it. It is inert unless the lab is enabled.
+                    await ctx.run_discovery_route(strategies=["comment_thread"], limit=5)
+
                 app.state.fish_task = asyncio.create_task(
-                    run_fish_loop(_fish_engine_for(data_dir), data_dir=data_dir),
+                    run_fish_loop(
+                        _fish_engine_for(data_dir),
+                        data_dir=data_dir,
+                        discovery_tick=_fish_discovery_tick,
+                    ),
                     name="blue_fish_loop",
                 )
             except Exception:  # noqa: BLE001 - never block startup for a lab loop
