@@ -38,19 +38,13 @@ async def wire():
         gateway=False,
         api_flavor="",
     ):
-        config = Config.model_validate(
-            {
-                "llm": {
-                    "openrouter" if gateway else "openai_compatible": {
-                        "api_key": "sk-test-only",
-                        "base_url": base_url or PRESET["base_url"],
-                        "model": model or PRESET["default_model"],
-                        "reasoning_effort": effort,
-                        **({"api_flavor": api_flavor} if not gateway else {}),
-                    }
-                }
-            }
-        )
+        config = Config()
+        settings = config.llm.openrouter if gateway else config.llm.openai_compatible
+        settings.api_key = "sk-test-only"
+        settings.base_url = base_url or PRESET["base_url"]
+        settings.model = model or PRESET["default_model"]
+        settings.reasoning_effort = effort
+        settings.api_flavor = api_flavor
         factory = _maybe_openrouter_provider if gateway else _maybe_openai_compatible_provider
         provider = factory(config, {})
         assert isinstance(provider, OpenAIProvider)
