@@ -19,7 +19,7 @@ from openbiliclaw.decision.models import (
 from openbiliclaw.decision.runtime import BoundedDecisionProvider
 from openbiliclaw.discovery.candidate_pipeline import DiscoveryCandidatePipeline
 from openbiliclaw.discovery.candidate_pool import DiscoveryCandidateWrite
-from openbiliclaw.discovery.engine import ContentDiscoveryEngine
+from openbiliclaw.discovery.engine import ContentDiscoveryEngine, DiscoveredContent
 from openbiliclaw.discovery.jev_evaluator import JevContentEvaluator
 from openbiliclaw.soul.profile import InterestTag, PreferenceLayer, SoulProfile
 from openbiliclaw.storage.database import Database
@@ -79,6 +79,49 @@ def enqueue(database: Database, bodies: list[str]) -> None:
             for i, body in enumerate(bodies)
         ]
     )
+
+
+async def test_description_changes_after_400_characters_invalidate_jev_cache() -> None:
+    prefix = "算法基础的背景解释。\n" * 60
+    before = "只适用于离线教学；生产环境不可用。"
+    after = "已支持生产环境，但必须先备份。"
+    with FakeJevBackend(model=MODEL) as backend:
+        native = JevDecisionProvider(
+            api_key="synthetic-test-key", model=MODEL, endpoint_url=backend.url, max_attempts=1
+        )
+        engine = ContentDiscoveryEngine(
+            eval_scorer="jev",
+            jev_evaluator=JevContentEvaluator(native, model=MODEL, config=JevEvaluationConfig()),
+        )
+
+        def content(tail: str) -> DiscoveredContent:
+            return DiscoveredContent(
+                bvid="BVJEVTAIL",
+                title="算法原理",
+                description=prefix + tail,
+                source_strategy="search",
+            )
+
+        try:
+            assert await engine.evaluate_content_batch([content(before)], _build_profile()) == [
+                0.75
+            ]
+            assert await engine.evaluate_content_batch([content(before)], _build_profile()) == [
+                0.75
+            ]
+            assert await engine.evaluate_content_batch([content(after)], _build_profile()) == [0.75]
+            # An identical source reuses its result; a changed tail requires new evidence.
+            assert len(backend.requests) == 2
+            for request, expected in zip(backend.requests, [before, after], strict=True):
+                visible = "".join(
+                    span["text"]
+                    for span in request["state"]["untrusted_candidates"][0]["content"][
+                        "text_spans"
+                    ].values()
+                )
+                assert expected in visible
+        finally:
+            await native.aclose()
 
 
 async def evaluate(

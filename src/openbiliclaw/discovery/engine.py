@@ -700,8 +700,9 @@ def _batch_evaluation_content_item(
     content: DiscoveredContent,
     *,
     source_context: str,
+    description_limit: int | None = 400,
 ) -> dict[str, object]:
-    """Build the exact text content object rendered by the batch evaluator."""
+    """Build batch input; Jev owns source excerpting and must receive full text."""
 
     platform = _batch_evaluation_platform(content)
     return {
@@ -716,7 +717,7 @@ def _batch_evaluation_content_item(
         "title": content.title,
         "up_name": content.up_name,
         "author_name": content.author_name or content.up_name,
-        "description": _prompt_description_for_content(content, limit=400),
+        "description": _prompt_description_for_content(content, limit=description_limit),
         "published_at": content.published_at,
         "published_label": content.published_label,
         "cover_url": content.cover_url,
@@ -3564,6 +3565,7 @@ class ContentDiscoveryEngine:
         production_content_item = _batch_evaluation_content_item(
             content,
             source_context=source_context,
+            description_limit=None if getattr(self, "_eval_scorer", "llm") == "jev" else 400,
         )
         prompt_visible_content: object = production_content_item
         cache_content_identity = self._content_identity(content)
@@ -3648,7 +3650,11 @@ class ContentDiscoveryEngine:
         )
         content_items: list[dict[str, object]] = []
         for index, c in enumerate(batch):
-            item = _batch_evaluation_content_item(c, source_context=source_context)
+            item = _batch_evaluation_content_item(
+                c,
+                source_context=source_context,
+                description_limit=None if getattr(self, "_eval_scorer", "llm") == "jev" else 400,
+            )
             related_interests = recall.related_by_index.get(index)
             if related_interests:
                 item["related_interests"] = related_interests

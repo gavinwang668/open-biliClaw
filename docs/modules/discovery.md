@@ -49,6 +49,11 @@ Jev 完整评估改用 `build_profile_catalog()` + `select_profile_context()` �
 真实模型验收必须分开记录，见[验收记录](../plans/2026-10-02-jev-full-evaluator-validation.md)。
 
 单轮适配与官方多题依据见[实施契约](../plans/2026-10-14-jev-single-pass-context.md)。
+Jev 入口保留完整 `description`（不沿用普通 LLM 批处理的 400 字截断），由
+`jev_context` 统一按预算选择整段原文；缓存也绑定完整描述，尾部条件改变会重新评估。
+本机真实 API 进程的浏览器保存 → 实际热重载 → 来源入队 → HTTP 评估 → SQLite 准入
+回归见 `tests/test_jev_runtime_e2e.py`；只有最外侧 Jev 推理使用合成协议后端，
+不能据此认定官方 token 容量、模型质量或整套推荐文案链路已验收。
 Web/插件/移动的 Jev 连接区可配置服务开关、原生 URL、Token、固定模型、双容量和每批候选数，
 与 `eval_scorer=jev` 可同次保存，由共享后端验证及后台重建生效。不是额外加一层预过滤；
 独立 semantic filter 仍与完整 Jev 评估互斥。连接配置只表示本机就绪，未自动请求付费探测。

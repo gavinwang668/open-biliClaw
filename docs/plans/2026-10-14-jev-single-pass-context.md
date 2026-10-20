@@ -218,3 +218,60 @@ fixture。报告显式标记 `backend=local_fake`、`live=false`、`usage_is_syn
   404/流重连日志不能当作产品端到端健康证明。
 - 没有运行全仓 pytest、官方付费探测、真实来源账号操作或安装器测试；未改生产配置/数据库。
   无新依赖/安装流程变更，未修改外部 Flutter 客户端。README/架构/spec/模块/配置/CLI 文档同步。
+
+## 2026-10-21 真实 API 进程与热重载验收
+
+在独立 `test/jev-runtime-e2e` worktree（基于 `64901843`）补足上一轮 stub 掉的
+runtime 重建；未合入 main 或部署到日常服务。本机项目配置及所选环境变量均没有
+Jev Token，所以**没有向官方 Jev 发出真实推理请求**，不认定官方容量/质量已验收。
+
+新增 `tests/test_jev_runtime_e2e.py` 启动原生产 `create_app` factory 的独立 uvicorn
+进程。真实 Chromium 操作桌面设置页；HTTP config API 写临时 TOML，等待真实
+apply revision 成功，再通过实际来源 ingest API 投递合成候选。运行真实候选
+coordinator、Jev adapter 与 SQLite 准入，不替换 runtime/provider/config 内部逻辑。
+只有外侧 Jev 使用本机合成协议服务；通用 LLM/embedding 指向不可用回环地址，
+未传入真实服务凭据、操作来源账号或修改生产配置/画像/候选池。测试进程结束后回收。
+该测试不是安装到浏览器中的 MV3 插件验收，也不认证通用 LLM 健康、推荐文案生成或
+最终卡片展示链路；另外两端的设置回归仍沿用上一轮的边界。
+
+本轮发现并修复：
+
+- Jev 原本复用了普通 LLM 的批输入投影，`description` 在预算摘录前就被截到
+  400 字。实际来源入口保留原件，但 Jev 看不到尾部条件。现在仅 Jev 使用完整描述，
+  交由 `jev_context` 按所选模型预算摘录；普通 LLM 的 400 字兼容行为不变。
+- 缓存身份同样绑定完整描述。新增回环 HTTP 回归证明：同一原件重用结果，而只改变
+  400 字之后的适用条件必须重新请求；旧投影复现为仅 1 请求，修复后正确为 2 请求。
+
+真实进程最终连续两次通过（8.32 秒、7.57 秒，计入正常测试组的另一次亦通过）：
+
+- 页面保存 URL、Token、固定 `jev-1.14.0`、64k/16k 双容量及最大尝试 1；
+  实际热重载 `applied`，刷新仍为 Jev，GET（含 reveal_keys）及密码框不回显 Token。
+- 3 条候选（含 350 段长描述）全部准入，待评估为 0，原始描述不变。
+- 2 次真实回环 POST，各 20 / 10 题；每条候选完整 10 题，既不拆评估也不重复候选。
+- 请求包分别 24,056 / 20,642 字节；state＋最长单题分别 6,500 / 11,894 字节，
+  均低于所配 12,000 字节护栏。长文出现明确 partial coverage；中后部条件和完整
+  避雷保留。这里是**工程字节护栏，不是官方 tokenizer 实测**。
+- 可视截图：本 worktree 的 `output/playwright/jev-runtime-settings.png`（忽略文件）。
+
+最终验证共 **458 项不重叠测试通过**，重复实跑不额外计数：
+
+```text
+pytest -q tests/test_jev_fake_backend.py tests/test_jev_runtime_e2e.py --tb=short
+  20 passed
+pytest -q tests/test_jev_evaluator_wiring.py tests/test_discovery_engine.py
+  tests/test_discovery_candidate_pipeline.py tests/test_discovery_multimodal.py --tb=short
+  230 passed
+pytest -q tests/test_jev_full_evaluator.py tests/test_jev_on_demand_profile.py
+  tests/test_jev_evaluator_http_pipeline.py tests/test_jev_context_budget.py
+  tests/test_jev_provider.py --tb=short
+  152 passed
+pytest -q tests/test_jev_evaluation_config.py tests/test_jev_settings_api.py
+  tests/test_jev_settings_mobile.py tests/test_jev_settings_popup.py
+  tests/test_desktop_web_settings_save_e2e.py -k 'jev or switching_jev' --tb=short
+  56 passed, 9 deselected（既有 FastAPI on_event 弃用警告）
+```
+
+全部命令使用共享 `.venv`，并在该 worktree 设 `PYTHONPATH=src`。全仓 Ruff、
+MyPy（322 源文件）、修改文件的 format check 与 `git diff --check` 通过；未跑全仓
+pytest。无新依赖、配置字段、CLI、安装或对外协议变更；模块文档、changelog 和
+四处架构数据路径已同步。

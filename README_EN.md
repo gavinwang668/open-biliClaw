@@ -638,6 +638,7 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 Full candidate evaluation: `named profile + negative evidence + candidate text → LLM (default) OR pure Jev → metadata validation / isolated cache → admission`.
 Jev connection: `shared Web / popup / mobile form → config API validation → local URL/token/pinned-model/limits → runtime rebuild`; read responses never return the token.
+Jev text path: `full descriptions (no early 400-character trim) → budgeted whole-source excerpts → full-source cache identity`; originals stay unchanged.
 Jev evaluation and Director share `local full profile → candidate/intent-specific facts → selected-model budget check`.
 No automatic model switching, source-profile rewriting or removal of explicit exclusions; unknown model capacities require registration in settings or TOML.
 Local whole-source excerpts carry coverage and provenance. Each candidate's complete question group stays

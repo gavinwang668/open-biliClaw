@@ -30,6 +30,7 @@ candidate full evaluator (settings switch; LLM default):
   Web / popup / mobile shared Jev connection form → config API → validated local settings
     → native endpoint + secret (never in read responses) + selected-model limits → runtime rebuild
   Jev: local profile catalog → per-candidate projection + selected-model context budget
+    + full candidate descriptions (no legacy 400-character trim; full-source cache identity)
     → jev_context whole source spans / coverage → complete-question-group batch packing
   named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
     Jev: controlled taxonomy / IP + exact temporal excerpts + model-bound dual byte guards
