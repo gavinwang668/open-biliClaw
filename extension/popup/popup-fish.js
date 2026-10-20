@@ -35,6 +35,8 @@ const el = {
   maxCandidates: $("fishMaxCandidates"),
   commentsPerVideo: $("fishCommentsPerVideo"),
   minLikes: $("fishMinLikes"),
+  minViews: $("fishMinViews"),
+  minAgeDays: $("fishMinAgeDays"),
   blockedWords: $("fishBlockedWords"),
   allowTopLevel: $("fishAllowTopLevel"),
   notifyOwner: $("fishNotifyOwner"),
@@ -46,6 +48,7 @@ const el = {
   run: $("fishRunBtn"),
   runResult: $("fishRunResult"),
   ledger: $("fishLedger"),
+  report: $("fishReport"),
 };
 
 if (el.enabled && el.saveConfig) {
@@ -85,6 +88,8 @@ if (el.enabled && el.saveConfig) {
       max_candidates: numberValue(el.maxCandidates, 5),
       comments_per_video: numberValue(el.commentsPerVideo, 10),
       min_comment_likes: numberValue(el.minLikes, 0),
+      min_view_count: numberValue(el.minViews, 0),
+      min_publish_age_days: numberValue(el.minAgeDays, 0),
       blocked_words: String(el.blockedWords.value || "")
         .split(/[,，\s]+/)
         .map((word) => word.trim())
@@ -120,6 +125,12 @@ if (el.enabled && el.saveConfig) {
     el.maxCandidates.value = String(config.max_candidates ?? 5);
     el.commentsPerVideo.value = String(config.comments_per_video ?? 10);
     el.minLikes.value = String(config.min_comment_likes ?? 0);
+    if (el.minViews) {
+      el.minViews.value = String(config.min_view_count ?? 0);
+    }
+    if (el.minAgeDays) {
+      el.minAgeDays.value = String(config.min_publish_age_days ?? 0);
+    }
     el.blockedWords.value = (config.blocked_words || []).join(", ");
     el.allowTopLevel.checked = Boolean(config.allow_top_level);
     if (el.notifyOwner) {
@@ -154,6 +165,9 @@ if (el.enabled && el.saveConfig) {
     if (el.statusLine) el.statusLine.textContent = parts.join(" · ");
     if (el.accountStatus) el.accountStatus.textContent = account.message || "";
     renderLedger(payload?.recent || []);
+    if (el.report) {
+      el.report.textContent = payload?.today_report || "今天还没有记录。";
+    }
   }
 
   function renderLedger(rows) {

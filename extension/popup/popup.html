@@ -8085,6 +8085,14 @@
           <input id="fishMinLikes" type="number" min="0" max="10000" step="1" placeholder="0" data-settings-ignore-dirty>
         </div>
         <div class="settings-field">
+          <label for="fishMinViews">只回播放量 ≥（0 = 不限）</label>
+          <input id="fishMinViews" type="number" min="0" max="10000000" step="1" placeholder="0" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishMinAgeDays">只在发布几天后回（0 = 不限）</label>
+          <input id="fishMinAgeDays" type="number" min="0" max="365" step="1" placeholder="0" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
           <label for="fishBlockedWords">屏蔽词（逗号分隔）</label>
           <input id="fishBlockedWords" type="text" autocomplete="off" placeholder="剧透, 广告" data-settings-ignore-dirty>
         </div>
@@ -8104,6 +8112,10 @@
         </div>
         <p class="settings-hint" id="fishRunResult" aria-live="polite"></p>
         <ul id="fishLedger" style="list-style:none;padding:0;margin:8px 0 0"></ul>
+        <details style="margin-top:10px;">
+          <summary>今日日报</summary>
+          <pre id="fishReport" style="max-height:240px;overflow:auto;white-space:pre-wrap;font-size:12px;line-height:1.5;"></pre>
+        </details>
       </div>
       </div>
 

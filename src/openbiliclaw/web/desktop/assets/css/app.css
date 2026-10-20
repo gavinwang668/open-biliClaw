@@ -1232,6 +1232,9 @@
     .fish-qr-box { display: flex; justify-content: center; padding: var(--space-2); }
     .fish-qr-box[hidden] { display: none; }
     .fish-qr-box img { width: 180px; height: 180px; padding: 10px; border-radius: var(--radius-md); background: #fff; }
+    .fish-report { margin-top: var(--space-3); }
+    .fish-report summary { cursor: pointer; color: var(--muted); font-weight: 700; }
+    .fish-report pre { margin: var(--space-2) 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; font-size: 12px; line-height: 1.6; }
     .settings-advanced-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); min-width: 0; }
     .settings-advanced-toggle { display: flex; align-items: center; gap: var(--space-3); min-width: 0; min-height: 42px; padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); color: var(--fg); font-weight: 650; }
     .settings-advanced-toggle input { width: auto; min-width: 18px; margin: 0; accent-color: var(--accent); }

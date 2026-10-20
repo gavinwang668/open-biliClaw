@@ -25,7 +25,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any, Protocol
 
 from openbiliclaw.llm.json_utils import extract_llm_json_object
@@ -92,6 +92,10 @@ class FishCandidate:
     description: str = ""
     recommendation_id: int = 0
     topic: str = ""
+    # Copied from the pool row so the optional quality gates can judge it
+    # without another API call. 0 / "" means the pool could not tell.
+    view_count: int = 0
+    published_at: str = ""
     # How this video reached the engine: ``pool`` (the historical ranked-pool
     # pick) or ``plan`` (the comment-thread discovery route handed it over).
     # Recorded in the ledger so "did discovery actually drive this?" is
@@ -177,7 +181,8 @@ class BlueFishEngine:
     async def status(self) -> dict[str, Any]:
         """Return everything the settings panel needs in one call."""
         config = load_fish_config(self._data_dir)
-        stats = self._store.view(self._today()).stats
+        today = self._today()
+        stats = self._store.view(today).stats
         account, _owner_name, _owner_mid = await self._account_status()
         return {
             "ok": True,
@@ -199,6 +204,9 @@ class BlueFishEngine:
                 "last_run_at": stats.last_run_at,
             },
             "recent": self._store.recent(limit=20),
+            # Human-readable view of the same acts; the ledger stays the
+            # authoritative record.
+            "today_report": self._store.read_report(today),
         }
 
     # ── run ─────────────────────────────────────────────────────────────
@@ -249,6 +257,20 @@ class BlueFishEngine:
             except Exception as exc:  # noqa: BLE001 - reported, never raised
                 logger.warning("Blue Fish candidate lookup failed: %s", exc)
                 candidates = []
+
+            raw_candidates = list(candidates)
+            if config.min_view_count > 0 or config.min_publish_age_days > 0:
+                candidates = [
+                    candidate
+                    for candidate in candidates
+                    if _candidate_passes_quality(candidate, config=config, now=now)
+                ]
+                if raw_candidates and not candidates:
+                    return FishRunResult(
+                        False,
+                        "quality_gate",
+                        "候选都被质量门槛挡住了：把「播放量」或「发布天数」调低试试。",
+                    )
 
             client = self._client_factory(self._account.load_cookie())
             try:
@@ -832,6 +854,40 @@ def _parse_decision(payload: dict[str, Any], *, max_chars: int) -> tuple[str, in
         # let the length gate record it rather than silently trimming.
         logger.warning("Blue Fish reply is far over budget (%d chars)", len(reply))
     return action, target_rpid, reply, reason
+
+
+def _candidate_passes_quality(
+    candidate: FishCandidate, *, config: FishConfig, now: datetime
+) -> bool:
+    """Apply the optional supply-quality gates (0 = gate off).
+
+    An enabled gate fails when the pool cannot prove the value (0 views or an
+    unparseable date) — the same fail-closed rule the rest of the pipeline
+    uses for unparseable publication times.
+    """
+
+    if config.min_view_count > 0 and int(candidate.view_count) < config.min_view_count:
+        return False
+    if config.min_publish_age_days > 0:
+        published = _parse_published(candidate.published_at)
+        if published is None:
+            return False
+        if now - published < timedelta(days=config.min_publish_age_days):
+            return False
+    return True
+
+
+def _parse_published(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _delivery_label(*, comment: bool, dm: bool) -> str:

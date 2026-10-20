@@ -48,6 +48,8 @@ def recommendation_pool_seeds(database: Any, limit: int) -> list[FishCandidate]:
                 # fish acted on; nothing is written back to that row.
                 recommendation_id=int(row.get("id") or 0),
                 topic=str(row.get("topic") or row.get("pool_topic_label") or ""),
+                view_count=int(row.get("view_count") or 0),
+                published_at=str(row.get("published_at") or ""),
             )
         )
         if len(seeds) >= target:

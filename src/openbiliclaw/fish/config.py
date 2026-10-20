@@ -54,6 +54,8 @@ _MAX_AUDIENCE_CHARS = 300
 _MAX_TRIGGER_CHARS = 300
 _MAX_OWNER_CHARS = 30
 _NOTIFY_LIMIT_BOUNDS = (0, 3)
+_MIN_VIEW_COUNT_BOUNDS = (0, 10_000_000)
+_MIN_PUBLISH_AGE_BOUNDS = (0, 365)
 NOTIFY_CHANNELS = ("comment", "dm", "both")
 _MAX_NAME_CHARS = 20
 _MAX_BLOCKED_WORDS = 50
@@ -85,6 +87,10 @@ class FishConfig:
     max_candidates: int = 5
     comments_per_video: int = 10
     min_comment_likes: int = 0
+    # Optional supply-quality gates on the pool candidate itself. 0 = off;
+    # unknown stats fail an enabled gate rather than silently passing.
+    min_view_count: int = 0
+    min_publish_age_days: int = 0
     blocked_words: list[str] = field(default_factory=list)
     allow_top_level: bool = False
     # Owner notification: the fish posts one public comment per day that
@@ -119,6 +125,8 @@ class FishConfig:
             "max_candidates": self.max_candidates,
             "comments_per_video": self.comments_per_video,
             "min_comment_likes": self.min_comment_likes,
+            "min_view_count": self.min_view_count,
+            "min_publish_age_days": self.min_publish_age_days,
             "blocked_words": list(self.blocked_words),
             "allow_top_level": self.allow_top_level,
             "notify_owner": self.notify_owner,
@@ -374,6 +382,20 @@ def parse_fish_config(raw: object) -> tuple[FishConfig, list[str]]:
             default=defaults.min_comment_likes,
             bounds=_MIN_COMMENT_LIKES_BOUNDS,
             field_name="min_comment_likes",
+            warnings=warnings,
+        ),
+        min_view_count=_clamp_int(
+            raw.get("min_view_count"),
+            default=defaults.min_view_count,
+            bounds=_MIN_VIEW_COUNT_BOUNDS,
+            field_name="min_view_count",
+            warnings=warnings,
+        ),
+        min_publish_age_days=_clamp_int(
+            raw.get("min_publish_age_days"),
+            default=defaults.min_publish_age_days,
+            bounds=_MIN_PUBLISH_AGE_BOUNDS,
+            field_name="min_publish_age_days",
             warnings=warnings,
         ),
         blocked_words=_clean_blocked_words(raw.get("blocked_words"), warnings=warnings),

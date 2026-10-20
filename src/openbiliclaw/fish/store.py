@@ -138,6 +138,24 @@ class FishStore:
         except OSError as exc:
             logger.warning("Blue Fish report write failed: %s", exc)
 
+    def report_path(self, day: date) -> Path:
+        """Path of the human-readable report for ``day``."""
+
+        return self._home / REPORT_DIRNAME / f"{day.isoformat()}.md"
+
+    def read_report(self, day: date, *, max_chars: int = 8_000) -> str:
+        """Return the daily report text (empty when nothing happened yet)."""
+
+        path = self.report_path(day)
+        if not path.exists():
+            return ""
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("Blue Fish report unreadable: %s", exc)
+            return ""
+        return text[-max_chars:] if len(text) > max_chars else text
+
     def read(self, *, limit: int | None = None) -> list[dict[str, Any]]:
         """Read ledger records, oldest first, skipping corrupt lines."""
         if not self._ledger_path.exists():
