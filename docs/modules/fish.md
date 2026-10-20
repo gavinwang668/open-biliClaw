@@ -156,16 +156,17 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
    `active_hours` 按本机时区判断；手动「跑一轮」不受间隔与时段限制）
 2. 取候选：`Database.get_recommendations(exclude_processed=True)` —— 已经过主链路评分 /
    解释、且没被点赞 / 点踩 / 屏蔽 / 评论过的 B 站条目；非 B 站条目直接过滤
-3. **通知主人**（`notify_owner` 打开、今天还没到 `notify_daily_limit`）：在候选第一条视频下
-   发一条顶层评论，正文 = `@主人昵称 推荐你看看这条：《标题》。…`。B 站会把开头的
-   `@昵称` 解析成真正的提及，于是它变成主人账号上的一条消息。这一轮只做这一件事，
-   回复留到下一轮
+3. **通知主人**（`notify_owner` 打开、今天还没到 `notify_daily_limit`）：按 `notify_channel`
+   在候选第一条视频下发一条顶层评论（正文 `@主人昵称 推荐你看看这条：《标题》。…`，
+   B 站会把开头的 `@昵称` 解析成真正的提及）、发一条私信（正文带视频链接），或两者都发
+   （先评论，成功后再私信）。这一轮只做这一件事，回复留到下一轮
 4. 没有通知要做时，先消费发现计划（`fish/plans.json`）：45 分钟内的计划优先，评论快照
    直接复用；没有计划、或计划对应的视频已被回过时，进入下面的回退路径
 5. 逐个视频拉评论（按 `cursor.next` 翻页取满 `comments_per_video` 条，最多 5 页），
    按点赞门槛、长度、是否已回过过滤
 6. 一次 LLM 调用同时完成「挑哪条」+「怎么写」（这是唯一新增的模型调用）；
-   `audience_prompt` 会作为 `<audience>` 段进 user 消息，模型优先从符合的人里挑
+   `audience_prompt` 作为 `<audience>` 段、`trigger_prompt` 作为 `<trigger>` 段进 user 消息：
+   模型先按 trigger 判断这次该不该开口，再按 audience 挑人
 7. 硬闸校验：字数、屏蔽词、空回复、rpid 必须在候选里
 8. `dry_run` → 记 `preview`；否则 `post_comment(root, parent)` 发楼中楼
 9. 发布成功 → 只写鱼的账本（含 B 站返回的 `reply_rpid`；`via` 记这次是 `plan` 还是
