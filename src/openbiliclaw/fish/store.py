@@ -212,10 +212,12 @@ class FishStore:
                 last_published_at = parsed
         for row in notified:
             bvid = str(row.get("bvid") or "")
-            if bvid:
-                # A notification is a public comment under that video too:
-                # counting it here keeps "don't walk back into a video" true
-                # for both acts.
+            delivery = str(row.get("delivery") or "comment")
+            if bvid and "comment" in delivery:
+                # Only a notification that actually left a public comment
+                # under the video counts toward ``per_video_limit``; a DM-only
+                # notice never touched the comment section, so it must not
+                # block the next reply under the same video.
                 per_video_total[bvid] = per_video_total.get(bvid, 0) + 1
             if str(row.get("day") or "") == today_key:
                 notified_today += 1
