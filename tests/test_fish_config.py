@@ -9,6 +9,7 @@ from openbiliclaw.fish.config import (
     FishConfig,
     fish_config_path,
     load_fish_config,
+    parse_active_hours,
     parse_fish_config,
     save_fish_config,
 )
@@ -142,3 +143,31 @@ def test_owner_name_survives_a_save_round_trip(tmp_path) -> None:
     assert saved.notify_daily_limit == 2
     reloaded = load_fish_config(tmp_path)
     assert reloaded == saved
+
+
+def test_notify_channel_is_whitelisted() -> None:
+    both, _ = parse_fish_config({"notify_channel": "both"})
+    dm, _ = parse_fish_config({"notify_channel": "DM"})
+    bad, warnings = parse_fish_config({"notify_channel": "telegram"})
+
+    assert both.notify_channel == "both"
+    assert dm.notify_channel == "dm"
+    assert bad.notify_channel == "comment"
+    assert any("notify_channel" in warning for warning in warnings)
+
+
+def test_active_hours_parses_and_rejects_bad_windows() -> None:
+    good, _ = parse_fish_config({"active_hours": "09:00-23:00"})
+    overnight, _ = parse_fish_config({"active_hours": "18:00-09:00"})
+    bad, warnings = parse_fish_config({"active_hours": "晚上八点以后"})
+
+    assert good.active_hours == "09:00-23:00"
+    assert overnight.active_hours == "18:00-09:00"
+    assert bad.active_hours == ""
+    assert any("active_hours" in warning for warning in warnings)
+
+
+def test_parse_active_hours_returns_minutes() -> None:
+    assert parse_active_hours("09:30-23:05") == (570, 1385)
+    assert parse_active_hours("24:00-25:00") is None
+    assert parse_active_hours("") is None

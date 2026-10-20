@@ -8,6 +8,8 @@
 
 `CommentInfo` 还携带 `rpid` / `root` / `parent`（2026-10-19 起，默认 `0`）：`root` 是楼层根评论、`parent` 是被回复的那条，配合 `post_comment(root=..., parent=...)` 就能发楼中楼。蓝鱼实验室是第一个消费方；旧调用方不读这三个字段时行为逐字节不变。
 
+`send_private_message(uid, text)` 走 `api.vc.bilibili.com/web_im/v1/web_im/send_msg`（与评论共用 Cookie + csrf，另带 `referer`）；蓝鱼实验室的「私信通知」用它，上游拒绝 / 风控返回真实错误码。
+
 `get_reply_notifications(limit=...)` 读取消息中心的 `/x/msgfeed/reply`（「回复我的 / @我」）：每条通知带 `item.at_details`（这条评论 @ 了谁）与 `item.subject_id`（视频评论为 `aid`），蓝鱼实验室的 @ 主人联调用例靠它证明提及真的到达；生产链路不依赖该接口。
 
 `get_video_comments(limit=...)` 同日改为**翻页取满**：`/x/v2/reply/main` 单次最多返回一页且会忽略过大的 `ps`，所以按 `cursor.next` 走到 `is_end` / 空页 / 游标缺失 / 上限 5 页为止（每次请求 `ps ≤ 20`）。上游没有 `cursor` 字段时仍只发一次请求，老的返回结构行为不变。

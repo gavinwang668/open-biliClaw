@@ -8018,11 +8018,15 @@
           <label for="fishAudiencePrompt">只回哪类人（可选）</label>
           <textarea id="fishAudiencePrompt" rows="3" spellcheck="false" placeholder="留空则不限。例如：想找片单、抱怨推荐不准、在聊同一个人的人。" data-settings-ignore-dirty></textarea>
         </div>
+        <div class="settings-field">
+          <label for="fishTriggerPrompt">什么情况下才说话（可选）</label>
+          <textarea id="fishTriggerPrompt" rows="3" spellcheck="false" placeholder="留空则只要接得上就回。例如：只在认真讨论技术时插话；吵架、抽奖、打卡一律不回。" data-settings-ignore-dirty></textarea>
+        </div>
       </div>
 
       <div class="settings-section">
         <h3>在评论区 @ 你</h3>
-        <p class="settings-hint">打开后，它每天挑一条推荐，在视频评论区发一条 @ 你的评论，让这条推荐以 B 站消息的形式提醒到你。</p>
+        <p class="settings-hint">打开后，它每天挑一条推荐告诉你：评论区 @ 你（公开）、私信你（不公开），或者两个都发。</p>
         <p class="settings-hint">评论是公开的：别人也能看到大肥鱼 @ 了你的主号。</p>
         <div class="settings-field-row">
           <input id="fishNotifyOwner" type="checkbox" data-settings-ignore-dirty>
@@ -8036,6 +8040,14 @@
           <label for="fishNotifyDailyLimit">每天最多通知几次</label>
           <input id="fishNotifyDailyLimit" type="number" min="0" max="3" step="1" placeholder="1" data-settings-ignore-dirty>
         </div>
+        <div class="settings-field">
+          <label for="fishNotifyChannel">通知方式</label>
+          <select id="fishNotifyChannel" data-settings-ignore-dirty>
+            <option value="comment">评论区 @ 你（公开）</option>
+            <option value="dm">私信你（不公开）</option>
+            <option value="both">评论 @ + 私信</option>
+          </select>
+        </div>
       </div>
 
       <div class="settings-section">
@@ -8047,6 +8059,10 @@
         <div class="settings-field">
           <label for="fishMinInterval">两次发言至少隔（分钟）</label>
           <input id="fishMinInterval" type="number" min="5" max="1440" step="1" placeholder="30" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishActiveHours">只在几点到几点说话（留空不限）</label>
+          <input id="fishActiveHours" type="text" maxlength="11" autocomplete="off" placeholder="09:00-23:00" data-settings-ignore-dirty>
         </div>
         <div class="settings-field">
           <label for="fishPerVideoLimit">同一视频最多几条</label>

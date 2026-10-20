@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 LEDGER_FILENAME = "ledger.jsonl"
+REPORT_DIRNAME = "out"
 
 # Level pacing is a product choice, not a calibrated threshold: one real
 # published reply = 3 XP and one level every 12 XP, i.e. roughly four
@@ -37,6 +38,21 @@ LEDGER_FILENAME = "ledger.jsonl"
 # from the ledger, so retuning them re-labels history instead of rewriting it.
 _XP_PER_LEVEL = 12
 _XP_PER_PUBLISHED = 3
+
+
+def _report_line(record: dict[str, Any], when: datetime) -> str:
+    """Format one ledger row as a Markdown bullet."""
+
+    stamp = when.astimezone().strftime("%H:%M")
+    status = str(record.get("status") or "")
+    title = str(record.get("video_title") or record.get("bvid") or "").strip() or "（无视频）"
+    reply = " ".join(str(record.get("reply") or "").split())[:120]
+    detail = f" · {reply}" if reply else ""
+    error = str(record.get("error") or "").strip()
+    suffix = f" · 失败原因：{error}" if error else ""
+    bvid = str(record.get("bvid") or "").strip()
+    link = f" · https://www.bilibili.com/video/{bvid}" if bvid else ""
+    return f"- {stamp} [{status}] 《{title}》{detail}{suffix}{link}"
 
 
 def level_for_xp(xp: int) -> int:
@@ -98,6 +114,29 @@ class FishStore:
                 handle.write("\n")
         except OSError as exc:
             logger.warning("Blue Fish ledger append failed: %s", exc)
+
+    def append_report(self, record: dict[str, Any], *, when: datetime) -> None:
+        """Append one human-readable line to ``out/<day>.md``.
+
+        The ledger is the source of truth; the daily report is just the same
+        act written for a person: one bullet per attempt, so "今天它做了什么"
+        can be read without parsing JSONL. Never raises into the run loop.
+        """
+        day = when.date().isoformat()
+        try:
+            self._home.mkdir(parents=True, exist_ok=True)
+            report_dir = self._home / REPORT_DIRNAME
+            report_dir.mkdir(parents=True, exist_ok=True)
+            path = report_dir / f"{day}.md"
+            created = not path.exists()
+            line = _report_line(record, when)
+            with open(path, "a", encoding="utf-8") as handle:
+                if created:
+                    handle.write(f"# 大肥鱼日报 {day}\n\n")
+                handle.write(line)
+                handle.write("\n")
+        except OSError as exc:
+            logger.warning("Blue Fish report write failed: %s", exc)
 
     def read(self, *, limit: int | None = None) -> list[dict[str, Any]]:
         """Read ledger records, oldest first, skipping corrupt lines."""

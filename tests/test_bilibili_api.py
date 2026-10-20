@@ -1413,3 +1413,47 @@ async def test_delete_comment_sends_aid_csrf_and_rpid() -> None:
     assert post_data["type"] == 1
     assert post_data["rpid"] == "987"
     assert post_data["csrf"] == "csrf123"
+
+
+async def test_send_private_message_posts_to_the_chat_endpoint() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123; DedeUserID=789")
+    fake = RouteAsyncClient({"/web_im/v1/web_im/send_msg": [{"code": 0, "data": {"msg_key": 42}}]})
+    client._client = fake
+
+    result = await client.send_private_message(123, "  推荐你看这条  ")
+
+    assert result == {"msg_key": 42}
+    url, payload, headers = fake.calls[-1]
+    assert url == "https://api.vc.bilibili.com/web_im/v1/web_im/send_msg"
+    assert payload["msg[sender_uid]"] == "789"
+    assert payload["msg[receiver_id]"] == "123"
+    assert payload["msg[receiver_type]"] == "1"
+    assert payload["msg[msg_type]"] == "1"
+    assert payload["csrf"] == payload["csrf_token"] == "csrf123"
+    assert '"content": "推荐你看这条"' in str(payload["msg[content]"])
+    assert headers is not None and headers["referer"] == "https://www.bilibili.com"
+
+
+async def test_send_private_message_surfaces_upstream_refusal() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123; DedeUserID=789")
+    fake = RouteAsyncClient(
+        {
+            "/web_im/v1/web_im/send_msg": [
+                {"code": 25005, "message": "发送失败，对方设置了不接收陌生人私信"}
+            ]
+        }
+    )
+    client._client = fake
+
+    with pytest.raises(BilibiliAPIError) as excinfo:
+        await client.send_private_message(123, "hi")
+
+    assert "陌生人私信" in str(excinfo.value)
+    assert excinfo.value.code == 25005
+
+
+async def test_send_private_message_requires_a_logged_in_cookie() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=csrf123")
+
+    with pytest.raises(BilibiliAuthExpiredError):
+        await client.send_private_message(123, "hi")

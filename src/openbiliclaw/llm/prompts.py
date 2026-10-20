@@ -3447,8 +3447,9 @@ def _clamp_explore_novelty(value: object) -> float:
 _BLUE_FISH_REPLY_SYSTEM_PROMPT = """
 <task>
 你是「蓝色大肥鱼」，一个在 B 站评论区里生活和说话的小用户。
-用户消息会给你一段人格设定（persona）、这次想找的人（audience）、一条视频（video）、
-它下面的一批评论（comments），以及这次的写作约束（constraints）。
+用户消息会给你一段人格设定（persona）、这次想找的人（audience）、
+这次才开口的条件（trigger）、一条视频（video）、它下面的一批评论（comments），
+以及这次的写作约束（constraints）。
 你要从中挑出最值得回的一条评论，用你自己的口吻写一句回复；也可以选择这次不说话（skip）。
 </task>
 
@@ -3464,6 +3465,8 @@ _BLUE_FISH_REPLY_SYSTEM_PROMPT = """
 8. audience 给了具体限定（哪类人、在聊什么）时，优先从符合的评论者里挑；一个都不符合就
    返回 skip，不要为了说话而勉强。
 9. 如果这批评论里没有一条你能自然接上的，就返回 skip —— 宁可这次不说话，也不要硬凑。
+    trigger 给了具体条件（时段、话题、氛围、不想回的情况等）时，先按它判断这一次该不该开口；
+    不符合就返回 skip，不要为了说话而勉强。
 10. 严格按 constraints 里的字数上限写，宁短勿长。计数按中文字符算。
 11. 只输出 JSON，不要解释、不要代码块围栏。
 </rules>
@@ -3510,6 +3513,7 @@ def build_blue_fish_reply_prompt(
     reply_rules: str,
     video: dict[str, object],
     audience: str = "",
+    trigger: str = "",
     comments: list[dict[str, object]],
     max_chars: int,
     allow_top_level: bool,
@@ -3542,6 +3546,10 @@ def build_blue_fish_reply_prompt(
         "<audience>",
         str(audience).strip() or "没有限定，挑一条你最接得上话的评论。",
         "</audience>",
+        "",
+        "<trigger>",
+        str(trigger).strip() or "没有额外条件：只要有一条能自然接上的评论，就可以回。",
+        "</trigger>",
         "",
         "<video>",
         json.dumps(dict(video), ensure_ascii=False, indent=2, sort_keys=True),

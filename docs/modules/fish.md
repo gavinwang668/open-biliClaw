@@ -69,7 +69,8 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 ├── config.json            # 实验室配置（刻意不进 config.toml）
 ├── bilibili_cookie.json   # 鱼自己的 Cookie
 ├── plans.json             # 发现路线留下的一条待执行计划（最多 3 条、45 分钟过期）
-└── ledger.jsonl           # 一次行动一行，追加写
+├── ledger.jsonl           # 一次行动一行，追加写
+└── out/<日期>.md          # 人看的日报：每次尝试一行（时间 / 状态 / 视频 / 正文）
 ```
 
 **没有 `state.json`。** 日配额、等级 / 经验、`bvid:rpid` 查重、单视频上限，全部由账本
@@ -89,6 +90,7 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 | `persona_prompt` | 内置 | 人格设定，设置页可改 |
 | `reply_rules` | 内置 | 额外说话规矩，设置页可改 |
 | `audience_prompt` | `""` | 可选：只回哪类人。留空 = 不限定；写进 prompt 的 `<audience>` 段（≤300 字） |
+| `trigger_prompt` | `""` | 可选：什么情况下才开口（时段 / 话题 / 氛围 / 不想回的情况）。写进 `<trigger>` 段，模型据此判断该不该 skip（≤300 字） |
 | `max_chars` | `80` | 单条字数上限（10–300） |
 | `daily_limit` | `3` | 每天最多发几条（0–20） |
 | `min_interval_minutes` | `30` | 两次发言的最小间隔（5–1440） |
@@ -101,9 +103,14 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 | `notify_owner` | `false` | 每天在评论区 @ 主人一次，把一条推荐送进主人的 B 站消息 |
 | `owner_name` | `""` | 主人的 B 站昵称；留空自动读主账号 nav 的昵称 |
 | `notify_daily_limit` | `1` | 每天最多通知几次（0–3） |
+| `notify_channel` | `comment` | 通知方式：`comment`（评论区 @）/ `dm`（私信）/ `both`（先评论，成功后再私信） |
+| `active_hours` | `""` | 可选的每日发言时段，如 `09:00-23:00`；支持跨夜（`18:00-09:00`）；留空 = 全天 |
 
 所有字段在读写两头钳制：越界就近取边界值、类型不对回落默认值，并在日志里
 `WARNING` 记一条 —— 一个坏数字不该把设置页打挂。
+
+`active_hours` 用**进程本地时区**判断；Docker 里默认是 UTC，想让「晚上 9 点」对上你的时间，
+给容器加 `TZ=Asia/Shanghai`。
 
 ## 作为 B 站发现的一路
 
@@ -148,24 +155,27 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 
 ## 一轮怎么跑
 
-1. 守卫：启用 / 已登录 / 账号隔离 / 日配额 / 最小间隔（配额与间隔来自账本）
+1. 守卫：启用 / 已登录 / 账号隔离 / 日配额 / 最小间隔 / 发言时段（配额与间隔来自账本，
+   `active_hours` 按本机时区判断；手动「跑一轮」不受间隔与时段限制）
 2. 取候选：`Database.get_recommendations(exclude_processed=True)` —— 已经过主链路评分 /
    解释、且没被点赞 / 点踩 / 屏蔽 / 评论过的 B 站条目；非 B 站条目直接过滤
-3. **通知主人**（`notify_owner` 打开、今天还没到 `notify_daily_limit`）：在候选第一条视频下
-   发一条顶层评论，正文 = `@主人昵称 推荐你看看这条：《标题》。…`。B 站会把开头的
-   `@昵称` 解析成真正的提及，于是它变成主人账号上的一条消息。这一轮只做这一件事，
-   回复留到下一轮
+3. **通知主人**（`notify_owner` 打开、今天还没到 `notify_daily_limit`）：按 `notify_channel`
+   在候选第一条视频下发一条顶层评论（正文 `@主人昵称 推荐你看看这条：《标题》。…`，
+   B 站会把开头的 `@昵称` 解析成真正的提及）、发一条私信（正文带视频链接），或两者都发
+   （先评论，成功后再私信）。这一轮只做这一件事，回复留到下一轮
 4. 没有通知要做时，先消费发现计划（`fish/plans.json`）：45 分钟内的计划优先，评论快照
    直接复用；没有计划、或计划对应的视频已被回过时，进入下面的回退路径
 5. 逐个视频拉评论（按 `cursor.next` 翻页取满 `comments_per_video` 条，最多 5 页），
    按点赞门槛、长度、是否已回过过滤
 6. 一次 LLM 调用同时完成「挑哪条」+「怎么写」（这是唯一新增的模型调用）；
-   `audience_prompt` 会作为 `<audience>` 段进 user 消息，模型优先从符合的人里挑
+   `audience_prompt` 作为 `<audience>` 段、`trigger_prompt` 作为 `<trigger>` 段进 user 消息：
+   模型先按 trigger 判断这次该不该开口，再按 audience 挑人
 7. 硬闸校验：字数、屏蔽词、空回复、rpid 必须在候选里
 8. `dry_run` → 记 `preview`；否则 `post_comment(root, parent)` 发楼中楼
 9. 发布成功 → 只写鱼的账本（含 B 站返回的 `reply_rpid`；`via` 记这次是 `plan` 还是
    回退的 `pool` 路径；`notified` 行单独记通知）。推荐行、画像、cognition 一律不动
 10. 等级 / 经验由账本推导（真实发布 = 3 XP，每 12 XP 一级）
+11. 每次尝试同时写一行 `data/fish/out/<日期>.md` 日报（人看的版本：时间、状态、视频、正文）
 
 `allow_top_level` 是**代码级**判断，不是提示词承诺：模型返回 `top_level` 但配置没开时，
 这次直接记 `skipped`，不会悄悄变成一条顶层评论。
@@ -197,6 +207,8 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
     通知与回复都算公开评论，共用最小间隔，通知所在视频同样计入 `per_video_limit`
 13. 通知固定发**顶层评论**，由 `notify_owner` 自己控制，与 `allow_top_level` 无关
     （顶层回复开关只管「回复别人的那条」能不能变成顶层）
+14. 私信失败不会回滚已发出的评论；两种都失败才记 `failed`。私信没发出去只记 `error`，
+    账本 `delivery` 仍写实际发出去的那几种（`comment` / `dm` / `comment+dm`）
 
 `preview` 不占配额也不触发最小间隔：它没有发布任何东西。
 
@@ -251,7 +263,7 @@ CLI 若需要，后续可加 `openbiliclaw fish run`，当前只提供 HTTP 接�
 |---|---|
 | `tests/test_fish_config.py` | 默认值、钳制、坏 JSON、屏蔽词去重 |
 | `tests/test_fish_guard.py` | 全部守卫分支、字数 / 屏蔽词 / 清洗 |
-| `tests/test_fish_engine.py` | dry-run 不发布、发布路径的 root/parent/@、配额、跨天视频查重、账号隔离、skip、超长、只写账本 |
+| `tests/test_fish_engine.py` | dry-run 不发布、发布路径的 root/parent/@、配额、跨天视频查重、账号隔离、skip、超长、只写账本；通知的 comment / dm / both、私信部分失败、`trigger` 进 user 消息、本机时区时段、日报追加 |
 | `tests/test_fish_api.py` | 路由、配置往返、空 cookie 拒绝、Cookie 文件隔离、扫码登录（生成 / 落盘 / 主号拒绝回滚 / pending 不落盘），以及**发布后不影响用户侧**（推荐行仍是未处理、cognition 没被调用、候选池仍包含它） |
 | `tests/test_fish_comment_thread.py` | 发现路线：BV 号抽取、去重 / 排除种子、计划交接、关闭与无 Cookie 时零网络 |
 | `tests/test_fish_plan.py` | 计划队列：往返、同视频去重、上限、过期丢弃、坏文件降级 |

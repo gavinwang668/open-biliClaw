@@ -199,3 +199,17 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
 - 隔离规则不变：扫到主号（mid 或 Cookie 相同）立刻回滚 Cookie 并拒绝；
   `pending` 阶段不写任何 Cookie。
 - 二维码在深色主题下也要能扫，所以 `<img>` 固定白底。
+
+## 15. 2026-10-20 增补：投递方式、触发条件、时段与日报
+
+对齐同类插件（dsh-bili-subagent / dsh-bili-scroll）的四块能力：
+
+- **投递方式** `notify_channel`：`comment`（默认）/ `dm` / `both`。私信走
+  `BilibiliAPIClient.send_private_message()`（vc 域，文本消息）；`both` 沿用「评论优先」：
+  评论失败就停在失败，评论成功但私信失败记 `error`、`delivery=comment`，不回滚。
+- **触发条件** `trigger_prompt`：进 user 消息的 `<trigger>` 段，system 仍为字节静态常量；
+  模型先按它判断该不该开口，不符合就返回 `skip`。
+- **发言时段** `active_hours`：`HH:MM-HH:MM`，支持跨夜；按本机时区判断，只拦自动轮
+  （手动「跑一轮」是用户的显式选择，不受限）；非法格式在保存时回落为空并记 warning。
+- **日报**：每次尝试在 `data/fish/out/<日期>.md` 追加一行（时间 / 状态 / 视频 / 正文），
+  账本仍是权威来源，日报只是人看的视图。
