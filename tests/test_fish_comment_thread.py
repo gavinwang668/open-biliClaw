@@ -16,6 +16,7 @@ from openbiliclaw.fish.account import FishAccount
 from openbiliclaw.fish.config import FishConfig, save_fish_config
 from openbiliclaw.fish.engine import FishCandidate
 from openbiliclaw.fish.plan import FishPlanStore
+from openbiliclaw.fish.store import FishStore
 
 NOW = datetime(2026, 10, 20, 3, 0, tzinfo=UTC)
 COOKIE = "SESSION=fish-only"
@@ -86,6 +87,7 @@ def _build(
     seeds: list[FishCandidate] | None = None,
     max_seeds: int = 3,
     max_mentions: int = 8,
+    store: FishStore | None = None,
 ) -> tuple[CommentThreadStrategy, _FakeClient, FishPlanStore, list[str]]:
     save_fish_config(tmp_path, FishConfig(enabled=enabled))
     if cookie is not None:
@@ -102,17 +104,19 @@ def _build(
         pool = seeds if seeds is not None else [SEED]
         return pool[:limit]
 
-    store = FishPlanStore(tmp_path)
+    plans = FishPlanStore(tmp_path)
+    ledger = store
     strategy = CommentThreadStrategy(
         data_dir=tmp_path,
         seed_provider=_seeds,
         client_factory=_factory,
-        plan_store=store,
+        plan_store=plans,
+        store=ledger,
         max_seeds=max_seeds,
         max_mentions=max_mentions,
         clock=lambda: NOW,
     )
-    return strategy, client, store, factory_cookies
+    return strategy, client, plans, factory_cookies
 
 
 @pytest.mark.parametrize(
@@ -295,3 +299,61 @@ async def test_a_provider_error_degrades_to_no_candidates(tmp_path) -> None:
 
     assert await strategy.discover(profile=None, limit=5) == []
     assert store.pending(now=NOW) == []
+
+
+def _published(store: FishStore, *, bvid: str = SEED.bvid, rpid: int = 1001) -> None:
+    store.append(
+        {
+            "ts": NOW.isoformat(),
+            "day": NOW.date().isoformat(),
+            "bvid": bvid,
+            "target_rpid": rpid,
+            "status": "published",
+        }
+    )
+
+
+async def test_a_seed_the_fish_already_answered_is_skipped(tmp_path) -> None:
+    ledger = FishStore(tmp_path)
+    _published(ledger)
+    second = FishCandidate(bvid="BV1cc411c7mG", title="第二个种子")
+    strategy, client, plans, _cookies = _build(
+        tmp_path,
+        seeds=[SEED, second],
+        comments={
+            SEED.bvid: [_comment(1, "这个转场我反复看了三遍")],
+            second.bvid: [_comment(2, "这段配乐很妙", likes=7)],
+        },
+        store=ledger,
+    )
+
+    await strategy.discover(profile=None, limit=5)
+
+    assert client.comment_calls == [second.bvid]
+    plan = plans.take_fresh(now=NOW)
+    assert plan is not None
+    assert plan.bvid == second.bvid
+
+
+async def test_an_already_answered_comment_is_not_planned_again(tmp_path) -> None:
+    ledger = FishStore(tmp_path)
+    _published(ledger, rpid=1001)
+    strategy, _client, plans, _cookies = _build(
+        tmp_path,
+        comments={
+            SEED.bvid: [
+                _comment(1001, "这个转场我反复看了三遍", likes=42),
+                _comment(1002, "这段配乐很妙", likes=7),
+            ]
+        },
+        store=ledger,
+    )
+    # Two replies are allowed under one video, so the seed stays eligible and
+    # only the already-answered comment is filtered out.
+    save_fish_config(tmp_path, FishConfig(enabled=True, per_video_limit=2))
+
+    await strategy.discover(profile=None, limit=5)
+
+    plan = plans.take_fresh(now=NOW)
+    assert plan is not None
+    assert [comment.rpid for comment in plan.comments] == [1002]

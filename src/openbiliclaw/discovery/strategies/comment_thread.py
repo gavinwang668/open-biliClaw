@@ -48,6 +48,7 @@ from openbiliclaw.published_time import normalize_published_time
 
 if TYPE_CHECKING:
     from openbiliclaw.bilibili.api import CommentInfo, VideoInfo
+    from openbiliclaw.fish.store import FishLedgerView, FishStore
     from openbiliclaw.soul.profile import SoulProfile
 
 logger = logging.getLogger(__name__)
@@ -101,6 +102,7 @@ class CommentThreadStrategy(DiscoveryStrategy):
         seed_provider: SeedProvider,
         client_factory: ClientFactory,
         plan_store: FishPlanStore | None = None,
+        store: FishStore | None = None,
         max_seeds: int = MAX_SEEDS,
         max_mentions: int = MAX_MENTIONS,
         clock: Callable[[], datetime] | None = None,
@@ -109,6 +111,11 @@ class CommentThreadStrategy(DiscoveryStrategy):
         self._seed_provider = seed_provider
         self._client_factory = client_factory
         self._plan_store = plan_store or FishPlanStore(self._data_dir)
+        # The ledger is the only source of "already answered". Without it the
+        # route would keep planning the same top-ranked seed every tick, and
+        # the action layer would reject each plan (per_video_limit) before
+        # falling back to the old pool scan.
+        self._store = store
         self._max_seeds = max(1, int(max_seeds))
         self._max_mentions = max(1, int(max_mentions))
         self._clock = clock or (lambda: datetime.now(UTC))
@@ -143,17 +150,21 @@ class CommentThreadStrategy(DiscoveryStrategy):
             logger.debug("comment_thread: lab has no cookie, skipping")
             return []
         target = max(1, int(limit))
+        view = self._ledger_view()
+        # Ask for more seeds than one pass visits so answered videos can be
+        # filtered out without starving the pass.
         try:
-            seeds = await self._seed_provider(min(self._max_seeds, target))
+            seeds = await self._seed_provider(max(self._max_seeds * 4, target))
         except Exception as exc:  # noqa: BLE001 - a route must not take refresh down
             logger.warning("comment_thread: seed lookup failed: %s", exc)
             return []
+        seeds = self._unanswered(seeds, view=view, config=config)
         if not seeds:
             return []
 
         client = self._client_factory(cookie)
         try:
-            return await self._scan(client, seeds, config=config, limit=target)
+            return await self._scan(client, seeds, config=config, limit=target, view=view)
         except Exception as exc:  # noqa: BLE001
             # Strategy exceptions are swallowed by the engine's gather; log the
             # real cause here or the route dies silently.
@@ -172,6 +183,7 @@ class CommentThreadStrategy(DiscoveryStrategy):
         *,
         config: FishConfig,
         limit: int,
+        view: FishLedgerView | None,
     ) -> list[DiscoveredContent]:
         cap = min(limit, self._max_mentions)
         discovered: list[DiscoveredContent] = []
@@ -187,7 +199,12 @@ class CommentThreadStrategy(DiscoveryStrategy):
             if not comments:
                 continue
             if plan is None:
-                usable = usable_comments(comments, config=config)
+                usable = usable_comments(
+                    comments,
+                    config=config,
+                    answered=view.answered if view is not None else frozenset(),
+                    bvid=seed.bvid,
+                )
                 if usable:
                     plan = self._plan(seed, usable, source=self.name)
             for bvid in self._mentioned(comments, seed=seed.bvid):
@@ -205,6 +222,41 @@ class CommentThreadStrategy(DiscoveryStrategy):
         if plan is not None:
             self._plan_store.enqueue(plan)
         return discovered
+
+    def _ledger_view(self) -> FishLedgerView | None:
+        """Scan the fish ledger, tolerating a missing / unreadable file."""
+
+        if self._store is None:
+            return None
+        try:
+            return self._store.view(self._clock().date())
+        except Exception:  # noqa: BLE001 - discovery must not fail on a bad ledger
+            logger.debug("comment_thread: ledger unavailable", exc_info=True)
+            return None
+
+    def _unanswered(
+        self,
+        seeds: list[FishCandidate],
+        *,
+        view: FishLedgerView | None,
+        config: FishConfig,
+    ) -> list[FishCandidate]:
+        """Keep seeds the fish may still speak under, capped at ``max_seeds``."""
+
+        out: list[FishCandidate] = []
+        seen: set[str] = set()
+        for seed in seeds:
+            if seed.bvid in seen:
+                continue
+            seen.add(seed.bvid)
+            if view is not None and (
+                view.per_video_total.get(seed.bvid, 0) >= config.per_video_limit
+            ):
+                continue
+            out.append(seed)
+            if len(out) >= self._max_seeds:
+                break
+        return out
 
     async def _comments(
         self,

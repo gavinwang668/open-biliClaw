@@ -1649,6 +1649,7 @@ class RuntimeContext:
         from openbiliclaw.discovery.strategies.comment_thread import CommentThreadStrategy
         from openbiliclaw.fish.plan import FishPlanStore
         from openbiliclaw.fish.seeds import recommendation_pool_seeds
+        from openbiliclaw.fish.store import FishStore
 
         async def _comment_thread_seeds(limit: int) -> list[FishCandidate]:
             return recommendation_pool_seeds(self.database, limit)
@@ -1661,6 +1662,10 @@ class RuntimeContext:
                 proxy=new_config.bilibili.proxy or None,
             ),
             plan_store=FishPlanStore(new_config.data_path),
+            # The ledger says which videos the fish already spoke under, so the
+            # route plans the next unanswered seed instead of replaying the
+            # top-ranked one every tick.
+            store=FishStore(new_config.data_path),
         )
         new_discovery_engine.register_strategy(comment_thread_strategy)
 
