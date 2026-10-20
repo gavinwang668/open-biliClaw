@@ -308,6 +308,30 @@ def test_parser_accepts_openai_compatible_provider(tmp_path: Path) -> None:
     assert args.provider == "openai_compatible"
 
 
+def test_minimax_bootstrap_default_and_explicit_model_preservation(tmp_path: Path) -> None:
+    project_root = Path(__file__).resolve().parent.parent
+    (tmp_path / "config.toml").write_text(
+        (project_root / "config.example.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    parser = bootstrap.build_arg_parser()
+    args = parser.parse_args(["--project-dir", str(tmp_path), "--llm-preset", "minimax"])
+    assert bootstrap.apply_llm_preset_args(args) is None
+    assert args.llm_model == "MiniMax-M3.1-Flash"
+    assert args.provider == "openai_compatible"
+    bootstrap.apply_provider_override(tmp_path, args.provider)
+    bootstrap.apply_llm_model(tmp_path, args.provider, args.llm_model)
+    data = bootstrap.read_simple_toml(tmp_path / "config.toml")
+    instance_id = data["llm"]["default_chain"][0]
+    assert data["llm"]["instances"][instance_id]["model"] == "MiniMax-M3.1-Flash"
+    for model in ("MiniMax-M3", "MiniMax-M2.7", "custom-text-model"):
+        args = parser.parse_args(["--llm-preset", "minimax", "--llm-model", model])
+        assert bootstrap.apply_llm_preset_args(args) is None
+        bootstrap.apply_llm_model(tmp_path, args.provider, args.llm_model)
+        data = bootstrap.read_simple_toml(tmp_path / "config.toml")
+        assert data["llm"]["instances"][instance_id]["model"] == model
+
+
 def test_detect_missing_secrets_flags_openai_compatible_connection_fields(
     tmp_path: Path,
 ) -> None:

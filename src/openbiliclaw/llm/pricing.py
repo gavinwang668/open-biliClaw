@@ -85,7 +85,8 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         # model names here so the cost report remains useful for them.
         "kimi-k2.6": (0.001, 0.004),
         "kimi-k2.5": (0.001, 0.004),
-        "MiniMax-M3": (0.00432, 0.01728),  # $0.60/$2.40 per M
+        "MiniMax-M3.1-Flash": (0.00108, 0.00432),  # $0.15/$0.60 per M
+        "MiniMax-M3": (0.00432, 0.01728),  # Conservative >512k estimate: $0.60/$2.40 per M
         "MiniMax-M2.7": (0.00216, 0.00864),  # $0.30/$1.20 per M
         "MiniMax-M2.5": (0.00216, 0.00864),
         "qwen-flash": (0.0003, 0.0009),
@@ -97,6 +98,10 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         "yi-medium": (0.0025, 0.0025),
         "yi-large": (0.02, 0.02),
         "default": (0.018, 0.072),
+    },
+    "openai_compatible": {
+        # Direct MiniMax list-price estimate; custom gateways may charge differently.
+        "MiniMax-M3.1-Flash": (0.00108, 0.00432),
     },
     "claude": {
         # USD × 7.2; matches platform.claude.com 2026-05 pricing.
@@ -202,6 +207,8 @@ def estimate_cost(
     non_cached = prompt_tokens - cached_tokens
 
     discount = CACHE_HIT_DISCOUNT.get(provider, 0.5)
+    if provider in {"openai", "openai_compatible"} and model == "MiniMax-M3.1-Flash":
+        discount = 0.10  # $0.015 per M cached input tokens at the direct list price.
     return round(
         (non_cached / 1000.0) * input_rate
         + (cached_tokens / 1000.0) * input_rate * discount

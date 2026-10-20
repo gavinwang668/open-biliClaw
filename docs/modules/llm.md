@@ -114,6 +114,33 @@
 不可达 embedding 端点刷日志或反复出网。`EmbeddingService.l2_cache` /
 `l2_cache_stats()` 把 L2 持久化缓存暴露给诊断与维护面（CLI 清理等），namespace 注册保持一致。
 
+## MiniMax text models
+
+The CLI MiniMax preset and `agent_bootstrap.py --llm-preset minimax` default to
+`MiniMax-M3.1-Flash` at `https://api.minimax.io/v1`. The current text suggestions
+are Flash first, then `MiniMax-M3`; saved legacy and custom model IDs remain usable.
+Direct MiniMax model discovery hides historical text suggestions but leaves
+non-text models intact. OpenRouter discovery uses the advertised
+`minimax/minimax-m3.1-flash:free` route and `minimax/minimax-m3`; it does not invent
+an unadvertised paid Flash route.
+
+Flash has a 1,000,000-token context and 524,288-token maximum output. Its direct
+list prices per million tokens are $0.15 input, $0.015 cached input, and $0.60
+output. The cost tracker estimates these in CNY using its existing exchange-rate
+convention; custom gateways may charge differently. M3 remains available with
+standard input/output pricing of $0.30/$1.20 through 512k and $0.60/$2.40
+above 512k. The existing M3 estimate remains conservative.
+
+Flash always uses adaptive reasoning. Leave `reasoning_effort` empty for the API
+default or use `low`, `medium`, `high`, `xhigh`, or `max`; `none`, `off`, and
+`disabled` are rejected locally. Flash requests never retry with thinking
+disabled. Tool call IDs, arguments and reasoning history, plus remote and inline
+image content parts, pass through the existing OpenAI-compatible transport.
+The default remains Chat Completions. Explicit `api_flavor = "responses"` uses
+native `/v1/responses` and its `reasoning.effort` field; this adapter's existing
+Responses tool-calling limitation still applies (the service uses prompt simulation).
+Full conversation history remains client-side.
+
 ## 公开 API
 
 `build_socratic_dialogue_prompt(..., socratic=True)` 继续提供共享朋友人设、用户语气与

@@ -29,6 +29,12 @@
 - Jev 修补贯穿原 pair 的 intent / role、已选及剩余草稿，失效引用不能当作候选；纯 Agent 通过完整历史偏好水位区分曝光／弱点击与其它反馈，不因 ACK 挤满短窗口而重排，并在既有四个动作槽内保护最新非点击反馈，让模型读到实际原因；无水位的离线证据缺口仍保守处理。策略版本使旧未来计划失效，并通过 runtime context fencing 阻止旧策略在飞写入；旧 JSON 仍可读，历史屏不重写。
 - 提案 trace 保存 brief、角色和仅检测规范化标题重复的 `screen_review`；后者固定 `semantic_quality=not_certified`，模型自检不等于独立审查或线上质量保证。问题合同升级 v3，沿用 Jev 64,000／Agent 96,000 字节上限；只增加偏好水位查询索引，无新增表／列、设置、UI／CLI、安装依赖或付费探测。验收记录见[实施进度](plans/2026-09-26-director-implementation-progress.md)。
 
+- **MiniMax 预设默认切到 `MiniMax-M3.1-Flash`**：CLI 交互配置与无人值守安装器（`--llm-preset minimax`）统一默认 Flash，M3 作为第二个当前文本选项，已保存的旧模型与自定义模型 ID 仍可继续使用。
+
+- Flash 自适应推理保持开启，直连按量价格按 $0.15 / $0.60 每百万 token 补登记（缓存输入按 0.10 折算）；模型发现只过滤历史 MiniMax 文本别名，不动非文本模型与其它 provider，OpenRouter 仅使用官方公布的 `minimax/minimax-m3.1-flash:free` 路由。
+
+- 新增真实 OpenAI SDK + mock HTTP 测试，覆盖默认值、工具调用、推理内容回放、远程／内联图片、发现列表以及显式旧模型／自定义模型 ID。
+
 ## 开发中：推荐导演画像与短期上下文（2026-09-30）
 
 - 三模式直接消费命名推荐画像视图，区分稳定偏好和近期关注；明确避雷完整保留，排除人格散文与被用户否定的洞察。Agent 全视图、Jev 精简视图，画像变化使旧预排失效。
