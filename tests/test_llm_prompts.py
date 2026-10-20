@@ -1029,6 +1029,31 @@ def _builder_test_inputs() -> list[tuple[str, dict, dict]]:
     """
     return [
         (
+            "build_blue_fish_reply_prompt",
+            dict(
+                persona_name="大肥鱼",
+                persona_prompt="你是一只鱼",
+                reply_rules="说短一点",
+                audience="只想回在找片单的人",
+                trigger="只在评论区认真讨论技术时说话",
+                video={"bvid": "BV1xx", "title": "视频 A", "topic": "游戏"},
+                comments=[{"rpid": 1, "uname": "甲", "like_count": 3, "message": "第一条"}],
+                max_chars=40,
+                allow_top_level=False,
+            ),
+            dict(
+                persona_name="小蓝",
+                persona_prompt="你是一只害羞的鱼",
+                reply_rules="不要接梗",
+                audience="",
+                trigger="",
+                video={"bvid": "BV2yy", "title": "视频 B", "topic": "手工"},
+                comments=[{"rpid": 9, "uname": "乙", "like_count": 30, "message": "第二条"}],
+                max_chars=120,
+                allow_top_level=True,
+            ),
+        ),
+        (
             "build_awareness_prompt",
             dict(
                 events=[{"event_type": "view", "title": "A"}],
@@ -2509,3 +2534,25 @@ class TestDialogueTonePromptReplacement:
             build_batch_expression_prompt,
         ):
             assert "dialogue_tone_prompt" not in inspect.signature(builder).parameters
+
+
+def test_blue_fish_reply_prompt_keeps_the_trigger_in_the_user_message() -> None:
+    from openbiliclaw.llm.prompts import build_blue_fish_reply_prompt
+
+    messages = build_blue_fish_reply_prompt(
+        persona_name="大肥鱼",
+        persona_prompt="你是一只鱼",
+        reply_rules="说短一点",
+        trigger="只在评论区认真讨论技术时开口",
+        video={"bvid": "BV1xx", "title": "视频", "topic": "技术"},
+        comments=[{"rpid": 1, "uname": "甲", "like_count": 1, "message": "这段实现有点意思"}],
+        max_chars=40,
+        allow_top_level=False,
+    )
+
+    system, user = messages[0]["content"], messages[1]["content"]
+    assert "<trigger>" in user
+    assert "只在评论区认真讨论技术时开口" in user
+    # The cache contract: per-call trigger never leaks into the static system.
+    assert "<trigger>" not in system
+    assert "只在评论区认真讨论技术时开口" not in system

@@ -60,6 +60,16 @@ Instagram browser task → storage.local claim / progress / exact-result outbox
                        → same-claim restart recovery → backend ACK → local cleanup
                        → missing tab: failed / partial, never an invented empty result
 
+Blue Fish Lab (lab, default off): fish/ JSON config + isolated account (data/fish/)
+                                   → comment_thread discovery route (read-only)
+                                       ranked-pool seeds → comment pages → BV ids → evaluator
+                                       → fish/plans.json (seed + comment snapshot)
+                                   → action pass: owner notice first (opt-in, 1/day),
+                                     then plan, then ranked pool
+                                   → LLM reply → hard gates (quota / interval / dedup)
+                                   → post_comment as the fish
+                                   → fish/ledger.jsonl only (profile + recommendation rows untouched)
+
 config recovery control plane (normal or degraded; business APIs stay gated)
                 ├─ draft → /api/config/probe-service → temporary registry → total gate
                 └─ draft → /api/config/discover-models → exact instance GET /models
@@ -273,6 +283,19 @@ tag-owned 节点；`GET /api/config` 只投影 staged 布尔值和安全运行�
 - 多步推理和自省优化
 - Skill 注册、发现和调度
 - 「聊一聊」chat agent loop（2026-09-23）：`loop.py` 多跳工具调用循环（`[agent] loop_max_steps` 默认 64 跳，事件流 thinking/tool_call/tool_result/approval_request/final）；`tools/` JSON Schema 工具注册表 + read / soft_write / hard_write 三级权限与 v1 标准工具集；`skill.py` SKILL.md 目录加载（`skills_builtin/` 内置 4 个 + `{data_dir}/skills/` 用户覆盖）；`tasks.py` durable 后台任务中心（只读 loop + `propose_suggestion` 建议清单 + 完成后 `agent_task_summary` 汇总 turn 回写来源会话）；`approvals.py` L2 hard_write 审批门（`chat_approvals.json` 单文件状态机 pending → approved → executing → executed / failed，另有 rejected / expired，决策写 `profile_update_ledger` 审计；approve 端点异步化——立即返回，`chat_approval_execute` 后台任务执行并回写终态，2026-09-25）
+
+### Blue Fish Lab (`fish/`)
+
+- 实验室功能，默认关闭、默认 `dry_run`：一只**独立的小号**去 B 站评论区回复并 @ 人
+- 账号隔离是硬约束：`<data_dir>/fish/bilibili_cookie.json` + 独立 `AuthManager` / `BilibiliAPIClient`，绝不回退到主账号 cookie；鱼的 mid 与主号相同、或 cookie 与主号逐字相同都会被拒绝运行
+- 配置与账本全部在 `data/fish/`（`config.json` / `ledger.jsonl` / `plans.json`），刻意不写进 `config.toml`，删目录即重置；**没有 `state.json`**——配额、等级、查重全部从账本推导
+- 它同时是 B 站发现面上的一条**只读**路线：`CommentThreadStrategy`（`comment_thread`）从已评估推荐池取 1–3 个种子读评论区，把评论里点名的 BV 号还原成 `DiscoveredContent` 交给统一 batch evaluator，并把「种子 + 评论快照」写进 `fish/plans.json`（最多 3 条、45 分钟过期）；`discover()` 本身绝不发帖
+- 动作层不是第二套管线：优先消费发现计划，没有计划时回退到已评估推荐池（`exclude_processed=True`），模型只负责挑评论和写回复
+- 反馈是**隔离**的：发布后的评论只写 `fish/ledger.jsonl`，不写推荐反馈、不把推荐行标成已评论、不触发 cognition，用户画像与推荐列表不受影响；查重因此只靠账本（`bvid:rpid` + 跨天累计的单视频上限）
+- 一轮：守卫 → 通知主人（`notify_owner` 到期时本轮只发一条 @ 主人的顶层推荐）→ 否则发现计划（无则推荐池候选）→ 拉评论 / 复用评论快照 → 单次 LLM「挑一条 + 写回复」→ 代码级硬闸（字数 / 屏蔽词 / 查重 / 配额 / 间隔）→ `dry_run` 记 `preview`，否则 `post_comment(root, parent)` 发楼中楼并回写反馈
+- 提示词遵守缓存约定：`_BLUE_FISH_REPLY_SYSTEM_PROMPT` 是字节静态常量，人设 / 视频 / 评论 / 约束全在 user 消息
+- 后台循环 `run_fish_loop()` 每 5 分钟醒一次，只在 `enabled && !dry_run` 时动手：先跑一次 `comment_thread` 发现路线，再进入动作层；异常全兜住
+- 桌面 Web 与扩展 popup 各有一个「养蓝色大肥鱼」设置 Tab，都直接打 `/api/fish/*`，不混进主配置保存流程
 
 ### Integrations (`integrations/`)
 - 对外系统接入边界

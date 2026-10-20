@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from openbiliclaw.config import Config
+    from openbiliclaw.fish.engine import FishCandidate
     from openbiliclaw.soul.dialogue_learn_queue import (
         DialogueDispatcher,
         DialogueJobKind,
@@ -808,6 +809,10 @@ class RuntimeContext:
     dialogue_settlement_handlers: dict[Any, Any] = field(default_factory=dict)
     dialogue_settlement_guard: Any = None
     discovery_engine: Any = None
+    # Discovery-candidate pipeline owned by this runtime. Kept so a
+    # composition-root caller (the Blue Fish loop) can push one extra discovery
+    # route through the same enqueue → evaluate path every other strategy uses.
+    candidate_pipeline: Any = None
     recommendation_engine: Any = None
     runtime_controller: Any = None
     account_sync_service: Any = None
@@ -868,6 +873,61 @@ class RuntimeContext:
         if not callable(delegate):
             return None
         return delegate(new_config)
+
+    async def run_discovery_route(self, *, strategies: list[str], limit: int) -> int:
+        """Run one named discovery route and enqueue its raw candidates.
+
+        Seam for callers that own their own cadence (the Blue Fish loop): the
+        route is a normal registered strategy and its output goes through the
+        same candidate pipeline (enqueue → batch evaluator → admission) as
+        search / trending / explore. A discovery failure returns ``0`` so the
+        caller's loop keeps running; the real cause is logged here.
+
+        The route always runs — a full pool must not stop a route whose reader
+        has its own side effect (the comment-thread plan) — but its candidates
+        are only enqueued when the pool has room, mirroring
+        ``produce_and_enqueue``'s guard.
+        """
+
+        engine = self.discovery_engine
+        if engine is None or self.soul_engine is None:
+            return 0
+        try:
+            from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+
+            try:
+                profile = await self.soul_engine.get_profile()
+            except SoulProfileNotInitializedError:
+                # Before the first profile commit there is nothing to discover
+                # for; the loop retries on the next tick. Not an error worth a
+                # traceback every five minutes.
+                logger.debug(
+                    "discovery route %s skipped: soul profile not initialized",
+                    ",".join(str(item) for item in strategies),
+                )
+                return 0
+            items = await engine.produce_candidates(
+                profile,
+                strategies=list(strategies),
+                limit=max(1, int(limit)),
+            )
+            if not items:
+                return 0
+            pipeline = self.candidate_pipeline
+            if pipeline is None:
+                return 0
+            pool_full = getattr(pipeline, "pool_full", None)
+            if callable(pool_full) and pool_full():
+                return 0
+            inserted = pipeline.enqueue_candidates(list(items), source_context="mixed")
+        except Exception:  # noqa: BLE001 - a background route must not kill its owner
+            logger.warning(
+                "discovery route %s failed",
+                ",".join(str(item) for item in strategies),
+                exc_info=True,
+            )
+            return 0
+        return int(inserted or 0)
 
     async def _handle_pool_inventory_commit(
         self,
@@ -1591,6 +1651,35 @@ class RuntimeContext:
         new_discovery_engine.register_strategy(trending_strategy)
         new_discovery_engine.register_strategy(related_strategy)
         new_discovery_engine.register_strategy(explore_strategy)
+
+        # 7a. Comment-thread route (Blue Fish Lab): the lab's reading half.
+        # Registered only in the API runtime because the action layer that
+        # executes its plans exists only here — CLI discovery has no executor
+        # and would just leave dead plans behind. The route itself is inert
+        # unless the lab is enabled and has its own cookie, so registering it
+        # is zero behaviour change with the default (off) config.
+        from openbiliclaw.discovery.strategies.comment_thread import CommentThreadStrategy
+        from openbiliclaw.fish.plan import FishPlanStore
+        from openbiliclaw.fish.seeds import recommendation_pool_seeds
+        from openbiliclaw.fish.store import FishStore
+
+        async def _comment_thread_seeds(limit: int) -> list[FishCandidate]:
+            return recommendation_pool_seeds(self.database, limit)
+
+        comment_thread_strategy = CommentThreadStrategy(
+            data_dir=new_config.data_path,
+            seed_provider=_comment_thread_seeds,
+            client_factory=lambda cookie: BilibiliAPIClient(
+                cookie=cookie,
+                proxy=new_config.bilibili.proxy or None,
+            ),
+            plan_store=FishPlanStore(new_config.data_path),
+            # The ledger says which videos the fish already spoke under, so the
+            # route plans the next unanswered seed instead of replaying the
+            # top-ranked one every tick.
+            store=FishStore(new_config.data_path),
+        )
+        new_discovery_engine.register_strategy(comment_thread_strategy)
 
         # 7b. Register Bilibili source adapter (multi-source Phase 1)
         from openbiliclaw.sources.bilibili_adapter import BilibiliAdapter
@@ -2417,6 +2506,7 @@ class RuntimeContext:
         self.skill_catalog = new_skill_catalog
         self.dialogue_settlement_queue = new_settlement_queue
         self.discovery_engine = new_discovery_engine
+        self.candidate_pipeline = new_candidate_pipeline
         self.recommendation_engine = new_recommendation_engine
         self.runtime_controller = new_runtime_controller
         self.account_sync_service = new_account_sync

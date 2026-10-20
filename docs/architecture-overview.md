@@ -187,3 +187,21 @@ legacy outbox → immutable claimed batches → DB commit → acknowledge only t
 ```
 
 登录 Cookie 只增加可尝试的 search 能力；passport 验证与搜索可用性分别验收。
+
+### 蓝鱼实验室（实验性，默认关闭）
+
+```text
+[fish]/config.json（独立于 config.toml）
+   → 守卫：enabled / 已登录 / 账号隔离 / 日配额 / 最小间隔
+   → 已评估的推荐池候选（exclude_processed） → 每条视频拉评论 → 单次 LLM「挑一条 + 写回复」
+   → 硬闸：字数 / 屏蔽词 / bvid:rpid 查重 / 单视频上限
+   → dry_run ? preview : post_comment(root, parent) 以「大肥鱼」自己的账号发出
+   → data/fish/ledger.jsonl（追加式账本；等级 / 配额 / 查重都由它推导）
+   → 只写账本：不写推荐反馈、不动推荐行、不触发 cognition
+```
+
+账号隔离是硬约束：凭证独立在 `data/fish/bilibili_cookie.json`，鱼的 mid 或 cookie 与主账号
+相同即拒绝运行，绝不回退主账号 Cookie。人设与说话规矩在设置页可编辑，system prompt 保持
+字节静态（人设 / 视频 / 评论 / 约束都在 user 消息）。鱼的反馈与用户的反馈是分开的：发布出去
+的评论只留在鱼自己的账本里，不会变成推荐反馈、不会触发 cognition，用户画像只由用户自己的
+行为驱动。
