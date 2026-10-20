@@ -13,8 +13,8 @@ test("Chrome and Firefox install isolated listener before MAIN response tap at d
       optional_host_permissions: string[];
       content_scripts: Array<{ js: string[]; run_at?: string; world?: string }>;
     };
-    assert.equal(manifest.host_permissions.includes("https://*.instagram.com/*"), false);
-    assert.ok(manifest.optional_host_permissions.includes("https://*.instagram.com/*"));
+    assert.ok(manifest.host_permissions.includes("https://*.instagram.com/*"));
+    assert.equal(manifest.optional_host_permissions.includes("https://*.instagram.com/*"), false);
     const isolatedIndex = manifest.content_scripts.findIndex((entry) =>
       entry.js.some((file) => file.endsWith("content/instagram.js")));
     const mainIndex = manifest.content_scripts.findIndex((entry) =>
@@ -53,6 +53,5 @@ test("build, service-worker, cookie heartbeat and popup are centrally registered
   assert.match(popup, /data-source-card="instagram"/);
   assert.match(popup, /data-source-status="instagram"/);
   assert.match(helpers, /cfgInstagramEnabled/);
-  assert.match(helpers, /chrome\.permissions\.request/);
   assert.match(sourceStatus, /"instagram"/);
 });

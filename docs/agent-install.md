@@ -880,6 +880,10 @@ AI agent 视角:**不要省略这些问题**。一句话安装走的是
 用更贵的模型，发现用便宜的」之类的话，才提这个**。否则跳过——大多数用户根本不
 关心，多问一项就多一份让人迷惑的可能。
 
+## TikTok / Instagram extension site access
+
+The extension declares TikTok and Instagram site access by default in its Chrome, Firefox, and Safari manifests. Install/update permission handling belongs to the browser; saving Instagram source settings no longer opens a separate grant prompt or revokes access when the source is disabled. Both experimental sources remain opt-in in Settings, and personal imports require login in the same browser. If site access was restricted manually or by policy, restore it in the browser’s extension settings. This permission declaration does not certify source support on every browser.
+
 ## Optional: local Ollama as the embedding fallback
 
 This is a **post-install opt-in**, not part of the install contract. Mention

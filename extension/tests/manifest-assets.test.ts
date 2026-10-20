@@ -180,6 +180,8 @@ test("Safari manifest shares host-permission boundaries with Chrome/Firefox", ()
   assert.equal(safari.host_permissions?.includes("http://localhost/*"), true);
   assert.deepEqual(safari.optional_host_permissions, ["http://*/*", "https://*/*"]);
   assert.equal(safari.host_permissions?.includes("*://*.bilibili.com/*"), true);
+  assert.equal(safari.host_permissions?.includes("*://*.tiktok.com/*"), true);
+  assert.equal(safari.host_permissions?.includes("https://*.instagram.com/*"), true);
 });
 
 test("Safari manifest injects MAIN-world taps through a document_start bridge", () => {
@@ -258,11 +260,12 @@ test("Chrome and Firefox manifests avoid all-sites host permission", () => {
     assert.deepEqual([...(manifest.optional_host_permissions ?? [])].sort(), [
       "http://*/*",
       "https://*/*",
-      "https://*.instagram.com/*",
     ].sort());
     assert.equal(manifest.host_permissions?.includes("*://*.bilibili.com/*"), true);
     assert.equal(manifest.host_permissions?.includes("*://*.xiaohongshu.com/*"), true);
     assert.equal(manifest.host_permissions?.includes("*://*.douyin.com/*"), true);
+    assert.equal(manifest.host_permissions?.includes("*://*.tiktok.com/*"), true);
+    assert.equal(manifest.host_permissions?.includes("https://*.instagram.com/*"), true);
     assert.equal(manifest.host_permissions?.includes("*://*.youtube.com/*"), true);
   }
 });

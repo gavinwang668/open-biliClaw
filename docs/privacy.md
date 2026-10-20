@@ -112,7 +112,9 @@ Instagram 执行中的任务会在扩展 `storage.local` 临时保存有界 task
 | `scripting` | 在受支持平台页面注入内容脚本，采集页面内容和行为信号 |
 | `sidePanel` | 提供 OpenBiliClaw 侧边栏界面 |
 | `storage` | 保存插件设置、本地 UI 状态和后端连接信息 |
-| 主机权限 | 限定在 Bilibili、小红书、抖音、YouTube、X、知乎、Reddit、Linux.do、V2EX、微博、Bangumi 以及本机 OpenBiliClaw 后端之间处理必要数据；GitHub 不在扩展主机权限中 |
+| 主机权限 | 限定在 Bilibili、小红书、抖音、TikTok、YouTube、X、知乎、Reddit、Linux.do、V2EX、微博、Bangumi、Instagram 以及本机 OpenBiliClaw 后端之间处理必要数据；GitHub 不在扩展主机权限中 |
+
+TikTok 的 `*://*.tiktok.com/*` 与 Instagram 的 `https://*.instagram.com/*` 在 Chrome、Firefox、Safari 清单中均作为默认主机权限声明，由浏览器在安装或更新时处理。Instagram 设置保存不再单独请求或撤销站点权限。两个来源仍为实验性、默认关闭；用户或管理员可以在浏览器中限制站点访问，运行时仍检查实际权限。声明权限不自动启用来源或周期同步，也不改变现有数据用途。
 
 `https://*.instagram.com/*` 主机权限只用于带任务标记的隔离 tab。公开任务读取有界 topic/hashtag 或明确 creator 页面；初始化先匹配同源账户表单用户名与新鲜 `PolarisViewer` 的用户名和双 ID，再以 GET 读取 saved/following，被动观察原生 Likes 页只读 Bloks 响应。扩展不重放 Bloks POST、不执行其表达式或 Select/Unlike 动作。插件只上报 `sessionid` 存在性；Cookie value、Authorization/CSRF、请求头、原始 JSON/HTML/Bloks、挑战正文和完整历史不会上传。MAIN 桥只发送有界白名单 rows、cursor 与终态证据。扩展不提交 Instagram Search，不执行 like/save/follow/comment/message，不自动处理安全验证；页面自身的上游状态变化仍需独立审计。普通 Instagram 页面不启动 behavior collector。
 

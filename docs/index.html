@@ -1439,7 +1439,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
           <article class="source-card reveal" data-source="instagram">
             <span>Instagram · Experimental</span>
             <h3 data-i18n="sourceInstagramTitle">Instagram（实验性）</h3>
-            <p data-i18n="sourceInstagramText">v0.3.227 起提供，实验性、默认关闭。按话题、创作者发现内容；同一浏览器授权并登录后，可有界导入近期点赞、收藏和关注。推荐卡收藏仅保存在本地。完整 Likes 历史、双账号、Firefox 登录态与手机真机仍待验。</p>
+            <p data-i18n="sourceInstagramText">v0.3.227 起提供，实验性、默认关闭。按话题、创作者发现内容；同一浏览器登录后，可有界导入近期点赞、收藏和关注。推荐卡收藏仅保存在本地。完整 Likes 历史、双账号、Firefox 登录态与手机真机仍待验。</p>
             <div>
               <a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/instagram.md" data-i18n="sourceInstagramSetup">连接指南</a> ·
               <a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/platform-source-acceptance.instagram.md" data-i18n="sourceInstagramEvidence">实测范围</a>
@@ -1451,7 +1451,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
             <p data-i18n="sourceWebText">通过浏览器与 LLM 内容抽取接入更多站点，让非平台内容也进入画像。</p>
           </article>
         </div>
-        <p data-i18n="sourcesNetwork">Instagram 与 TikTok 均需海外网络：后端沿现有网络/代理设置，浏览器任务使用浏览器自身代理。请在设置中手动启用，并查看对应连接指南。</p>
+        <p data-i18n="sourcesNetwork">Instagram 与 TikTok 均需海外网络：后端沿现有网络/代理设置，浏览器任务使用浏览器自身代理。插件默认包含两者的站点访问权限；请在设置中手动启用来源，并查看对应连接指南。</p>
       </div>
     </section>
 
@@ -1700,12 +1700,12 @@ docker compose -f docker-compose.prebuilt.yml up -d
 	        sourceGithubTitle: "GitHub",
 	        sourceGithubText: "官方 REST API 匿名发现公开 repository；公开用户名的 starred repositories 可初始化画像，PAT 可选。没有扩展权限、Cookie 或站内写入。",
         sourceInstagramTitle: "Instagram（实验性）",
-        sourceInstagramText: "v0.3.227 起提供，实验性、默认关闭。按话题、创作者发现内容；同一浏览器授权并登录后，可有界导入近期点赞、收藏和关注。推荐卡收藏仅保存在本地。完整 Likes 历史、双账号、Firefox 登录态与手机真机仍待验。",
+        sourceInstagramText: "v0.3.227 起提供，实验性、默认关闭。按话题、创作者发现内容；同一浏览器登录后，可有界导入近期点赞、收藏和关注。推荐卡收藏仅保存在本地。完整 Likes 历史、双账号、Firefox 登录态与手机真机仍待验。",
         heroSources: "新增 Instagram 与 TikTok · 查看能力与版本说明",
         sourceTiktokEvidence: "连接指南",
         sourceTiktokAcceptance: "实测范围",
         sourceInstagramSetup: "连接指南",
-        sourcesNetwork: "Instagram 与 TikTok 均需海外网络：后端沿现有网络/代理设置，浏览器任务使用浏览器自身代理。请在设置中手动启用，并查看对应连接指南。",
+        sourcesNetwork: "Instagram 与 TikTok 均需海外网络：后端沿现有网络/代理设置，浏览器任务使用浏览器自身代理。插件默认包含两者的站点访问权限；请在设置中手动启用来源，并查看对应连接指南。",
         sourceInstagramEvidence: "实测范围",
 	        sourceWebTitle: "通用 Web",
         sourceWebText: "通过浏览器与 LLM 内容抽取接入更多站点，让非平台内容也进入画像。",
@@ -1875,12 +1875,12 @@ docker compose -f docker-compose.prebuilt.yml up -d
 	        sourceGithubTitle: "GitHub",
 	        sourceGithubText: "The official REST API anonymously discovers public repositories; a public username can bootstrap starred repositories, while a PAT is optional. No extension permission, cookie, or upstream write is used.",
         sourceInstagramTitle: "Instagram (experimental)",
-        sourceInstagramText: "Available since v0.3.227, experimental and disabled by default. Discover topics and creators; grant site access and sign in within the same browser for bounded imports of recent likes, saves, and follows. Card saves stay local. Full Likes history, second-account, signed-in Firefox, and physical-phone checks remain incomplete.",
+        sourceInstagramText: "Available since v0.3.227, experimental and disabled by default. Discover topics and creators; sign in within the same browser for bounded imports of recent likes, saves, and follows. Card saves stay local. Full Likes history, second-account, signed-in Firefox, and physical-phone checks remain incomplete.",
         heroSources: "New: Instagram & TikTok · Capabilities and release status",
         sourceTiktokEvidence: "Setup",
         sourceTiktokAcceptance: "Tested scope",
         sourceInstagramSetup: "Setup",
-        sourcesNetwork: "Instagram and TikTok need overseas connectivity. The backend follows your configured network/proxy route; browser tasks use the browser’s own proxy. Enable each source in Settings and check its setup guide.",
+        sourcesNetwork: "Instagram and TikTok need overseas connectivity. The backend follows your configured network/proxy route; browser tasks use the browser’s own proxy. Site access for both is included in the extension’s default permissions. Enable each source in Settings and check its setup guide.",
         sourceInstagramEvidence: "Tested scope",
 	        sourceWebTitle: "Generic Web",
         sourceWebText: "Browser access plus LLM extraction bring more sites into the profile and candidate pool.",
