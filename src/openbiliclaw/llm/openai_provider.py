@@ -1165,10 +1165,10 @@ class OpenAIProvider(LLMProvider):
         text_pattern = ""
         if self._is_minimax_endpoint():
             current = ["MiniMax-M3.1-Flash", "MiniMax-M3"]
-            text_pattern = r"(?:minimax-m\d|abab\d)"
+            text_pattern = r"(?:minimax-(?:m\d|text-\d|vl-\d)|abab\d)"
         elif (urlparse(self.base_url).hostname or "").lower() == "openrouter.ai":
             current = ["minimax/minimax-m3.1-flash:free", "minimax/minimax-m3"]
-            text_pattern = r"minimax/(?:minimax-m\d|abab\d)"
+            text_pattern = r"minimax/(?:minimax-(?:m\d|\d|text-\d|vl-\d)|abab\d)"
         if current:
             # Discovery is advisory: saved/custom IDs still pass through requests.
             # Leave non-text model IDs untouched and never invent unadvertised routes.

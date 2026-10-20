@@ -378,13 +378,14 @@ async def test_unrelated_compatible_endpoint_keeps_reasoning_behavior(wire):
         ),
         (
             "https://api.minimaxi.com/v1",
-            ["MiniMax-M3", "MiniMax-M2.5"],
+            ["MiniMax-M3", "MiniMax-M2.5", "MiniMax-Text-01", "abab6.5s-chat"],
             ["MiniMax-M3"],
         ),
         (
             "https://openrouter.ai/api/v1",
             [
                 "minimax/minimax-m2.7",
+                "minimax/minimax-01",
                 "minimax/minimax-m3",
                 "minimax/minimax-m3.1-flash:free",
                 "other/model",
