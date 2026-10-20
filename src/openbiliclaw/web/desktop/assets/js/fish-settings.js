@@ -16,6 +16,10 @@
     statusLine: $("fishStatusLine"),
     cookie: $("fishCookie"),
     saveAccount: $("fishSaveAccountBtn"),
+    qrLogin: $("fishQrLoginBtn"),
+    qrBox: $("fishQrBox"),
+    qrImage: $("fishQrImage"),
+    qrStatus: $("fishQrStatus"),
     clearAccount: $("fishClearAccountBtn"),
     accountStatus: $("fishAccountStatus"),
     personaName: $("fishPersonaName"),
@@ -273,6 +277,62 @@
         if (el.accountStatus) {
           el.accountStatus.textContent = `保存失败：${error.message}`;
         }
+      }
+    });
+  });
+
+  async function pollQrLogin(qrcodeKey) {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      let payload = null;
+      try {
+        payload = await api(
+          `/api/fish/account/qrcode/poll?qrcode_key=${encodeURIComponent(qrcodeKey)}`,
+          { method: "GET" },
+        );
+      } catch (error) {
+        el.qrStatus.textContent = `查询失败：${error.message}`;
+        return;
+      }
+      const status = String(payload.status || "");
+      if (status === "scanned") {
+        el.qrStatus.textContent = "已扫码，请在手机上确认登录。";
+        continue;
+      }
+      if (status === "logged_in") {
+        el.qrStatus.textContent = payload.message || "登录成功。";
+        el.qrBox.hidden = true;
+        await loadAll();
+        return;
+      }
+      if (status === "expired" || status === "rejected" || payload.ok === false) {
+        el.qrStatus.textContent = payload.message || "二维码已失效，再点一次「扫码登录」。";
+        el.qrBox.hidden = true;
+        return;
+      }
+    }
+    el.qrStatus.textContent = "二维码超时了，再点一次「扫码登录」。";
+    el.qrBox.hidden = true;
+  }
+
+  el.qrLogin?.addEventListener("click", () => {
+    if (!el.qrStatus || !el.qrImage || !el.qrBox) {
+      // Older cached HTML without the QR block: the button would be a no-op.
+      return;
+    }
+    void withBusy(el.qrLogin, "生成中…", async () => {
+      el.qrStatus.textContent = "正在生成二维码…";
+      try {
+        const payload = await api("/api/fish/account/qrcode", {
+          method: "POST",
+          body: "{}",
+        });
+        el.qrImage.src = payload.qrcode_image;
+        el.qrBox.hidden = false;
+        el.qrStatus.textContent = "用手机 B站 扫这张码，确认时选「记住我 / 长期」。";
+        await pollQrLogin(payload.qrcode_key);
+      } catch (error) {
+        el.qrStatus.textContent = `二维码生成失败：${error.message}`;
       }
     });
   });

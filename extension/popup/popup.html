@@ -7989,8 +7989,13 @@
         </div>
         <div class="settings-field-row">
           <button class="settings-secondary-btn" id="fishSaveAccountBtn" type="button" data-settings-ignore-dirty>保存并校验</button>
+          <button class="settings-secondary-btn" id="fishQrLoginBtn" type="button" data-settings-ignore-dirty>扫码登录</button>
           <button class="settings-secondary-btn" id="fishClearAccountBtn" type="button" data-settings-ignore-dirty>清除登录</button>
         </div>
+        <div id="fishQrBox" style="display:none;justify-content:center;padding:8px 0;">
+          <img id="fishQrImage" alt="大肥鱼的登录二维码" width="160" height="160" style="width:160px;height:160px;padding:8px;border-radius:10px;background:#fff;">
+        </div>
+        <p class="settings-hint" id="fishQrStatus" aria-live="polite"></p>
         <p class="settings-hint" id="fishAccountStatus" aria-live="polite"></p>
       </div>
 

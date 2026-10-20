@@ -1515,8 +1515,13 @@
             </div>
             <div class="drawer-actions">
               <button class="pill-btn" id="fishSaveAccountBtn" type="button">保存并校验</button>
+              <button class="pill-btn" id="fishQrLoginBtn" type="button">扫码登录</button>
               <button class="pill-btn" id="fishClearAccountBtn" type="button">清除登录</button>
             </div>
+            <div class="fish-qr-box" id="fishQrBox" hidden>
+              <img id="fishQrImage" alt="大肥鱼的登录二维码" width="180" height="180">
+            </div>
+            <p class="settings-probe-status" id="fishQrStatus" aria-live="polite"></p>
             <p class="settings-probe-status" id="fishAccountStatus" aria-live="polite"></p>
           </section>
 
