@@ -60,6 +60,8 @@ https://github.com/whiteguo233/OpenBiliClaw
 - 在支持的平台页面识别你授权范围内的内容与互动信号，或执行本地后端下发的来源任务。
 - 把跨平台候选统一筛选，在侧边栏、PC Web 和移动 Web 中展示推荐及推荐理由。
 - 展示可查看、可纠正的私有画像，并通过喜欢、少来点、不感兴趣和聊天反馈继续调整推荐。
+- 提供实验性的「蓝鱼实验室」：为独立 B 站小号预览或执行评论区互动；默认只预览，真实发布受账号隔离、配额、间隔与重复检查保护。
+- 桌面、移动 Web、插件和 CLI 提供简体中文、繁体中文与英文界面。
 - 在配置页分别展示“来源是否启用”和“接入状态”；“凭据已就绪”“状态待验证”“无需登录”含义不同，不会把仅保存在本地的令牌冒充成实时登录成功。
 
 重要说明：
@@ -92,7 +94,7 @@ https://github.com/whiteguo233/OpenBiliClaw/blob/main/README_EN.md
 
 以下文件均为 1280×800，使用固定脱敏数据和当前真实 UI 生成。Developer Dashboard 中删除旧图后，按下面顺序上传：
 
-1. `01-seven-platform-recommendations.png` — 当前仓库素材仍是十一来源主视觉；GitHub 发版前必须重新生成并目检十二来源版本（文件名为兼容既有上传顺序而保留）
+1. `01-seven-platform-recommendations.png` — 14 个来源的推荐主视觉（文件名为兼容既有上传顺序而保留）
 2. `02-three-surfaces.png` — PC、插件、手机三端推荐体验
 3. `03-truthful-status-local-data.png` — 诚实接入状态与本地数据
 
