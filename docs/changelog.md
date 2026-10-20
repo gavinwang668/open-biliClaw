@@ -16,6 +16,8 @@
 
 - **大肥鱼补上质量门槛与日报视图**：新增 `min_view_count` / `min_publish_age_days`（默认 0 = 不限；开启后统计缺失或发布时间不可解析的候选会被挡掉，全被挡掉返回 `quality_gate`）；`/api/fish/status` 新增 `today_report`，设置页的「今日日报」折叠块直接显示 `data/fish/out/<日期>.md`的内容。两个设置面板都加了对应控件，i18n 已同步。详见 [蓝鱼实验室](modules/fish.md#配置项)。
 
+- **大肥鱼补了无凭据端到端自检**：新增 `scripts/fish_e2e_stub.py`，本地假 B站 + 假模型，把真实 app / 发现路线 / 候选流水线 / 引擎 / 客户端 / 账本 / 日报整条链路跑一遍并逐项断言（登录隔离、BV 号入队、计划复用不二次抓评论、评论 @ / 私信 / 两者投递、日报与推荐行不被改动）。同时修了两处真机前提问题：`fish.comment_reply` 之前是「未知 LLM caller」会被并发闸门按 maintenance 兜底并打警告，现在显式登记；画像未初始化时发现路线每 5 分钟打一条带 traceback 的 WARNING，现在安静返回 0。
+
 - **多语言基础设施（#305）**：`[general].language` 现在真正驱动界面、CLI 与新生成的模型输出，支持 `zh-Hans`（默认）/ `zh-Hant`（繁體・台灣）/ `en`；旧值 `zh`、`zh-TW`、`en-US` 等自动规范化，未知语言在 `PUT /api/config` 保存时 400 拒绝。新增 `openbiliclaw language [locale]` 与 `OPENBILICLAW_LANG` 单次覆盖、`GET /api/i18n/locales`、`/i18n/ui/<locale>.json` 静态目录；桌面 Web、移动 Web、设置向导与插件侧边栏共用 `web/shared/i18n.js`，按渲染后的 DOM 文本匹配目录翻译（内容与用户输入不翻译，`data-i18n-skip` 保护指定区域）。UI 目录由 `scripts/build_i18n_catalogs.py` 从源码生成：2797 条文案 + 197 条插值模式（如「模型：{0}」「{0} 分钟前」），`zh-Hant` 由 OpenCC `s2twp` 生成，英文 100% 覆盖并由 `tests/test_i18n.py` 守护；数字与短日期按 locale 格式化（`331K` / `Sep 5` 对 `33.1万` / `9月5日`）。聊天与推荐理由的 system prompt 保持字节静态，locale 以 `<output_language>` 指令进 user prompt，provider prompt cache 不受影响；`zh-Hant` 额外约束只用繁體字（真实 provider 实测：仅写「Traditional Chinese」首轮仍可能回简体），配置保存/应用提示也按新语言返回；历史推荐 / 画像文本保留原语言、不批量重译。详见 [多语言模块](modules/i18n.md)。
 
 - 修复 Safari 默认 Cookie store 不完整时扩展无法同步 B 站登录的问题（#304）：仅 Safari 构建通过 `getAllCookieStores()` 逐 store 查找，只有唯一候选 store 同时包含 `SESSDATA` / `bili_jct` / `DedeUserID` 才上传，不跨 store 拼接登录态，也不静默选择多个完整候选之一；缺失诊断仅记录 Cookie 名称，不记录值。
