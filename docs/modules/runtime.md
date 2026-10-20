@@ -28,6 +28,8 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 多进程补池配置恢复：主 API 成功完成完整 runtime handoff 后发布进程内配置 generation；桌面入口与 `start` / `serve-api` 共用 supervisor，设置队列完全结束后在下一次 5 秒巡检停止旧子进程并重新构建 worker、discovery worker、推荐服务与图片服务。配置修好后不再让补池 evaluator 永久使用旧 provider。启动时重新领取 durable 候选，并复用已有失败候选复活策略；不降低评分或可推荐文案门槛。已知聊天设置的局部应用不重启后台。
 
+2026-10-21 本机真实请求验收已覆盖主 API + 四个子进程、B 站自动抓取、模型评分、推荐文案、本地 embedding、HTTP 推荐消费与再次自动补池，canonical available 为 `0 → 3 → 0 → 1`。原主备模型的批量请求另有 429/500 服务端阻塞，成功轮次切换了实际可用模型，详见 [条件与证据](../testing/2026-10-21-empty-pool-live-requests.md)。
+
 已知聊天配置局部应用：配置队列只在完整候选差异限于已知五项 agent 字段时替换 loop，保留所有后台 owner；严格相等的配置直接完成修订。白名单外差异仍安全排空后完整重建。
 
 资格来自显式聊天配置审批；普通设置保存保持完整重载，以应用 Cookie jar 等配置对象外的变化。合并 pending 修订或接替失败修订时保留完整重建要求。
