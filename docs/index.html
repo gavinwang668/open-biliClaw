@@ -1390,8 +1390,11 @@ docker compose -f docker-compose.prebuilt.yml up -d
           <article class="source-card reveal" data-source="tiktok">
             <span>TikTok</span>
             <h3 data-i18n="sourceTiktokTitle">TikTok（实验性）</h3>
-            <p data-i18n="sourceTiktokText">main 已合入，待下一版本发布；实验性、默认关闭。发现推荐流、话题与创作者视频，登录后可关键词搜索。桌面/手机 Web 推荐已验收；非空账号画像与周期增量待验，站内收藏暂缓。</p>
-            <a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/tiktok.md" data-i18n="sourceTiktokEvidence">连接指南与实测范围</a>
+            <p data-i18n="sourceTiktokText">v0.3.229 起提供，实验性、默认关闭。未登录可发现推荐流、话题和创作者视频；浏览器登录后可关键词搜索。推荐及桌面/手机 Web 展示已有实测。非空账号画像、周期增量与 Firefox 登录态待验；站内收藏暂缓。</p>
+            <div>
+              <a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/tiktok.md" data-i18n="sourceTiktokEvidence">连接指南</a> ·
+              <a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/platform-source-acceptance.tiktok.md" data-i18n="sourceTiktokAcceptance">实测范围</a>
+            </div>
           </article>
           <article class="source-card reveal" data-source="x">
             <span>X / Twitter</span>
@@ -1436,8 +1439,11 @@ docker compose -f docker-compose.prebuilt.yml up -d
           <article class="source-card reveal" data-source="instagram">
             <span>Instagram · Experimental</span>
             <h3 data-i18n="sourceInstagramTitle">Instagram（实验性）</h3>
-            <p data-i18n="sourceInstagramText">v0.3.227 起提供，实验性、默认关闭。按话题、创作者发现内容，登录后可导入点赞、收藏和关注来初始化画像；推荐卡仅本地保存，不写回 Instagram。完整 Likes 历史及部分账号/浏览器验收仍待完成。</p>
-            <a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/platform-source-acceptance.instagram.md" data-i18n="sourceInstagramEvidence">查看实测范围与剩余限制</a>
+            <p data-i18n="sourceInstagramText">v0.3.227 起提供，实验性、默认关闭。按话题、创作者发现内容；同一浏览器授权并登录后，可有界导入近期点赞、收藏和关注。推荐卡收藏仅保存在本地。完整 Likes 历史、双账号、Firefox 登录态与手机真机仍待验。</p>
+            <div>
+              <a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/modules/instagram.md" data-i18n="sourceInstagramSetup">连接指南</a> ·
+              <a href="https://github.com/whiteguo233/OpenBiliClaw/blob/main/docs/platform-source-acceptance.instagram.md" data-i18n="sourceInstagramEvidence">实测范围</a>
+            </div>
           </article>
 	          <article class="source-card reveal" data-source="web">
 	            <span>Web</span>
@@ -1676,7 +1682,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
 	        sourceYoutubeTitle: "YouTube",
 	        sourceYoutubeText: "插件读取观看历史、订阅和点赞用于画像初始化，也支持 Takeout 离线导入；日常发现由后端搜索、热门和频道内容补池。",
 	        sourceTiktokTitle: "TikTok（实验性）",
-	        sourceTiktokText: "main 已合入，待下一版本发布；实验性、默认关闭。发现推荐流、话题与创作者视频，登录后可关键词搜索。桌面/手机 Web 推荐已验收；非空账号画像与周期增量待验，站内收藏暂缓。",
+	        sourceTiktokText: "v0.3.229 起提供，实验性、默认关闭。未登录可发现推荐流、话题和创作者视频；浏览器登录后可关键词搜索。推荐及桌面/手机 Web 展示已有实测。非空账号画像、周期增量与 Firefox 登录态待验；站内收藏暂缓。",
 	        sourceXTitle: "X（Twitter）",
 	        sourceXText: "初始化信号和 Cookie 由插件同步，后端以只读会话执行搜索、For You 与关注作者发现，推文使用文字卡片呈现。",
 	        sourceZhihuTitle: "知乎",
@@ -1694,11 +1700,13 @@ docker compose -f docker-compose.prebuilt.yml up -d
 	        sourceGithubTitle: "GitHub",
 	        sourceGithubText: "官方 REST API 匿名发现公开 repository；公开用户名的 starred repositories 可初始化画像，PAT 可选。没有扩展权限、Cookie 或站内写入。",
         sourceInstagramTitle: "Instagram（实验性）",
-        sourceInstagramText: "v0.3.227 起提供，实验性、默认关闭。按话题、创作者发现内容，登录后可导入点赞、收藏和关注来初始化画像；推荐卡仅本地保存，不写回 Instagram。完整 Likes 历史及部分账号/浏览器验收仍待完成。",
+        sourceInstagramText: "v0.3.227 起提供，实验性、默认关闭。按话题、创作者发现内容；同一浏览器授权并登录后，可有界导入近期点赞、收藏和关注。推荐卡收藏仅保存在本地。完整 Likes 历史、双账号、Firefox 登录态与手机真机仍待验。",
         heroSources: "新增 Instagram 与 TikTok · 查看能力与版本说明",
-        sourceTiktokEvidence: "连接指南与实测范围",
+        sourceTiktokEvidence: "连接指南",
+        sourceTiktokAcceptance: "实测范围",
+        sourceInstagramSetup: "连接指南",
         sourcesNetwork: "Instagram 与 TikTok 均需海外网络：后端沿现有网络/代理设置，浏览器任务使用浏览器自身代理。请在设置中手动启用，并查看对应连接指南。",
-        sourceInstagramEvidence: "查看实测范围与剩余限制",
+        sourceInstagramEvidence: "实测范围",
 	        sourceWebTitle: "通用 Web",
         sourceWebText: "通过浏览器与 LLM 内容抽取接入更多站点，让非平台内容也进入画像。",
         screensEyebrow: "Product",
@@ -1849,7 +1857,7 @@ docker compose -f docker-compose.prebuilt.yml up -d
 	        sourceYoutubeTitle: "YouTube",
 	        sourceYoutubeText: "The extension reads watch history, subscriptions, and likes for profile init, with offline Takeout import also supported; backend search, hot, and channel discovery replenish the daily pool.",
 	        sourceTiktokTitle: "TikTok (experimental)",
-	        sourceTiktokText: "Merged into main; awaiting the next release. Experimental and disabled by default. Discover feed, hashtag, and creator videos, or search after login. Desktop/mobile Web recommendations are verified; nonempty account profiling and incremental sync remain unverified, native favorites deferred.",
+	        sourceTiktokText: "Available since v0.3.229, experimental and disabled by default. Discover public feed, hashtag, and creator videos without login; sign in for keyword search. Recommendations and desktop/mobile Web rendering have been exercised. Nonempty account profiling, incremental sync, and signed-in Firefox remain unverified; native favorites are deferred.",
 	        sourceXTitle: "X (Twitter)",
 	        sourceXText: "The extension syncs init signals and cookies; the backend uses a read-only session for search, For You, and followed-author discovery, with tweets rendered as text cards.",
 	        sourceZhihuTitle: "Zhihu",
@@ -1867,11 +1875,13 @@ docker compose -f docker-compose.prebuilt.yml up -d
 	        sourceGithubTitle: "GitHub",
 	        sourceGithubText: "The official REST API anonymously discovers public repositories; a public username can bootstrap starred repositories, while a PAT is optional. No extension permission, cookie, or upstream write is used.",
         sourceInstagramTitle: "Instagram (experimental)",
-        sourceInstagramText: "Available since v0.3.227, experimental and disabled by default. Discover topics and creators, or import signed-in likes, saves, and follows for profile initialization. Card saves stay local, with no Instagram write-back. Full Likes history and some account/browser checks remain incomplete.",
+        sourceInstagramText: "Available since v0.3.227, experimental and disabled by default. Discover topics and creators; grant site access and sign in within the same browser for bounded imports of recent likes, saves, and follows. Card saves stay local. Full Likes history, second-account, signed-in Firefox, and physical-phone checks remain incomplete.",
         heroSources: "New: Instagram & TikTok · Capabilities and release status",
-        sourceTiktokEvidence: "Setup and tested scope",
+        sourceTiktokEvidence: "Setup",
+        sourceTiktokAcceptance: "Tested scope",
+        sourceInstagramSetup: "Setup",
         sourcesNetwork: "Instagram and TikTok need overseas connectivity. The backend follows your configured network/proxy route; browser tasks use the browser’s own proxy. Enable each source in Settings and check its setup guide.",
-        sourceInstagramEvidence: "Tested scope and remaining limitations",
+        sourceInstagramEvidence: "Tested scope",
 	        sourceWebTitle: "Generic Web",
         sourceWebText: "Browser access plus LLM extraction bring more sites into the profile and candidate pool.",
         screensEyebrow: "Product",

@@ -35,10 +35,10 @@
 
 > **新增来源：Instagram 与 TikTok**，均为**实验性、默认关闭**。
 >
-> - **Instagram** 已随 v0.3.227 发布：按话题、创作者发现内容，也可登录后导入本人的点赞、收藏和关注来初始化画像。[连接说明](docs/modules/instagram.md) · [实测范围](docs/platform-source-acceptance.instagram.md)。
-> - **TikTok** 自 v0.3.229 起正式发布：支持推荐流、话题、创作者发现及浏览器登录后的关键词搜索；真实发现、模型评估、推荐和桌面/手机 Web 展示已验收。[连接说明](docs/modules/tiktok.md) · [实测范围](docs/platform-source-acceptance.tiktok.md)。
+> - **Instagram** 已随 v0.3.227 发布，仍为实验性来源：按话题、创作者发现内容；同一浏览器授权并登录后，可有界只读导入本人近期点赞、收藏和关注来初始化画像。推荐卡收藏仅保存在本地。[连接说明](docs/modules/instagram.md) · [实测范围](docs/platform-source-acceptance.instagram.md)。
+> - **TikTok** 已随 v0.3.229 发布，仍为实验性来源：未登录可发现推荐流、话题和创作者视频，浏览器登录后可关键词搜索。公开发现→真实模型评估→推荐及桌面/手机 Web 展示已有实测。[连接说明](docs/modules/tiktok.md) · [实测范围](docs/platform-source-acceptance.tiktok.md)。
 >
-> TikTok 站内收藏暂缓，非空真实账号画像与周期增量待验（[#295](https://github.com/whiteguo233/OpenBiliClaw/issues/295)）；Instagram 的完整 Likes 历史、双账号和 Firefox/手机真机仍待验，跨端保存状态需刷新。两者均不宣称全部账号能力已完成验收。
+> TikTok 站内收藏暂缓，非空真实账号画像、周期增量与 Firefox 登录态待验（[#295](https://github.com/whiteguo233/OpenBiliClaw/issues/295)）；Instagram 的完整 Likes 历史、双账号、Firefox 登录态与手机真机仍待验，跨端保存状态需刷新。两者均不宣称全部账号能力已完成验收。
 
 一个纯本地、私有、开源的自进化跨平台内容发现 Agent：从你的跨平台使用、反馈和对话中持续深化心理画像，带着对你的理解主动去 B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram（实验性）与开放 Web 找内容。
 
@@ -708,7 +708,7 @@ TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源�
 | **小红书** | 被动收集 · 搜索 · 创作者订阅 · 初始化导入 | 插件在已登录页面读取，零后端爬取 |
 | **抖音** | 初始化导入 · 搜索 · 热点 · 推荐流 | CLI/daemon 共用正式 producer，插件后台 tab 模拟 DOM 操作，候选统一进入待评估池 |
 | **YouTube** | 初始化导入 · Takeout 离线导入 · 搜索 / 热门 / 频道 | 插件读画像信号，日常发现后端直连补池 |
-| **TikTok**（实验性，main 已合入、待发版） | 推荐流 · 话题 · 创作者 · 登录后关键词搜索 | 默认关闭；访客发现与插件同步登录后的搜索已实测，桌面/手机 Web 可消费推荐；非空账号画像/增量待验，站内收藏暂缓。[详情](docs/modules/tiktok.md) |
+| **TikTok**（v0.3.229 起，实验性） | 推荐流 · 话题 · 创作者 · 登录后关键词搜索 | 默认关闭；访客发现与插件同步登录后的搜索已实测，桌面/手机 Web 可消费推荐；非空账号画像/增量待验，站内收藏暂缓。[详情](docs/modules/tiktok.md) |
 | **X（Twitter）** | 初始化导入 · 搜索 · For-You · 关注作者 | discovery 使用服务端只读 cookie 重放；原生书签 executor 已接入但未实号验证 |
 | **知乎** | 初始化导入 · 搜索 · 热榜 · 推荐 · 作者 · 相关 | 插件在已登录 tab 内读取，返回文字卡片 |
 | **Reddit** | 初始化导入 · 搜索 · 热门 · Subreddit · 相关 | discovery 默认 rdt-cli；Saved executor 已接入但未实号验证 |
@@ -716,7 +716,7 @@ TikTok 账号链路：`手动初始化 / 显式开启的周期增量 → 来源�
 | **Bangumi** | 公开收藏初始化 · 搜索 · 排名 · 按日期浏览 | 官方匿名只读 API；无需 Cookie/token，日期结果可能含未播条目 |
 | **V2EX** | 搜索 · Node · Tab · 热门 · 最新 | 官方匿名 API / JSON Feed；PAT 可选增强 API 2.0，Topic 为无封面文字卡 |
 | **GitHub** | starred repositories 初始化 · 搜索 · 排名 · 最新 | 官方 REST API；匿名可用、PAT 可选，强制只读公开 repository，无封面文字卡 |
-| **Instagram（实验性）** | topic / creator 发现 · 点赞 / 收藏 / 关注初始化 | 默认关闭；隔离浏览器只读任务，Cookie 不出浏览器；本地保存不回写站内，验收限制见专用台账 |
+| **Instagram（实验性）** | topic / creator 发现 · 点赞 / 收藏 / 关注初始化 | v0.3.227 起提供、默认关闭；同一浏览器授权并登录后有界导入本人信号，Cookie 不出浏览器；推荐卡收藏仅本地保存。[实测范围](docs/platform-source-acceptance.instagram.md) |
 | **通用 Web** | 浏览器 + LLM 抽取 | 适配任意网页 |
 
 发现之后的统一流程：

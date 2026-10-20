@@ -1,5 +1,7 @@
 # Instagram 来源
 
+交付状态：已随 v0.3.227 发布，仍为实验性、默认关闭。个人信号导入需要在同一浏览器授予站点访问并登录，当前只承诺有界只读快照；推荐卡收藏仅保存在 OpenBiliClaw 本地。完整 Likes 历史、双账号、Firefox 登录态和手机真机尚未完成验收，最新证据见 [验收台账](../platform-source-acceptance.instagram.md)。
+
 2026-10-03 增量：普通“换一批”已接入 Instagram producer、显式小批评估与推荐文案，不必为恢复 discovery 重做画像；网络/限流/离线等失败给出安全提示。封面共享代理新增逐 hop 公网 IP 检查与地址固定。真实验证结果及仍需账号/许可的门禁以[最新台账](../platform-source-acceptance.instagram.md)为准，不以代码通过替代 full 验收。
 
 > Instagram 接入采用“可选登录公开内容发现 + 浏览器登录态初始化”的 capability-specific 模型。来源默认关闭；Cookie、请求头和原始响应都留在浏览器内，后端只接收经过字段白名单归一化的媒体、账号和布尔登录心跳。
