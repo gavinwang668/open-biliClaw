@@ -1872,6 +1872,32 @@ class BilibiliAPIClient:
             data["parent"] = str(int(parent))
         return await self._post_json("/x/v2/reply/add", data=data)
 
+    async def get_reply_notifications(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Return recent ``回复我的 / @我`` notifications for this account.
+
+        ``/x/msgfeed/reply`` is the B站 message-center feed. Each item carries
+        ``item.at_details`` (the users @-ed in that comment), ``item.subject_id``
+        (the commented object id — video comments use ``aid``) and ``user``
+        (the commenter). The Blue Fish owner-notice integration check reads
+        this feed to prove a mention really arrived; production code does not
+        depend on it.
+
+        Args:
+            limit: Maximum number of newest items to return.
+
+        Returns:
+            Raw notification items, newest first.
+        """
+
+        data = await self._get_json(
+            "/x/msgfeed/reply",
+            params={"build": 0, "mobi_app": "web", "platform": "web"},
+        )
+        items = data.get("items")
+        if not isinstance(items, list):
+            return []
+        return [item for item in items if isinstance(item, dict)][: max(0, int(limit))]
+
     async def delete_comment(self, bvid: str, rpid: int) -> None:
         """Delete one of the current user's comments (``/x/v2/reply/del``)."""
         aid = await self._resolve_aid(bvid)

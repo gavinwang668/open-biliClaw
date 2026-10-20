@@ -994,6 +994,38 @@ async def test_get_video_comments_returns_top_n_comments() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_reply_notifications_returns_feed_items() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=def")
+    client._client = RouteAsyncClient(
+        {
+            "/x/msgfeed/reply": [
+                {
+                    "code": 0,
+                    "data": {
+                        "items": [
+                            {"id": 2, "item": {"at_details": [{"mid": 99}]}},
+                            {"id": 1, "item": {"at_details": []}},
+                        ],
+                        "cursor": {"is_end": True},
+                    },
+                }
+            ]
+        }
+    )
+
+    items = await client.get_reply_notifications()
+
+    assert [item["id"] for item in items] == [2, 1]
+    assert client._client.calls[0][0].endswith("/x/msgfeed/reply")
+
+
+async def test_get_reply_notifications_tolerates_a_missing_feed() -> None:
+    client = BilibiliAPIClient(cookie="SESSDATA=abc; bili_jct=def")
+    client._client = RouteAsyncClient({"/x/msgfeed/reply": [{"code": 0, "data": {}}]})
+
+    assert await client.get_reply_notifications() == []
+
+
 async def test_get_video_comments_follows_cursor_pages() -> None:
     client = BilibiliAPIClient(cookie="SESSDATA=abc")
     client._client = RouteAsyncClient(

@@ -242,7 +242,7 @@ CLI 若需要，后续可加 `openbiliclaw fish run`，当前只提供 HTTP 接�
 | `tests/test_fish_comment_thread.py` | 发现路线：BV 号抽取、去重 / 排除种子、计划交接、关闭与无 Cookie 时零网络 |
 | `tests/test_fish_plan.py` | 计划队列：往返、同视频去重、上限、过期丢弃、坏文件降级 |
 | `tests/test_fish_loop.py` | tick 顺序：先发现后动作、发现失败不挡动作、关闭时完全不动 |
-| `tests/test_fish_integration.py` | 真实账号联调（默认跳过）：拉评论、账号隔离、发一条楼中楼再删除；见下节 |
+| `tests/test_fish_integration.py` | 真实账号联调（默认跳过）：拉评论、账号隔离、发一条楼中楼再删除、**@ 主人是否真的进消息中心**；见下节 |
 | `tests/test_bilibili_api.py` | 评论翻页（`cursor.next`）与老返回结构不退化成循环 |
 | `tests/test_llm_prompts.py` | 新 builder 的 system 消息与入参无关 |
 
@@ -261,3 +261,16 @@ pytest -m integration tests/test_fish_integration.py -v
 默认只读（拉评论 / 校验账号）。要验证「发楼中楼 + @ + 删除」这条写路径，再加
 `OPENBILICLAW_FISH_IT_POST=1`：测试会真的发一条评论、拿到 `rpid` 后立刻删除，
 但在删除前它对外可见，也可能给对方发通知。
+
+要验证**「@ 主人」是不是真的会通知**，再给主账号 Cookie：
+
+```bash
+export OPENBILICLAW_FISH_IT_MAIN_COOKIE='SESSDATA=…; bili_jct=…'
+pytest -m integration \
+  tests/test_fish_integration.py::test_owner_mention_reaches_the_owner_message_feed -v
+```
+
+它用小号发一条 `@主人昵称 …` 的顶层评论，然后在主账号的消息中心 `/x/msgfeed/reply`
+里最多等 30 秒，找 `subject_id == aid` 且 `at_details` 包含主人 mid 的那条，最后删除评论。
+找不到就说明「纯文本 @ 昵称」在当时的 B 站接口上已经不产生真提及，通知功能得换通道
+（这也是这条用例存在的唯一理由）。
