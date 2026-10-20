@@ -308,6 +308,8 @@ optional Director (default off; separate decision credentials):
     → evidence audit → soft defer / full LLM review; never a chat-LLM fallback
 
 candidate full evaluator (settings switch; LLM default):
+  Web / popup / mobile shared Jev connection form → config API → validated local settings
+    → native endpoint + secret (never in read responses) + selected-model limits → runtime rebuild
   Jev: local profile catalog → per-candidate projection + selected-model context budget
     → jev_context whole source spans / coverage → complete-question-group batch packing
   named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation

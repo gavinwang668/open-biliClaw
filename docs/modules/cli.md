@@ -16,6 +16,10 @@ openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 
 ## Jev 本机开发验证脚本
 
+`config-show` 还显示 Jev 原生 API URL 和本机是否保存 Token，但不回显 Token，不读取
+环境变量秘密或联网探测。完整连接配置可在 Web/插件/移动设置页填写；直接编辑 TOML
+仍需重启，页面/API 保存走既有后台应用流程。开发 fake runner 不读取生产连接配置。
+
 在包含脚本的源码 worktree 根目录运行：
 
 ```bash

@@ -28,10 +28,10 @@ def _resolve_jev_api_key(
     environ: Mapping[str, str] | None,
 ) -> str:
     variables = os.environ if environ is None else environ
-    api_key = variables.get(settings.api_key_env, "").strip()
+    api_key = settings.api_key or variables.get(settings.api_key_env, "").strip()
     if not api_key:
         raise DecisionConfigurationError(
-            "Enabled decision.providers.jev requires the environment variable named by api_key_env."
+            "Enabled Jev requires a saved token or the environment variable named by api_key_env."
         )
     # HTTP header syntax, not vendor key shape; never echo received values.
     if not api_key.isascii() or any(ord(char) < 33 or ord(char) == 127 for char in api_key):
@@ -78,4 +78,5 @@ def build_decision_provider(
         timeout_seconds=settings.timeout_seconds,
         max_attempts=settings.max_attempts,
         client=client,
+        endpoint_url=settings.endpoint_url,
     )

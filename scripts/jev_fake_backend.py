@@ -99,7 +99,7 @@ def _fixture_answers(questions: dict[str, Any], *, low_score: bool = False) -> d
 
 
 class _LoopbackTransport(httpx.AsyncBaseTransport):
-    """Test-only bridge; production provider's fixed endpoint stays unchanged."""
+    """Test-only bridge for the default official URL, never an external forwarder."""
 
     def __init__(self, local_url: str) -> None:
         self._url = local_url

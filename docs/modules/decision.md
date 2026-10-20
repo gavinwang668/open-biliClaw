@@ -46,7 +46,7 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | Provider-neutral 请求与证据合同 | 已实现 | 区分请求目的、问题 schema、输入摘要与模型归因 |
 | Jev Choice / Score / Noul | 已实现 | 原生 typed 问题与答案、严格结果绑定；不解析自由文本回答 |
 | 有界 HTTP 请求 | 已实现 | 总 deadline、有限重试、明确错误原因、取消传播 |
-| 独立配置 | 已实现 | 默认关闭；只保存凭据环境变量名，不保存实际 key |
+| 独立配置 | 已实现 | 默认关闭；本机保存 Token 优先，空值沿用独立环境变量，不借用聊天 key；支持显式原生 URL |
 | 三策略导演调用者 | 已实现 | `PairComposer` 逐对决策，混合模式审查／修补；Agent-only 编排不调用 Jev |
 | 共享屏目标与角色 | 已实现 | `screen_policy` 区分事实／假设／未知；一次 pair / role 联合选择或保留职责的局部修补，不新增语义质量保证 |
 | 独立过滤与运行时 | 已实现 | 独立 shadow / enforce、真实标签审计与延期重审；运行时共享并发闸与熔断 |
@@ -54,7 +54,7 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | 固定模型自适应预算 | 已实现 | 精确 ID 的双 token 容量 → 双 UTF-8 工程护栏；模型不自动切换，未知容量必须显式登记；完整评估与导演共用 |
 | 完整题组多候选合批 | 已实现，待实测 | 原文片段只传一次，公共规则/相同必需画像共享；配置题数、候选数、单题字节护栏。长内容本地摘录，不增加业务评估轮次 |
 | 本机 HTTP 协议假后端 | 开发测试工具 | `scripts/jev_fake_backend.py` 固定合成答案/usage、独立字节护栏和故障注入；不改变生产 adapter 或端点，不模拟模型推理质量 |
-| 图形界面设置与服务探测 | 部分提供 | 完整评估模式在三端设置页可切换；provider 凭据仍由 TOML/env 配置，不提供付费探测 |
+| 图形界面设置与服务探测 | 设置已实现，探测未提供 | 三端共用连接表单，URL/Token/固定模型/容量与完整评估可同次保存；Token 不回显，不提供付费探测 |
 | 线上质量 / 中文效果 / 时延保证 | 未验证 | 离线 fixture 不等于真实模型验收；本轮未调用付费 API |
 
 ## 公共 API
@@ -74,7 +74,8 @@ Jev 是与生成式聊天 LLM、embedding 分开的 provider，不实现 `LLMPro
 | `ChoiceQuestion` | `instructions` + `criteria`（选项 ID → 描述）；答案必须属于本次合法选项，最多 255 项 |
 | `ScoreQuestion` | `instructions` + 有序 `criteria`；2–10 档评分，不是任意浮点排序器 |
 | `NoulQuestion` / `NoulCriteria` | 二元判断，可明确 true / false 定义；答案是 `noul`，没有独立 `confidence` 字段 |
-| `JevDecisionProvider(...)` | 接收 `api_key`、模型、超时、最大尝试次数，以及可选的 `httpx.AsyncClient` |
+| `JevDecisionProvider(...)` | 接收 `api_key`、固定模型、超时、最大尝试次数、可选 `httpx.AsyncClient` 及完整 `endpoint_url`；默认官方 URL |
+| `validate_jev_endpoint_url(value)` | 只允许完整 HTTPS 原生接口，回环测试可 HTTP；拒绝 userinfo/query/fragment/空白，异常不回显输入 |
 | `JevDecisionProvider.aclose()` | 只关闭适配器自己创建的 HTTP client；借用 client 仍由调用方关闭 |
 | `parse_jev_response(payload, request)` | 校验并绑定本次请求，返回实际模型、答案映射、用量；非法响应抛出不含敏感正文的 `ValueError` |
 | `build_decision_provider(config, *, provider_name="jev", client=None, environ=None)` | 接受 `DecisionConfig`；关闭时返回 `None`，不读取凭据、不创建 client；启用但缺凭据或 provider 未知时抛 `DecisionConfigurationError`（`ConfigError` 子类），不会借用 LLM key |
@@ -118,7 +119,7 @@ max_attempts = 2
 
 完整字段校验见[配置参考](config.md#decisionprovidersjev)。启用配置只表示允许显式
 构建 provider，并不让 daemon 开始请求 Jev，也不自动启用导演或过滤。调用进程必须
-自行提供 `api_key_env` 指向的环境变量；不要把实际 key 写进配置样例、命令行参数或日志。
+提供本机保存的 Token 或 `api_key_env` 指向的环境变量；不要把真实 key 写进配置样例、命令行参数或日志。
 固定模型 ID 是可复现实验的起点，换模型后应重新校准业务阈值。
 
 固定模型请求若返回不同的实际模型，结果为 `INVALID / model_mismatch`，保留可用的
@@ -130,9 +131,10 @@ max_attempts = 2
 认证、非法请求和无效响应不会自动变成无限重试。调用方提供的更早 deadline 可以
 进一步收紧预算；取消请求直接传播，不被折叠为普通失败证据。
 
-适配器固定 Jev 官方端点，禁止 HTTP 重定向。自建 client 遵循项目
+适配器默认 Jev 官方端点，显式 `endpoint_url` 可指定兼容原生协议的自建/中转；禁止 HTTP 重定向。
+URL 改动的配置 API 必须同时提交新 Token，不向另一个地址自动沿用旧凭据。自建 client 遵循项目
 `network.outbound_httpx_kwargs()` 的海外网络路由；借用 client 的代理设置由其 owner
-负责。适配器不负责整屏预算；运行时准入与熔断由 `BoundedDecisionProvider` 负责，
+负责；回环 client 强制 `trust_env=false`。适配器不负责整屏预算；运行时准入与熔断由 `BoundedDecisionProvider` 负责，
 整屏预算由调用者控制，不能把聊天 LLM 的预算视为已经覆盖 Jev。
 
 ## 安全与四表面边界
@@ -141,7 +143,7 @@ max_attempts = 2
 - 候选文本是不可信数据，不能因为 typed 输出就认为模型不受内容诱导；provider 本身没有工具或数据库写权限。
 - 不记录 API key、state 或远端错误响应正文；错误以类型和稳定原因码呈现。
 - CLI：`config-show` 展示开关、模型、凭据变量名和预算，不探测网络，也不读取或打印实际 key。
-- 插件 popup、桌面 Web、移动 Web：首版均不提供 Jev 设置、切换或探测按钮；配置 API 不新增 Jev 表单合同。
+- 插件 popup、桌面 Web、移动 Web：共用 Jev 连接表单与后端配置 API，可配置连接/容量并切换完整评估；不增加付费探测按钮。Token 不回显/不进浏览器存储，仅后端本机 TOML 保存，非加密密钥库。
 - Git / Docker / 桌面安装的依赖与启动流程不变；复用现有 `httpx`，未安装 Jev SDK，也没有自动下载模型。
 
 ## 后续接线的验收边界

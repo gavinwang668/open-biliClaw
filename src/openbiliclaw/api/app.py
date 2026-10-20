@@ -19617,14 +19617,12 @@ def create_app(
 
         jev_settings = cfg.decision.providers.jev
         jev_ready = False
-        jev_reason = "请在 TOML 的 [decision.providers.jev] 设置 enabled = true，并重启后端。"
+        jev_reason = "请在 Jev 连接配置区启用服务并填写 Token。"
         if jev_settings.enabled:
             try:
                 validate_decision_provider_credentials(cfg.decision)
             except ConfigError:
-                jev_reason = (
-                    "后端环境变量未配置或凭据格式无效；请设置 api_key_env 指向的变量并重启。"
-                )
+                jev_reason = "请填写有效 Token，或在后端设置 api_key_env 指向的环境变量。"
             else:
                 jev_ready = True
                 jev_reason = (
@@ -19637,15 +19635,14 @@ def create_app(
             )
         if jev_settings.model in {"jev-latest", "jev-preview"}:
             jev_ready = False
-            jev_reason = "完整评估需要固定 Jev 模型版本；请在 TOML 替换 latest/preview 并重启。"
+            jev_reason = "完整评估需要固定模型版本，请填写精确模型 ID。"
         jev_context_budget: dict[str, str | int] | None = None
         try:
             jev_context = resolve_jev_context(jev_settings.model, jev_settings.context_limits)
         except JevContextError:
             jev_ready = False
             jev_reason = (
-                "所选模型上下文容量未知；请在 TOML 的 decision.providers.jev.context_limits "
-                "按精确模型 ID 填写已确认的双 token 上限，再重启后端。"
+                "所选模型上下文容量未知；请按精确模型 ID 在 Jev 配置区填写已确认的双 token 上限。"
             )
         else:
             jev_context_budget = {**asdict(jev_context), "fingerprint": jev_context.fingerprint}
@@ -19958,6 +19955,17 @@ def create_app(
                     enabled=jev_settings.enabled,
                     model=jev_settings.model,
                     api_key_env=jev_settings.api_key_env,
+                    endpoint_url=jev_settings.endpoint_url,
+                    api_key_configured=bool(jev_settings.api_key),
+                    credential_source=(
+                        "config"
+                        if jev_settings.api_key
+                        else "environment"
+                        if os.environ.get(jev_settings.api_key_env, "").strip()
+                        else "missing"
+                    ),
+                    timeout_seconds=jev_settings.timeout_seconds,
+                    max_attempts=jev_settings.max_attempts,
                     ready=jev_ready,
                     reason=jev_reason,
                     context_limits={
@@ -21450,6 +21458,13 @@ def create_app(
             cfg.language = str(update["language"])
         if "data_dir" in update:
             cfg.data_dir = str(update["data_dir"])
+        if "decision" in update:
+            from openbiliclaw.config import update_decision_config
+
+            try:
+                cfg.decision = update_decision_config(cfg.decision, update["decision"])
+            except ConfigError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
 
         tailnet_restart_required = False
         tailnet_bootstrap_credential = ""
@@ -23087,8 +23102,7 @@ def create_app(
                     ConfigIssue(
                         field="decision.providers.jev.api_key_env",
                         message=(
-                            "Jev 路由需要有效的后端环境变量凭据；"
-                            "请配置后重启，不要在配置页面填写 Key。"
+                            "Jev 路由需要有效 Token；请在连接配置区填写，或配置后端环境变量。"
                         ),
                         severity="blocking",
                     )

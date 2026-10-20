@@ -186,6 +186,7 @@ async function openMobileSettings(opener) {
     </select>
     <p class="mobile-settings-hint" id="mobile-eval-scorer-hint">Jev 替换完整候选评估，不隐式调用 LLM；仅文本，不支持封面图片。主题/IP 使用受控分类，新 IP 保留未知，评分未经当前模型质量校准。上下文按保守字节预算拆批，不删除关键画像。Shadow 与 Learned 仍调用 LLM 生成元数据；切换不会重算已有推荐。</p>
     <p class="mobile-settings-hint" id="mobile-jev-status" role="status" aria-live="polite"></p>
+    <div id="mobileJevConnectionSettings"></div>
     <p class="mobile-settings-status" aria-live="polite"></p>
     <button class="mobile-settings-retry btn btn-outline" type="button" hidden>重试加载</button>
     <div class="mobile-settings-actions"><button class="mobile-settings-save btn btn-brand" type="button">保存设置</button></div>`;
@@ -195,6 +196,7 @@ async function openMobileSettings(opener) {
   const toggle = card.querySelector("#mobile-saved-auto-sync");
   const evaluator = card.querySelector("#mobile-eval-scorer");
   const jevStatus = card.querySelector("#mobile-jev-status");
+  const jevForm = window.OpenBiliClawJevSettings.mount(card.querySelector("#mobileJevConnectionSettings"), evaluator);
   const save = card.querySelector(".mobile-settings-save");
   const retry = card.querySelector(".mobile-settings-retry");
   const status = card.querySelector(".mobile-settings-status");
@@ -231,11 +233,11 @@ async function openMobileSettings(opener) {
       storedEvaluator = config.discovery?.eval_scorer || "llm";
       evaluator.value = storedEvaluator;
       const jevProvider = config.discovery?.jev_provider || {};
+      jevForm.load(jevProvider, config.discovery?.jev_evaluation || {});
       const visionEnabled = config.discovery?.multimodal_evaluation_enabled === true;
-      evaluator.querySelector('option[value="jev"]').disabled = jevProvider.ready !== true || visionEnabled;
       jevStatus.textContent = visionEnabled
         ? "Jev 仅支持文本。请先在桌面或扩展设置关闭“候选封面参与 LLM 评估”，再刷新此页。"
-        : `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "需在 TOML 启用 provider。"} 环境变量名：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}（只在后端设置，不在页面填写 Key）。`;
+        : `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "请在下方配置连接。"} 后端凭据变量：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}。`;
       configLoaded = true;
       save.disabled = false;
       toggle.disabled = false;
@@ -265,9 +267,11 @@ async function openMobileSettings(opener) {
     status.removeAttribute("role");
     status.textContent = "正在保存设置…";
     try {
-      const payload = { saved_sync: { auto_sync_enabled: toggle.checked } };
-      if (evaluator.value !== storedEvaluator) payload.discovery = { eval_scorer: evaluator.value };
+      const payload = { ...jevForm.collect(), saved_sync: { auto_sync_enabled: toggle.checked } };
+      if (evaluator.value !== storedEvaluator) payload.discovery = {...(payload.discovery || {}), eval_scorer: evaluator.value};
       await updateConfig(payload);
+      await loadConfig();
+      if (!configLoaded) throw new Error("配置已保存，但刷新状态失败，请重试加载后再编辑。");
       storedValue = toggle.checked;
       storedEvaluator = evaluator.value;
       status.textContent = "设置已保存。手动同步始终可用。";
@@ -275,7 +279,7 @@ async function openMobileSettings(opener) {
       status.setAttribute("role", "alert");
       status.textContent = error?.message || "设置保存失败，请重试。";
     } finally {
-      save.disabled = false;
+      save.disabled = !configLoaded;
       save.textContent = "保存设置";
     }
   });

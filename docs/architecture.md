@@ -27,6 +27,8 @@ optional Director (default off; separate decision credentials):
     → evidence audit → soft defer / full LLM review; never a chat-LLM fallback
 
 candidate full evaluator (settings switch; LLM default):
+  Web / popup / mobile shared Jev connection form → config API → validated local settings
+    → native endpoint + secret (never in read responses) + selected-model limits → runtime rebuild
   Jev: local profile catalog → per-candidate projection + selected-model context budget
     → jev_context whole source spans / coverage → complete-question-group batch packing
   named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
@@ -521,7 +523,7 @@ flowchart LR
 独立 typed decision 合同及 Jev HTTP adapter，接受显式调用者提供的状态和具名问题，
 返回经过严格校验的 Choice / Score / Noul 证据与模型 / 输入归因。它不实现聊天
 `LLMProvider.complete()`，不加入 `[llm]` fallback 链，也没有候选池、推荐历史或画像
-写权限。配置为默认关闭的 `[decision.providers.jev]`，凭据只引用环境变量名；
+写权限。配置为默认关闭的 `[decision.providers.jev]`，本机保存 Token 优先，空值沿用环境变量；
 自建 HTTP client 遵循现有海外网络策略。
 
 `decision/context_budget.py` 集中解析精确所选模型的双上下文容量与 UTF-8 工程护栏，
@@ -533,7 +535,8 @@ flowchart LR
 供编排、独立发现过滤或纯 Jev 完整评估借用；重载切换 epoch，关闭旧任务和 provider。模型只返回证据，
 没有提交权限。三端增加屏身份和真实可见确认，不新增模式设置控件；TOML 为配置入口。
 `agent_only` + 过滤 off + 非 Jev 完整评估不创建 Jev client、不读取其凭据。
-完整评估新增设置页切换，凭据仍为 TOML/env；Jev 原生仅文本，不补生成式元数据，
+完整评估设置页可同时保存 URL/Token/模型/容量并切换模式；Token 仅本机 TOML 保存，读取响应不回显，
+也兼容原有 env。三端共用 `shared/jev-settings.js`，后端严格校验、后台重建；Jev 原生仅文本，不补生成式元数据，
 未知明确保留，错误不会回退 LLM。API、CLI、OpenClaw 与旧池补评共用此选择。
 详见[模块文档](modules/decision.md)和[评估合同](modules/discovery.md)。
 

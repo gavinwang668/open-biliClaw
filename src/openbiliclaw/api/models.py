@@ -2635,8 +2635,13 @@ class JevProviderReadinessOut(BaseModel):
     enabled: bool = False
     model: str = "jev-1.13.0"
     api_key_env: str = "TYPESAFE_API_KEY"
+    endpoint_url: str = "https://api.typesafe.ai/v1/systemone"
+    api_key_configured: bool = False
+    credential_source: str = "missing"
+    timeout_seconds: float = 2.0
+    max_attempts: int = 2
     ready: bool = False
-    reason: str = "请在 TOML 启用独立 Jev provider，并设置后端环境变量。"
+    reason: str = "请在 Jev 连接配置区启用服务并填写 Token，或沿用后端环境变量。"
     context_limits: dict[str, dict[str, int]] = Field(default_factory=dict)
     context_budget: dict[str, str | int] | None = None
 
@@ -2827,6 +2832,7 @@ class ConfigUpdateIn(BaseModel):
     sources: dict[str, object] | None = None
     scheduler: dict[str, object] | None = None
     discovery: dict[str, object] | None = None
+    decision: dict[str, object] | None = None
     saved_sync: SavedSyncConfigUpdateIn | None = None
     tailnet: TailnetConfigUpdateIn | None = None
     storage: dict[str, object] | None = None

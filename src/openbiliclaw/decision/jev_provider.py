@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import math
 import time
+from contextlib import suppress
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
@@ -23,6 +25,33 @@ from openbiliclaw.decision.models import (
 from openbiliclaw.network import outbound_httpx_kwargs
 
 _ENDPOINT = "https://api.typesafe.ai/v1/systemone"
+
+
+def _loopback_host(host: str) -> bool:
+    if host == "localhost":
+        return True
+    with suppress(ValueError):
+        return ipaddress.ip_address(host).is_loopback
+    return False
+
+
+def validate_jev_endpoint_url(value: object) -> str:
+    """Validate a full native endpoint without echoing credentials or URL input."""
+    try:
+        if not isinstance(value, str) or any(ord(char) <= 32 or ord(char) == 127 for char in value):
+            raise ValueError
+        url = httpx.URL(value)
+        if not url.host or url.userinfo or "?" in value or "#" in value or url.path == "/":
+            raise ValueError
+        loopback = _loopback_host(url.host)
+        if url.scheme != "https" and not (url.scheme == "http" and loopback):
+            raise ValueError
+        return str(url)
+    except (ValueError, httpx.InvalidURL):
+        raise ValueError(
+            "Jev endpoint_url 必须是完整 HTTPS 接口地址；仅回环测试允许 HTTP。"
+            "不能包含账号密码、查询参数、片段或空白。"
+        ) from None
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -58,7 +87,8 @@ class JevDecisionProvider:
 
     An injected client is borrowed and is never closed here. Otherwise this
     adapter owns an outbound-network-policy-aware client. Every request disables
-    redirects and client auth overrides so Bearer credentials stay on Jev.
+    redirects and client auth overrides so Bearer credentials stay on the
+    explicitly configured native endpoint. Only loopback may use plain HTTP.
     """
 
     def __init__(
@@ -69,6 +99,7 @@ class JevDecisionProvider:
         timeout_seconds: float = 2.0,
         max_attempts: int = 2,
         client: httpx.AsyncClient | None = None,
+        endpoint_url: str = _ENDPOINT,
     ) -> None:
         if (
             not isinstance(api_key, str)
@@ -91,9 +122,15 @@ class JevDecisionProvider:
         self._model = model
         self._timeout_seconds = timeout_seconds
         self._max_attempts = max_attempts
+        self._endpoint_url = validate_jev_endpoint_url(endpoint_url)
         self._owns_client = client is None
+        network = (
+            {"trust_env": False}
+            if _loopback_host(httpx.URL(self._endpoint_url).host)
+            else outbound_httpx_kwargs()
+        )
         self._client = client or httpx.AsyncClient(
-            timeout=timeout_seconds, follow_redirects=False, **outbound_httpx_kwargs()
+            timeout=timeout_seconds, follow_redirects=False, **network
         )
         self._closed = False
 
@@ -169,7 +206,7 @@ class JevDecisionProvider:
                     attempts += 1
                     response = await self._client.request(
                         "POST",
-                        _ENDPOINT,
+                        self._endpoint_url,
                         content=body,
                         headers={
                             "Authorization": f"Bearer {self._api_key}",

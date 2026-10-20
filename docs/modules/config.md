@@ -240,16 +240,19 @@ max_attempts = 2
 | `enabled` | bool | `false` | 允许显式构建 provider；只接受真实布尔值，不把字符串或数字当作开关 |
 | `model` | string | `"jev-1.13.0"` | 非空且无首尾空白的模型 ID；固定版本方便归因，换模型须重新校准 |
 | `api_key_env` | string | `"TYPESAFE_API_KEY"` | 合法环境变量名称，不是 key 本身；实际秘密由显式调用进程提供 |
+| `api_key` | string | `""` | 本机 Token，非空优先于环境变量；API/CLI/对象 repr 不回显。含 Token 保存时 POSIX 文件权限收紧为 0600 |
+| `endpoint_url` | string | `"https://api.typesafe.ai/v1/systemone"` | 完整原生接口 URL，HTTPS；仅回环地址允许测试 HTTP。禁止账号密码、查询、片段、空白及重定向 |
 | `timeout_seconds` | float | `2.0` | 有限且大于 0 的总请求预算，覆盖所有尝试及重试等待，不是每次尝试各有一份预算 |
 | `max_attempts` | int | `2` | 大于等于 1 的整数，包含第一次请求；不接受布尔或小数 |
 | `context_limits` | model ID → table | `{}` | 精确模型 ID 对应 `max_request_tokens` 和 `max_state_question_tokens`；两项均必填且为整数，后者不能大于前者 |
 
 模型始终由用户选择，程序只适应它的容量。内置登记含 `jev-1.13.0` / `jev-1.14.0` 的官方
-64k / 32k token 双限制（按十进制处理）；未知模型须按该服务官方规格在 TOML 登记，
+64k / 32k token 双限制（按十进制处理）；未知模型须按服务商规格在设置页或 TOML 登记，
 不能把 `G5` 猜成 GPT-5 或套用 Jev 1.13 容量。示例表名为
 `[decision.providers.jev.context_limits."实际选中的完整模型ID"]`，两个 token 数须自行核实，
 不提供猜测值。关闭所有 Jev 路由可保留未知模型；启用路由但缺容量则报错且 readiness=false。
-更改后需完整重启后端。`config-show` 和配置 API 显示容量来源、token 限制与工程字节护栏，
+设置页/API 保存沿既有后台应用 revision 流程，新任务使用新配置；直接改 TOML 仍需完整重启。
+`config-show` 和配置 API 显示容量来源、token 限制与工程字节护栏，
 不请求 `/models` 或付费接口，不下载 tokenizer，不自动升级模型。
 
 共享预算采用 token 限制 × 3/4 的 UTF-8 字节工程护栏，逐请求计算 native JSON 包装、state
@@ -259,11 +262,17 @@ max_attempts = 2
 
 旧配置缺段时使用默认关闭值；加载 / 保存通过
 `validate_jev_decision_config()` 严格校验，非法字段抛 `ConfigError`，不静默回落默认值。
-`decision` 命名空间还拒绝未知字段，例如误填的 `api_key`，报错不回显其值。
-配置校验不读取实际环境变量值，配置中也不保存 key。CLI `config-show` 展示开关、
-模型、变量名与超时 / 尝试次数，不执行远端探测。使用前必须在实际后端进程的环境中
-提供凭据；配置迁移只保存变量名，不搬运其值。启用 Jev 业务路由却未启用 provider，
-加载或保存时直接报配置错误；缺少环境凭据在构建该路由时明确报错。
+`decision` 命名空间拒绝未知字段（如拼错的 `api_keey`），报错不回显其值。
+CLI `config-show` 展示开关、URL、模型、变量名、是否保存 Token 与超时/尝试次数，不执行远端探测。
+旧 env-only 配置不改变，不把环境变量值写回 TOML；本机保存的 Token 则随配置进入备份/迁移包，
+文件未加密。清除只移除当前配置，不擦除历史备份或环境变量。启用 Jev 路由却未启用 provider
+或没有有效凭据时，保存/构建明确失败。
+
+`update_decision_config(current, update)` 是 API 共用的严格部分更新入口：
+`decision.providers.jev` 接受上表字段；Token 省略/空串保留，`clear_api_key=true`
+明确清除，不能同时替换；URL 变化必须重新填写 Token，避免旧凭据误发。
+`context_limits` 是完整替换表，空对象恢复自动容量；三端共享表单保留其它模型条目，
+切换模型 ID 不继承上一模型的手动容量。配置校验不做付费探测，启用路由后的正常评估可能计费。
 
 一个 runtime 的完整评估、发现过滤与逐对编排共享有界 client：默认最多 2 个 adapter 调用并发、
 32 个已接纳请求（包含运行和等待），排队计入请求的绝对 deadline；连续 5 次真实
@@ -299,8 +308,8 @@ readiness 信息，不返回 key。`config-show` 展示模式及非 token 的字
 三个新增打包字段可由 TOML 或配置 API 更新，API 重建 evaluator 后的新任务生效，
 在飞任务使用旧快照。官方标准容量只可收紧，不能通过配置扩大；实验扩窗 header 默认不发送。
 模型容量、选择策略也进入缓存
-命名空间；完整评估拒绝 `jev-latest / jev-preview` 浮动别名。须先通过 TOML 启用
-`decision.providers.jev` 并在实际后端环境设置凭据，重启后可通过页面切换评估模式；
+命名空间；完整评估拒绝 `jev-latest / jev-preview` 浮动别名。可在设置页 Jev 连接区启用
+`decision.providers.jev`、填写 URL/Token/模型/容量，与评估模式在同一次保存中生效，也可沿用 TOML/env；
 保存时缺少凭据会失败，不显示虚假的切换成功。Jev 与封面多模态评估、Jev 预过滤
 同时开启会报错。它原生仅文本，未识别类别如实保留；不会隐式改成混合 LLM 模式。
 沿用的入池阈值尚未做 Jev 中文标定。该切换影响后续评估，不批量迁移历史结果。

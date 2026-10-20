@@ -637,13 +637,14 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 ## 🏛️ Architecture Overview
 
 Full candidate evaluation: `named profile + negative evidence + candidate text → LLM (default) OR pure Jev → metadata validation / isolated cache → admission`.
+Jev connection: `shared Web / popup / mobile form → config API validation → local URL/token/pinned-model/limits → runtime rebuild`; read responses never return the token.
 Jev evaluation and Director share `local full profile → candidate/intent-specific facts → selected-model budget check`.
-No automatic model switching, source-profile rewriting or removal of explicit exclusions; unknown model capacities require explicit TOML registration.
+No automatic model switching, source-profile rewriting or removal of explicit exclusions; unknown model capacities require registration in settings or TOML.
 Local whole-source excerpts carry coverage and provenance. Each candidate's complete question group stays
 in one batch; overflow reduces batch size first, and oversized mandatory inputs remain pending.
 Shared rules and identical mandatory profile facts are sent once, without additional evaluation rounds.
 The three Web settings surfaces can select experimental, text-only Jev evaluation with controlled topic/IP vocabularies,
-explicit unknowns and dual input guards. Failures never silently invoke an LLM. Credentials still use TOML/env;
+explicit unknowns and dual input guards. Failures never silently invoke an LLM. Settings can save a local token, with existing environment credentials still supported;
 live Chinese-content quality remains unverified. See [evaluation details](docs/modules/discovery.md).
 
 Recommendation requests: `main API → default dedicated recommendation process → current SQLite candidates → full ranking → atomic commit → cards + total/platform inventory`. The main API relays inventory events and observes background refills while clients are connected.

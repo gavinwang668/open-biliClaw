@@ -3,9 +3,14 @@
 ## 完整候选评估器选项
 
 高级设置新增 `eval_scorer=jev`（纯文本 / 受控分类实验模式），显示独立 provider readiness
-及与封面评估不兼容的说明；保存仍由后端统一校验，不在页面持有或输入 Jev key。
+及与封面评估不兼容的说明；保存由后端统一校验。
 未知主题 / IP 不由 LLM 补全。插件高级设置和移动设置提供相同模式入口，CLI 展示同一配置。
-服务凭据仍由 TOML/env 预配置，界面切换不代表已通过真实模型质量验收。
+Jev 连接区可配置服务开关、完整 API URL、Token、固定模型、双上下文上限、每批候选数、
+超时及传输重试。与评估模式可一次保存；Token 密码输入、留空保留、明确清除，保存后清空，
+只在后端本机 TOML 保存，不进入浏览器存储/读取响应。共享
+`web/shared/jev-settings.js` 的 `mount(root, evaluator).load(provider, evaluation)` / `collect()`
+也供插件与移动 Web 使用。更换 URL 必须重填 Token，换模型不继承旧容量；同样支持原有 env。
+readiness 与配置后台应用状态均不等于官方联网/质量验收；当前不提供付费探测按钮。
 
 ## 概述
 

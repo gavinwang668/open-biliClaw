@@ -56,7 +56,10 @@ extension_token_ttl_hours = 24
 [decision.providers.jev]
 enabled = false
 model = "jev-1.13.0"
-# 只填写环境变量名，不填写实际 Key；由显式创建 provider 的调用方读取该变量。
+# 自建/中转也必须兼容 Jev 原生协议，不是 Chat Completions。
+endpoint_url = "https://api.typesafe.ai/v1/systemone"
+# 可在 Web/插件连接区保存本机 Token；留空则读取环境变量。不要提交真实值。
+api_key = ""
 api_key_env = "TYPESAFE_API_KEY"
 # 初始传输预算，并非实测 SLA。有限正秒数；max_attempts 包含首次请求。
 timeout_seconds = 2.0

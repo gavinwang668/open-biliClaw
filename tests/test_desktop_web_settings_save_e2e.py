@@ -43,7 +43,10 @@ def _initial_config() -> dict[str, Any]:
             "embedding": {"provider": "ollama", "model": "bge-m3"},
         },
         "sources": {"bilibili": {"enabled": True}},
-        "discovery": {"eval_scorer": "llm"},
+        "discovery": {
+            "eval_scorer": "llm",
+            "jev_provider": {"enabled": False, "ready": False, "api_key_configured": False},
+        },
         "scheduler": {
             "pool_source_shares": {
                 "bilibili": 5,
@@ -381,6 +384,10 @@ def test_jev_evaluator_selection_saves_and_survives_reload(
     page.get_by_role("tab", name="高级功能").click()
     mode = page.get_by_role("combobox", name="候选评估器", exact=True)
     expect(mode.locator('option[value="jev"]')).to_have_js_property("disabled", False)
+    # This fixture intentionally emulates the old, env-only backend contract.
+    expect(
+        page.locator("#jevConnectionSettings").get_by_label("Token", exact=True)
+    ).to_be_disabled()
     mode.select_option("jev")
     page.get_by_role("button", name="保存配置").click()
     expect(page.locator("#settingsSaveMsg")).to_have_text("配置已保存，正在后台应用…")
@@ -405,6 +412,78 @@ def test_jev_evaluator_option_disabled_without_provider_readiness(
     mode = page.get_by_role("combobox", name="候选评估器", exact=True)
     expect(mode).to_have_value("llm")
     expect(mode.locator('option[value="jev"]')).to_have_js_property("disabled", True)
+
+
+def test_jev_connection_form_enables_unsaved_mode_and_submits_native_settings(
+    settings_save_server: tuple[str, SettingsSaveStub],
+    chromium_page: Page,
+) -> None:
+    base_url, stub = settings_save_server
+    page = chromium_page
+    page.goto(f"{base_url}/web/")
+    page.get_by_role("button", name="设置", exact=True).click()
+    page.get_by_role("tab", name="高级功能").click()
+    form = page.locator("#jevConnectionSettings")
+    form.get_by_label("启用 Jev 服务连接", exact=True).check()
+    form.get_by_label("API URL（完整接口地址）", exact=True).fill(
+        "https://jev.example.test/v1/systemone"
+    )
+    form.get_by_label("固定模型 ID", exact=True).fill("jev-1.14.0")
+    token = form.get_by_label("Token", exact=True)
+    expect(token).to_have_attribute("type", "password")
+    token.fill("synthetic-ui-token")
+    page.locator("#evalScorer").select_option("jev")
+    page.get_by_role("button", name="保存配置").click()
+    expect(page.locator("#settingsSaveMsg")).to_have_text("配置已保存，正在后台应用…")
+    saved = stub.saved_payloads[-1]
+    assert saved["discovery"]["eval_scorer"] == "jev"
+    connection = saved["decision"]["providers"]["jev"]
+    assert connection["enabled"] is True
+    assert connection["endpoint_url"] == "https://jev.example.test/v1/systemone"
+    assert connection["model"] == "jev-1.14.0"
+    assert connection["api_key"] == "synthetic-ui-token"
+    expect(token).to_have_value("")
+
+
+def test_switching_jev_model_does_not_inherit_another_models_capacity(
+    settings_save_server: tuple[str, SettingsSaveStub],
+    chromium_page: Page,
+) -> None:
+    base_url, stub = settings_save_server
+    with stub.lock:
+        stub.config["discovery"]["jev_provider"] = {
+            "enabled": True,
+            "ready": True,
+            "api_key_configured": True,
+            "model": "jev-1.13.0",
+            "context_limits": {
+                "jev-1.13.0": {
+                    "max_request_tokens": 40000,
+                    "max_state_question_tokens": 20000,
+                }
+            },
+        }
+    page = chromium_page
+    page.goto(f"{base_url}/web/")
+    page.get_by_role("button", name="设置", exact=True).click()
+    page.get_by_role("tab", name="高级功能").click()
+    root = page.locator("#jevConnectionSettings")
+    root.get_by_text("上下文与请求预算", exact=True).click()
+    expect(root.get_by_label("手动设置所选模型的上下文上限")).to_be_checked()
+    root.get_by_label("固定模型 ID", exact=True).fill("operator-g5")
+    expect(root.get_by_label("手动设置所选模型的上下文上限")).not_to_be_checked()
+    root.get_by_label("手动设置所选模型的上下文上限").check()
+    expect(root.get_by_label("总请求 token 上限", exact=True)).to_have_value("")
+    root.get_by_label("总请求 token 上限", exact=True).fill("30000")
+    root.get_by_label("state＋单题 token 上限", exact=True).fill("15000")
+    page.get_by_role("button", name="保存配置").click()
+    expect(page.locator("#settingsSaveMsg")).to_have_text("配置已保存，正在后台应用…")
+    limits = stub.saved_payloads[-1]["decision"]["providers"]["jev"]["context_limits"]
+    assert limits["operator-g5"] == {
+        "max_request_tokens": 30000,
+        "max_state_question_tokens": 15000,
+    }
+    assert limits["jev-1.13.0"]["max_request_tokens"] == 40000
 
 
 def test_external_runtime_config_event_rehydrates_settings(

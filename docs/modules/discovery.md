@@ -49,6 +49,9 @@ Jev 完整评估改用 `build_profile_catalog()` + `select_profile_context()` �
 真实模型验收必须分开记录，见[验收记录](../plans/2026-10-02-jev-full-evaluator-validation.md)。
 
 单轮适配与官方多题依据见[实施契约](../plans/2026-10-14-jev-single-pass-context.md)。
+Web/插件/移动的 Jev 连接区可配置服务开关、原生 URL、Token、固定模型、双容量和每批候选数，
+与 `eval_scorer=jev` 可同次保存，由共享后端验证及后台重建生效。不是额外加一层预过滤；
+独立 semantic filter 仍与完整 Jev 评估互斥。连接配置只表示本机就绪，未自动请求付费探测。
 `scripts/validate_jev_single_pass.py` 默认仅本地预览；真实模式需先确认促销额度并在本机
 设置 key，使用合成画像、候选和临时 SQLite，不修改生产配置或数据。
 加 `--fake` 则自动启动本机 Jev 原生协议假后端，以真实回环 HTTP 跑完两种预算的

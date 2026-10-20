@@ -16528,6 +16528,11 @@ def config_show() -> None:
             "开启" if cfg.decision.providers.jev.enabled else "关闭",
         ),
         ("Jev 模型", cfg.decision.providers.jev.model),
+        ("Jev API URL", cfg.decision.providers.jev.endpoint_url),
+        (
+            "Jev 本机保存 Token",
+            "已配置（不回显）" if cfg.decision.providers.jev.api_key else "未保存",
+        ),
         ("Jev 模型上下文（单题 / 总请求）", jev_context_label),
         ("Jev 凭据变量名", cfg.decision.providers.jev.api_key_env),
         ("Jev 超时（秒）", str(cfg.decision.providers.jev.timeout_seconds)),

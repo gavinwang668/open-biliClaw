@@ -127,7 +127,7 @@ def test_invalid_decision_field_rejected_on_parse_and_save(
         {"decision": "jev"},
         {"decision": {"providers": []}},
         {"decision": {"providers": {"jev": False}}},
-        {"decision": {"providers": {"jev": {"api_key": "do-not-echo-me"}}}},
+        {"decision": {"providers": {"jev": {"api_keey": "do-not-echo-me"}}}},
         {"decision": {"providers": {"unknown": {}}}},
     ],
 )

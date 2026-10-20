@@ -179,3 +179,42 @@ fixture。报告显式标记 `backend=local_fake`、`live=false`、`usage_is_syn
   `preview`，去掉本机 key 的 `--live --confirm-free-credits` 返回 `not_attempted`
   和退出码 2，没有远端 HTTP。
 - 没有运行全仓 pytest 或涉及真实 OAuth 凭据探测的 CLI 测试。
+
+## 2026 年 10 月 20 日：三端 Jev 连接配置闭环
+
+独立 `feat/jev-settings-ui` worktree，基于已验收假后端分支 `3a3c65ef`，尚未合入 main。
+桌面 Web/插件「设置 → 高级功能 → Jev 连接配置」，移动设置同名区，共用
+`web/shared/jev-settings.js/.css`，构建按既有机制复制到插件。UI 采用既有样式、可访问
+标签/密码框/状态提示/单列窄屏布局，基本连接字段与折叠容量/请求预算分开。
+
+- 配置服务开关、完整原生 API URL、Token、固定模型、双 token 上限、每批候选数、超时/重试，
+  与 `eval_scorer=jev` 可同次保存。Jev 是替换完整评估，不是又叠一层语义预过滤。
+- `PUT /api/config` 严格部分更新 `decision.providers.jev`，验证后沿原 apply revision
+  后台重建；202 只表示已保存/排队。本机保存 Token 优先，空值沿用 env；省略/空串不覆盖，
+  显式 `clear_api_key` 清除。Token 不进 GET/错误响应/repr/CLI/浏览器缓存，保存后输入框清空。
+  本机 TOML 未加密，POSIX 写入权限 0600；配置备份/迁移可能含 Token，清除不擦历史备份。
+- URL 默认官方接口；自建/中转必须兼容 native systemone 协议。外部仅 HTTPS，回环测试可 HTTP，
+  禁止 userinfo/query/fragment、重定向与自动沿用到新目的地的旧 Token；回环禁环境代理。
+- 更换模型 ID 不继承上一模型容量；容量完整表可恢复自动，并保留其它型号登记，不自动选模型。
+  老后端缺少新凭据状态字段时禁止连接编辑，只保留原有模式切换，避免旧 API 忽略密钥写入却报成功。
+
+验证与明确边界：
+
+- TDD 新增 20 项验收（配置 API 16，移动/插件各 1，桌面 2）；最终
+  `pytest -q tests/test_jev_evaluation_config.py tests/test_jev_settings_api.py tests/test_jev_settings_mobile.py tests/test_jev_settings_popup.py tests/test_desktop_web_settings_save_e2e.py -k 'jev or switching_jev' --tb=short`：**56 passed**。
+  覆盖同次保存/刷新、Token 保留/清除/脱敏、坏 URL/字段/容量不落盘、旧后端保护、跨型号容量隔离。
+- 扩展相关回归命令
+  `pytest -q tests/test_jev* tests/test_decision* tests/test_api_config* tests/test_config.py tests/test_desktop_web_settings_save_e2e.py tests/test_mobile_web_probe_delight_e2e.py --tb=short`
+  为 **838 passed / 1 failed**；唯一失败是容量未知提示丢失“精确模型 ID”的断言，已修复提示。
+  修复后 `test_jev_evaluation_config.py` 34 项及上述最终 56 项复验通过；不把重叠组相加。
+- `test_cli.py -k config_show`：6 passed；插件 Node settings/layout：58 passed；
+  `npm run build:bundle`、`npm run verify:assets`、全仓 Ruff、MyPy（322 源文件）及 JS syntax 检查通过。
+- 从 API 保存的配置构建实际 client，对本机 fake 的**显式 URL**发出一次完整 10 题请求并成功；
+  没有 URL 重写桥，错误环境 key/HTTP_PROXY 不会覆盖保存的 Token 或回环直连策略。
+- Web/移动/插件页面资产均在真实 Chromium 运行；移动/插件调用真实 FastAPI 配置逻辑，
+  Chrome API 与底层 transport 为测试边界，runtime 后台重建在配置测试中用 stub 防止模型后台请求。
+  不是实际 MV3 安装/host permission、完整 daemon 生命周期或官方 Jev 质量验收。
+  Playwright CLI 的本机可视核对截图在 `output/playwright/`；简单 fixture 缺失非本功能路由的
+  404/流重连日志不能当作产品端到端健康证明。
+- 没有运行全仓 pytest、官方付费探测、真实来源账号操作或安装器测试；未改生产配置/数据库。
+  无新依赖/安装流程变更，未修改外部 Flutter 客户端。README/架构/spec/模块/配置/CLI 文档同步。

@@ -14,7 +14,7 @@ import re
 import shutil
 import tomllib
 from copy import deepcopy
-from dataclasses import dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -452,7 +452,7 @@ class JevContextLimits:
 
 @dataclass
 class JevDecisionConfig:
-    """Independent Jev client settings; credentials remain in the environment.
+    """Independent Jev settings; a local saved token takes precedence over env.
 
     Enabling the client does not enable a recommendation or filtering route.
     ``max_attempts`` includes the initial request. Timeout and attempt defaults
@@ -462,6 +462,8 @@ class JevDecisionConfig:
     enabled: bool = False
     model: str = "jev-1.13.0"
     api_key_env: str = "TYPESAFE_API_KEY"
+    api_key: str = field(default="", repr=False)
+    endpoint_url: str = "https://api.typesafe.ai/v1/systemone"
     timeout_seconds: float = 2.0
     max_attempts: int = 2
     context_limits: dict[str, JevContextLimits] = field(default_factory=dict)
@@ -3104,6 +3106,20 @@ def _jev_decision_config_issues(config: JevDecisionConfig) -> list[ConfigIssue]:
 
     if not isinstance(config.enabled, bool):
         add("enabled", "必须为 TOML 布尔值 true 或 false。")
+    from openbiliclaw.decision.jev_provider import validate_jev_endpoint_url
+
+    try:
+        validate_jev_endpoint_url(config.endpoint_url)
+    except ValueError as exc:
+        add("endpoint_url", str(exc))
+    if not isinstance(config.api_key, str) or (
+        config.api_key
+        and (
+            not config.api_key.isascii()
+            or any(ord(char) < 33 or ord(char) == 127 for char in config.api_key)
+        )
+    ):
+        add("api_key", "Token 必须是有效 Bearer 凭据，不能含空白或控制字符。")
     if (
         not isinstance(config.model, str)
         or not config.model.strip()
@@ -3185,6 +3201,45 @@ def _build_decision_config(raw: object) -> DecisionConfig:
     jev = JevDecisionConfig(**{**jev_raw, "context_limits": context_limits})
     validate_jev_decision_config(jev)
     return DecisionConfig(providers=DecisionProvidersConfig(jev=jev))
+
+
+def update_decision_config(current: DecisionConfig, update: object) -> DecisionConfig:
+    """Apply a strict partial Jev update, preserving omitted/blank secrets.
+
+    Clear is explicit. Changing the destination requires a fresh token to avoid
+    forwarding a previously saved or environment credential to another service.
+    No credential is resolved and no network probe happens here.
+    """
+    if not isinstance(update, dict) or set(update) - {"providers"}:
+        raise ConfigError("decision 仅支持 providers 配置。")
+    providers = update.get("providers", {})
+    if not isinstance(providers, dict) or set(providers) - {"jev"}:
+        raise ConfigError("decision.providers 仅支持 jev。")
+    values = providers.get("jev", {})
+    if not isinstance(values, dict):
+        raise ConfigError("decision.providers.jev 必须是对象。")
+    values = dict(values)
+    clear = values.pop("clear_api_key", False)
+    if type(clear) is not bool:
+        raise ConfigError("clear_api_key 必须是布尔值。")
+    token = values.get("api_key", "")
+    if not isinstance(token, str) or "****" in token:
+        raise ConfigError("请填写有效 Token，不接受掩码或非文本值。")
+    if clear and token:
+        raise ConfigError("不能同时替换和清除 Jev Token。")
+    if (
+        values.get("endpoint_url", current.providers.jev.endpoint_url)
+        != current.providers.jev.endpoint_url
+        and not token
+    ):
+        raise ConfigError("修改 Jev URL 时请重新填写 Token，避免误发旧凭据。")
+    merged = asdict(current.providers.jev)
+    if not token:
+        values.pop("api_key", None)
+    merged.update(values)
+    if clear:
+        merged["api_key"] = ""
+    return _build_decision_config({"providers": {"jev": merged}})
 
 
 def _strict_route_table(raw: object, cls: type[Any], section: str) -> dict[str, Any]:
@@ -6127,6 +6182,9 @@ def save_config(
     )
     if config.llm.instance_routing and path.exists():
         _create_llm_migration_backup(path)
+    if config.decision.providers.jev.api_key:
+        path.touch(mode=0o600, exist_ok=True)
+        path.chmod(0o600)
     path.write_text(rendered, encoding="utf-8")
     return path
 
@@ -6218,6 +6276,12 @@ def _render_config_toml(
         f"enabled = {_toml_bool(jev.enabled)}",
         f"model = {_toml_string(jev.model)}",
         f"api_key_env = {_toml_string(jev.api_key_env)}",
+        *([f"api_key = {_toml_string(jev.api_key)}"] if jev.api_key else []),
+        *(
+            [f"endpoint_url = {_toml_string(jev.endpoint_url)}"]
+            if jev.endpoint_url != "https://api.typesafe.ai/v1/systemone"
+            else []
+        ),
         f"timeout_seconds = {jev.timeout_seconds}",
         f"max_attempts = {jev.max_attempts}",
         "",

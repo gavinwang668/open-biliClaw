@@ -10626,11 +10626,11 @@ ${cardFeedbackBarHtml()}`;
       const discovery = config.discovery || {};
       setSelect("evalScorer", discovery.eval_scorer || "llm");
       const jevProvider = discovery.jev_provider || {};
-      const jevOption = $("#evalScorer")?.querySelector('option[value="jev"]');
-      if (jevOption) jevOption.disabled = jevProvider.ready !== true;
+      window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer"))
+        .load(jevProvider, discovery.jev_evaluation || {});
       const jevStatus = $("#jevEvaluatorStatus");
       if (jevStatus) {
-        jevStatus.textContent = `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "需在 TOML 启用 provider 并设置后端环境变量。"} 环境变量名：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}（只在后端设置，不在页面填写 Key）。`;
+        jevStatus.textContent = `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "请在下方配置连接。"} 后端凭据变量：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}。`;
       }
       setSelect("keywordGenerationMode", discovery.keyword_generation_mode || "hybrid");
       const multimodalEvaluation = $("#multimodalEvaluationEnabled");
@@ -12014,6 +12014,7 @@ ${cardFeedbackBarHtml()}`;
     });
 
     function buildConfigUpdate() {
+      const jevUpdate = window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer")).collect();
       const logPath = splitLogPath(getInput("logPath"), state.config?.logging);
       const embeddingFallbackProvider = getInput("embeddingFallbackProvider");
       const embedding = {
@@ -12283,6 +12284,7 @@ ${cardFeedbackBarHtml()}`;
         },
         discovery: {
           ...(state.config?.discovery || {}),
+          jev_evaluation: {...(state.config?.discovery?.jev_evaluation || {}), ...(jevUpdate.discovery?.jev_evaluation || {})},
           eval_scorer: $("#evalScorer")?.value || "llm",
           keyword_generation_mode: $("#keywordGenerationMode").value,
           candidate_eval_concurrency: getIntInput("candidateEvalConcurrency", 3),
@@ -12300,6 +12302,7 @@ ${cardFeedbackBarHtml()}`;
           danmaku_max_chars: getIntInput("danmakuMaxChars", 500)
         },
         saved_sync: { auto_sync_enabled: Boolean($("#savedAutoSync")?.checked) },
+        ...(jevUpdate.decision ? {decision: jevUpdate.decision} : {}),
         tailnet: {
           enabled: Boolean($("#tailnetEnabled")?.checked),
           hostname: getInput("tailnetHostname"),

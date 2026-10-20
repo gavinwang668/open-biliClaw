@@ -10,8 +10,22 @@ provider 提供；单条 / 批量 / 旧池恢复均使用它，聊天、搜索�
 
 `discovery.jev_provider.context_limits` / `context_budget` 分别只读暴露容量登记表与当前精确模型的
 生效 token 限制、字节护栏、来源与策略指纹；未知容量使 readiness=false，并拒绝启用 Jev
-完整评估。容量表仍通过 TOML 配置，API 不提供模型自动切换。评估两个旧字节字段默认
+完整评估。容量表支持下述 API 或 TOML 配置，不提供模型自动切换。评估两个旧字节字段默认
 改为 0（自动），非零只可收紧，不可绕开所选模型限制；错误保存不得持久化。
+
+`PUT /api/config` 新增严格部分更新 `decision.providers.jev`：`enabled`、`endpoint_url`
+（完整 Jev 原生接口，不是 Chat Completions）、`api_key`、`api_key_env`、固定 `model`、
+`timeout_seconds`、`max_attempts`、`context_limits`。可与 `discovery.eval_scorer="jev"`
+原子保存；无效更新不写配置。`api_key` 省略/空串保留，`clear_api_key=true` 明确清除，
+不能同时替换和清除。URL 变化必须重新填写 Token；外部仅 HTTPS，回环测试可 HTTP，
+禁止 URL 账号密码/query/fragment 及重定向。容量表是完整替换，`{}` 恢复自动。
+共享表单提交其它模型条目的副本，避免编辑一个模型丢掉别的登记。
+
+只读 `discovery.jev_provider` 新增 `endpoint_url`、`api_key_configured`、
+`credential_source=config|environment|missing`、超时和重试次数。任何响应（包括旧
+`reveal_keys=true`）、校验失败和 CLI 都不回显 Token。保存值优先于环境变量；仅本机
+TOML 持久化，POSIX 权限 0600，非加密密钥库。后台按既有 apply revision 热重建，
+202 只表示已保存/排队；readiness 表示本机配置校验，不是模型联网或质量验证。
 
 ## 概述
 
