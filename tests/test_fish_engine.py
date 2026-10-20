@@ -1152,3 +1152,44 @@ async def test_today_report_is_exposed_on_the_status_endpoint(tmp_path) -> None:
 
     assert "大肥鱼日报" in status["today_report"]
     assert "一条测试视频" in status["today_report"]
+
+
+async def test_a_dm_only_notice_does_not_use_up_the_video_slot(tmp_path) -> None:
+    engine, client, _llm, store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, notify_channel="dm"),
+    )
+    store.append(
+        {
+            "ts": NOW.isoformat(),
+            "day": "2026-10-19",
+            "bvid": "BV1xx411c7mD",
+            "status": "notified",
+            "mode": "notify",
+            "delivery": "dm",
+        }
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "published"
+    assert len(client.posts) == 1
+
+
+async def test_a_comment_notice_does_use_up_the_video_slot(tmp_path) -> None:
+    engine, client, _llm, store = _build(tmp_path, config=FishConfig(enabled=True, dry_run=False))
+    store.append(
+        {
+            "ts": NOW.isoformat(),
+            "day": "2026-10-19",
+            "bvid": "BV1xx411c7mD",
+            "status": "notified",
+            "mode": "notify",
+            "delivery": "comment",
+        }
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "nothing_to_say"
+    assert client.posts == []
