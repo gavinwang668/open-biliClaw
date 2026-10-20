@@ -52,6 +52,7 @@ docker buildx build --platform linux/amd64,linux/arm64 -t openbiliclaw-backend:v
 
 Instagram 分支的共享封面传输依赖 `httpx[socks]>=0.28` 与显式 `httpcore>=1.0,<2`，随正常 Python/镜像构建安装，不需要新守护进程。海外图片选择代理时，容器须能通过该代理访问 TLS 校验的 `https://1.1.1.1/dns-query`；仅查询公开 CDN 域名，再将公网目的 IP 固定到隧道。direct/国内 CDN 仍使用本机 DNS；DoH 故障应排查代理，不关闭证书或内网地址防护。Instagram 内容任务本身由宿主机浏览器联网，和容器封面链路分开。此说明不代表未发布分支已进入公共镜像。
 
+- **TikTok / Instagram 插件权限**：扩展默认声明两者的站点访问权限，浏览器在安装/更新时处理；保存来源设置不再单独授权。来源仍需显式启用，浏览器被手动或策略禁止站点访问时需恢复。容器部署不改变浏览器的实际授权状态。
 - **Instagram（默认关闭）**：公开 topic/creator 可选登录，个人 liked/saved/following 初始化需在装扩展的同一浏览器登录。后端只收到布尔心跳与规范化条目，不收到 Cookie；首版 init-only，不周期回拉账号。自动采集授权由部署者确认，详见[验收边界](platform-source-acceptance.instagram.md)。
 
 OpenBiliClaw 不代替用户登录——需要账号态的来源复用**你**当前浏览器的登录会话来读取你能看到的内容。Docker 部署后，这些来源仍需在装了扩展的同一个浏览器里登录；公开匿名来源会在各自条目中明确说明：

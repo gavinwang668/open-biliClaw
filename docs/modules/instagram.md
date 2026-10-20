@@ -1,6 +1,6 @@
 # Instagram 来源
 
-交付状态：已随 v0.3.227 发布，仍为实验性、默认关闭。个人信号导入需要在同一浏览器授予站点访问并登录，当前只承诺有界只读快照；推荐卡收藏仅保存在 OpenBiliClaw 本地。完整 Likes 历史、双账号、Firefox 登录态和手机真机尚未完成验收，最新证据见 [验收台账](../platform-source-acceptance.instagram.md)。
+交付状态：已随 v0.3.227 发布，仍为实验性、默认关闭。插件默认声明 Instagram 站点访问权限，个人信号导入需要在同一浏览器登录，当前只承诺有界只读快照；推荐卡收藏仅保存在 OpenBiliClaw 本地。完整 Likes 历史、双账号、Firefox 登录态和手机真机尚未完成验收，最新证据见 [验收台账](../platform-source-acceptance.instagram.md)。
 
 2026-10-03 增量：普通“换一批”已接入 Instagram producer、显式小批评估与推荐文案，不必为恢复 discovery 重做画像；网络/限流/离线等失败给出安全提示。封面共享代理新增逐 hop 公网 IP 检查与地址固定。真实验证结果及仍需账号/许可的门禁以[最新台账](../platform-source-acceptance.instagram.md)为准，不以代码通过替代 full 验收。
 
@@ -137,11 +137,11 @@ Likes tap 只接受当前 Likes 任务页上 `liked_media_screen / liked_refresh
 
 来源默认关闭。配置以实现中的 `SourcesConfig.instagram` 为准，至少包含 enabled、discover modes、分支日预算、每任务 item/page cap 与 producer cadence。候选 pool share 只在来源启用时参与有效份额。关闭状态会阻止后台 discover 生产和领取已有 discover backlog，但用户显式执行 `fetch-instagram` 或 guided init 后已经准入的 `bootstrap_events` 仍可由扩展领取，避免显式任务永久占用全局 bootstrap admission。
 
-桌面 Web 的「设置 → 平台源」提供 Instagram 来源卡，与扩展设置使用同一份既有配置：启用开关、topic / creator 分支与日预算、请求间隔、调度间隔、初始化每类上限和候选池占比均可保存、热应用并回读；账号状态复用共享 capability 投影，不新增 Cookie 输入框。桌面保存配置不能代替浏览器授予扩展站点权限：首次使用仍需在扩展设置中启用并保存 Instagram、允许 `instagram.com`，导入个人事件还需在同一浏览器登录。creator 种子来自 topic 的作者，后端会为 creator 同时启用 topic。
+桌面 Web 的「设置 → 平台源」提供 Instagram 来源卡，与扩展设置使用同一份既有配置：启用开关、topic / creator 分支与日预算、请求间隔、调度间隔、初始化每类上限和候选池占比均可保存、热应用并回读；账号状态复用共享 capability 投影，不新增 Cookie 输入框。插件默认声明 `https://*.instagram.com/*` 站点访问权限；启用或关闭来源时只保存后端配置，不再单独请求或撤销该权限。首次使用在桌面或扩展设置中启用并保存 Instagram 即可，导入个人事件还需在装有扩展的同一浏览器登录。若浏览器被用户或管理员设为禁止该站点访问，需在浏览器扩展详情中恢复。creator 种子来自 topic 的作者，后端会为 creator 同时启用 topic。
 
 两类日预算均以最终保留的候选条数为单位，配置加载时的低预算警告不应解释成任务次数。`min_interval_minutes` 使用持久尝试时间控制跨进程冷却；正常 `throttled` 跳过不会推进该时间或消耗候选预算。初始化后的个人事件刷新仍是 `init-only`，通用增量调度不会自动为 Instagram 入队。
 
-扩展保存时立即显示「等待浏览器授权…」，30 秒未完成则显示明确的未保存提示、恢复按钮并保留脏字段；迟到的权限确认不会自动保存已放弃的表单。用户处理原生提示后可重试。该超时不代替授权，也不自动授予或撤销浏览器权限。
+浏览器会在安装或更新扩展时处理默认站点权限；设置保存流程不再等待 Instagram 授权弹窗。来源仍为实验性、默认关闭，权限声明不代表自动启用 discovery 或个人初始化。
 
 `discover --source instagram` 的 CLI 失败现在返回 exit 1，不再把 `response_envelope_unobserved`、HTML、登录、验证或限流等失败以 exit 0 交给自动化。成功、明确空结果与节流/池满/预算等正常跳过仍返回 0；无新增不等于失败，也不等于供给成功，需结合计数判断。回归从真实 CLI 经 producer 和持久队列注入脱敏浏览器终态，覆盖失败与明确空结果，不替代真站验收。
 

@@ -33,7 +33,6 @@ import {
   platformDisplayName,
   probeMessageKey,
   reconcileRecommendationReplacement,
-  requestPermissionWithTimeout,
   resolveInitBangumiUsername,
   resolveInitGitHubUsername,
   shouldDisplayProbeFromWebSocket,
@@ -12387,29 +12386,6 @@ function bindSettings() {
     saveBtn.textContent = "保存中...";
     toast.hidden = true;
     try {
-      const instagramEnabled = checked("cfgInstagramEnabled");
-      const instagramOrigin = "https://*.instagram.com/*";
-      if (instagramEnabled) {
-        saveBtn.textContent = "等待浏览器授权…";
-        showToast("请在浏览器的权限提示中确认 Instagram 站点访问；当前尚未保存。", "warning");
-        const permission = await requestPermissionWithTimeout(
-          chrome.permissions?.request
-            ? () => chrome.permissions.request({ origins: [instagramOrigin] })
-            : null,
-        );
-        if (permission === "timeout") {
-          showToast("等待 Instagram 授权超时，本次未保存。请先处理浏览器权限弹窗，再点击保存重试。", "warning");
-          return;
-        }
-        if (permission !== "granted") {
-          showToast("启用 Instagram 需要授予 instagram.com 的站点访问权限。", "error");
-          return;
-        }
-        saveBtn.textContent = "保存中...";
-        toast.hidden = true;
-      } else if (!instagramEnabled && chrome.permissions?.remove) {
-        await chrome.permissions.remove({ origins: [instagramOrigin] }).catch(() => false);
-      }
       // Backend endpoint lives in chrome.storage, not the backend's
       // config.toml — persist it locally first so the subsequent
       // updateConfig() PUT targets the new origin.

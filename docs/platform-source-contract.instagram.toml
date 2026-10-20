@@ -83,6 +83,8 @@ incremental = false
 refresh_mode = "init-only"
 
 [extension]
+# Site access is declared in required host_permissions in all three manifests;
+# source enablement and browser-level access restrictions remain independent.
 task = "browser-task"
 hosts = ["instagram.com"]
 task_marker = true

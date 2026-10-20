@@ -87,6 +87,8 @@ incremental = true
 refresh_mode = "incremental"
 
 [extension]
+# Site access is declared in required host_permissions in all three manifests;
+# source enablement and browser-level access restrictions remain independent.
 task = "browser-task"
 hosts = ["tiktok.com"]
 task_marker = true

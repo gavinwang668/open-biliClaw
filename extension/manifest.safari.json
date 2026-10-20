@@ -13,6 +13,8 @@
         "*://*.bilibili.com/*",
         "*://*.xiaohongshu.com/*",
         "*://*.douyin.com/*",
+        "*://*.tiktok.com/*",
+        "https://*.instagram.com/*",
         "*://*.youtube.com/*",
         "*://*.zhihu.com/*",
         "*://*.reddit.com/*",

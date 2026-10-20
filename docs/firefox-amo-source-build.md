@@ -55,7 +55,9 @@ exists and sends a boolean plus the public rendered username; it never accesses,
 sends the cookie value. The build contains no V2EX write client and does not forward page HTML,
 headers, CSRF/once values, private messages, or browser history.
 
-`*://*.instagram.com/*` is required only for the experimental, disabled-by-default Instagram
+`*://*.tiktok.com/*` and `https://*.instagram.com/*` are declared as required host permissions, handled by the browser during installation or update. Saving Instagram source settings does not request or remove site access. Source enablement and account login remain separate; browser-level restrictions are still respected.
+
+`https://*.instagram.com/*` is used only for the experimental, disabled-by-default Instagram
 source. The extension creates isolated, marked task tabs for bounded public topic/creator reads
 or an explicitly selected initialization import of liked/saved/following rows. The latter first
 requires a same-origin current-account response with a numeric id. Firefox is asked only whether

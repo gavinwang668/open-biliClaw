@@ -23,6 +23,7 @@ Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheap
 
 | 子模块 | 状态 | 说明 |
 |------|------|------|
+| TikTok / Instagram 默认站点权限 | ✅ | Chrome、Firefox、Safari 清单默认声明 `*://*.tiktok.com/*` 与 `https://*.instagram.com/*`；保存 Instagram 设置不再请求/撤销站点权限。来源启用与账号登录仍独立控制；此项不提升各浏览器的来源功能验收结论。 |
 | Instagram 有界采集与竞争恢复 | ✅ | 非空 Likes 连续 3 次无新增返回 `progress_stalled` partial；限速等待后才启动 20 秒请求超时，bootstrap idle 根据间隔有界调整为 90–185 秒，12 分钟绝对期限不变。跨源锁竞争另建 30 秒 durable alarm，领取前仍须持锁与站点权限。 |
 | 聊一聊会话隔离与流结束校验 | ✅ | popup / 移动 Web 仅在 `done` 后确认流完成；迟到历史与消息按会话隔离，恢复沿用原 turn 的角色；popup 网络断连保持 agent 轮询，仅明确 503 降级旧聊天 |
 | 审批拒绝输入保留 | ✅ | popup / 移动 Web / 桌面共用审批草稿保留助手，周期刷新和流式重绘保留已展开拒绝表单、原因与焦点，终态更新立即移除操作；原因只读取对应 input，避免同名说明元素遮蔽 |
@@ -774,7 +775,7 @@ npm run build
 - Chrome / Edge / Brave 打包脚本会先删除同名旧 zip，再重新压缩 `manifest.json`、`dist/`、`icons/`、`popup/`，避免重复打包带入残留文件
 - `extension-v*` GitHub Actions release workflow 会同时运行 Chrome / Firefox / Safari 打包脚本；仅当 `FIREFOX_SIGNING_ENABLED` 未关闭且 `AMO_JWT_ISSUER` / `AMO_JWT_SECRET` 可用时，才执行 `npm run sign:firefox:only` 生成 signed XPI。发布尾部调用 `.github/scripts/sync-aggregate-release.sh`，把实际存在的插件 zip / xpi / Safari dmg 同步到当前 `openbiliclaw-v*` 聚合 Latest Release，并把该聚合页重新标记为 GitHub Latest。Firefox 140+ 也可本地构建 / 临时加载：`npm run build:firefox` 生成 `dist-firefox/`，`npm run package:firefox` 生成未签名 `openbiliclaw-extension-vX.Y.Z-firefox.zip`；配置 AMO 凭据后，`npm run sign:firefox:only` 会把当前 `dist-firefox/` 提交 AMO unlisted 签名并输出可直接安装的 `openbiliclaw-extension-vX.Y.Z-firefox.xpi`。Safari CI 在 Apple 凭据齐全时自动走 `npm run package:safari -- --notarize`，否则自动回退 `npm run package:safari` 产 ad-hoc DMG；本地同样可用 `npm run package:safari` 打包；完整流程见 [safari-extension-build.md](../safari-extension-build.md)
 - AMO 公开商店使用独立的手动 workflow `.github/workflows/publish-firefox-amo.yml`，不复用 `extension-v*` 的 unlisted 签名步骤。它从当前 commit 构建 Firefox 包，用 `git archive` 附带 `extension/`、共享 Web 模块、lockfile、构建说明和隐私政策，再执行 `web-ext sign --channel=listed --amo-metadata=... --upload-source-code=...`；提交后查询 authenticated versions API，只有目标版本真实显示为 `listed` 才成功。AMO 的 `eula_policy` API 对当前 developer JWT 实测返回无正文 HTTP 406，因此该字段改为提审后 best-effort 同步并发出显式 warning，不会阻断已经具备 manifest 数据类别、reviewer notes、listing 描述和随包 `docs/privacy.md` 的提审；若 Developer Hub 暴露该字段，维护者需手动回填。首次与后续公开提审都必须先准备未被任一 AMO channel 使用的新扩展版本。
-- v0.3.62 起，Chrome / Firefox 发布包移除默认授予的 `http://*/*` 宽泛主机权限；当前固定权限覆盖 B站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / Linux.do 和 `127.0.0.1` / `localhost` 本机后端。`https://linux.do/*` 只用于同源只读任务、普通页行为 adapter 与 `_t` 布尔存在性判断，不上传 Cookie 值。局域网或远程后端通过 `optional_host_permissions` 在用户显式保存地址时请求对应 `scheme://host/*`，实际请求仍固定到配置端口。
+- v0.3.62 起，Chrome / Firefox 发布包移除默认授予的 `http://*/*` 宽泛主机权限；当前固定权限覆盖 B站 / 小红书 / 抖音 / TikTok / YouTube / X / 知乎 / Reddit / Linux.do / V2EX / 微博 / Bangumi / Instagram 和 `127.0.0.1` / `localhost` 本机后端。`https://linux.do/*` 只用于同源只读任务、普通页行为 adapter 与 `_t` 布尔存在性判断，不上传 Cookie 值。局域网或远程后端通过 `optional_host_permissions` 在用户显式保存地址时请求对应 `scheme://host/*`，实际请求仍固定到配置端口。
 - v0.3.64 起，Chrome / Firefox 发布包不再声明 `tabs` permission；后台任务仍可使用 `chrome.tabs.create/update/remove/onUpdated/sendMessage` 打开、导航和清理受支持平台任务页，发布包仅保留实际需要的最小 permission 集合。
 - 插件更新不走后端自动更新 API：商店安装版本由 Chrome / Edge / Firefox 原生更新；GitHub Release 下载的 Chrome zip / Firefox signed XPI / Firefox 临时 zip / Safari dmg、开发者模式加载和临时加载用户按 release 页面下载新版并重新加载。
 

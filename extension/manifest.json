@@ -17,6 +17,7 @@
         "*://*.xiaohongshu.com/*",
         "*://*.douyin.com/*",
         "*://*.tiktok.com/*",
+        "https://*.instagram.com/*",
         "*://*.youtube.com/*",
         "*://*.zhihu.com/*",
         "*://*.reddit.com/*",
@@ -33,7 +34,6 @@
         "http://localhost/*"
     ],
     "optional_host_permissions": [
-        "https://*.instagram.com/*",
         "http://*/*",
         "https://*/*"
     ],

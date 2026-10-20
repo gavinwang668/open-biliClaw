@@ -5,25 +5,6 @@ const DEFAULT_PORTRAIT = "画像还在慢慢攒，先多看一阵。";
 const DEFAULT_DELIGHT_TITLE = "这条惊喜推荐还没起好标题";
 const DEFAULT_DELIGHT_REASON = "这条可能会给你一点意外之喜。";
 
-/** Request within the click gesture, but never let an unanswered prompt pin the form. */
-export async function requestPermissionWithTimeout(request, { timeoutMs = 30_000 } = {}) {
-  if (typeof request !== "function") return "unavailable";
-  let timer;
-  const timeout = new Promise((resolve) => {
-    timer = setTimeout(() => resolve("timeout"), Math.max(1, timeoutMs));
-  });
-  try {
-    // Invoke synchronously before the first await: permissions.request needs
-    // the original user gesture. A late resolution has no save side effects.
-    return await Promise.race([
-      Promise.resolve(request()).then((granted) => granted === true ? "granted" : "denied"),
-      timeout,
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
