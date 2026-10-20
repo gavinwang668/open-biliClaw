@@ -283,9 +283,7 @@ class TestOutputLanguagePolicy:
         assert "Traditional Chinese characters exclusively" in directive
         assert "never output" in directive
         # The rule is script-specific: English prompts must not carry it.
-        assert "Traditional Chinese characters exclusively" not in output_language_directive(
-            "en"
-        )
+        assert "Traditional Chinese characters exclusively" not in output_language_directive("en")
 
     def test_append_keeps_user_text_first(self) -> None:
         prompt = append_output_language("hello", "en")

@@ -2930,6 +2930,17 @@ def create_app(
             or path == "/api/sources/status"
             or (path.startswith("/api/sources/") and path.endswith("/verify"))
             or path == "/api/embedding/repair"
+            # Blue Fish Lab config/account/ledger are LLM-independent (the lab
+            # has its own JSON config and its own cookie), so they stay
+            # repairable while the registry is down. /api/fish/run is
+            # deliberately absent: a pass needs a working model.
+            or path
+            in {
+                "/api/fish/config",
+                "/api/fish/status",
+                "/api/fish/account",
+                "/api/fish/ledger",
+            }
             or path.startswith("/api/auth")
             # Keep every browser recovery shell loadable. Their static assets
             # do not depend on the LLM registry, and the desktop/setup forms
@@ -8602,6 +8613,232 @@ def create_app(
         cfg = _pin_active_runtime_config(load_config())
         AuthManager(cfg.data_path).clear_cookie()
         return {"ok": True}
+
+    # ── Blue Fish Lab ────────────────────────────────────────────────────
+    # 实验室功能：一只独立的小号去评论区回复并 @ 人。所有写操作都走 B 站
+    # 凭据门禁 —— 一次 run 就是拿用户的号在公网说话，不能只靠本机信任。
+
+    def _fish_data_dir() -> Any:
+        from openbiliclaw.config import load_config
+
+        return _pin_active_runtime_config(load_config()).data_path
+
+    async def _fish_main_account() -> tuple[int, str, str]:
+        """Return (main mid, main cookie, main nickname) with a short cache.
+
+        ``mid`` proves the fish is not the owner's own account; ``cookie`` is
+        compared with the fish's; ``uname`` is the exact text the owner
+        notification has to mention (B站 resolves ``@昵称`` from the comment
+        text, so a stale nickname would silently drop the mention). A stale
+        answer is harmless, and a 10-minute cache keeps the status endpoint
+        from doing a nav call on every poll.
+        """
+        import time as _time
+
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.bilibili.auth import resolve_runtime_cookie
+        from openbiliclaw.config import load_config
+
+        cached = getattr(app.state, "fish_main_account_cache", None)
+        now = _time.monotonic()
+        if isinstance(cached, tuple) and now - float(cached[0]) < 600:
+            return int(cached[1]), str(cached[2]), str(cached[3])
+        cfg = _pin_active_runtime_config(load_config())
+        cookie = resolve_runtime_cookie(
+            data_dir=cfg.data_path,
+            configured_cookie=str(getattr(cfg.bilibili, "cookie", "") or ""),
+        )
+        mid = 0
+        uname = ""
+        if cookie:
+            client = BilibiliAPIClient(
+                cookie=cookie,
+                proxy=(getattr(cfg.bilibili, "proxy", None) or None),
+            )
+            try:
+                nav = await client.get_nav_info()
+                if nav.is_login:
+                    mid = int(nav.mid)
+                    uname = str(nav.uname or "")
+            except Exception:  # noqa: BLE001 - isolation check degrades to cookie compare
+                mid = 0
+                uname = ""
+            finally:
+                await client.close()
+        app.state.fish_main_account_cache = (now, mid, cookie, uname)
+        return mid, cookie, uname
+
+    def _fish_engine_for(data_dir: Any) -> Any:
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.fish.account import FishAccount
+        from openbiliclaw.fish.engine import BlueFishEngine
+        from openbiliclaw.fish.plan import FishPlanStore
+        from openbiliclaw.fish.seeds import recommendation_pool_seeds
+        from openbiliclaw.fish.store import FishStore
+
+        llm = getattr(ctx, "llm_service", None)
+        signature = (str(data_dir), id(llm))
+        cached = getattr(app.state, "fish_engine_cache", None)
+        if isinstance(cached, tuple) and cached[0] == signature:
+            return cached[1]
+
+        async def _candidates(limit: int) -> list[Any]:
+            try:
+                # Reuse the existing ranked pool verbatim: the main pipeline
+                # already decided what is worth visiting. ``exclude_processed``
+                # drops rows the owner already liked / disliked / dismissed /
+                # commented on, so the fish does not walk into places the owner
+                # has already reacted to. The fish's *own* history never touches
+                # these rows — it lives in ``fish/ledger.jsonl``.
+                return recommendation_pool_seeds(ctx.database, limit)
+            except Exception:  # noqa: BLE001 - empty pool is a normal state
+                return []
+
+        engine = BlueFishEngine(
+            data_dir=data_dir,
+            account=FishAccount(data_dir),
+            store=FishStore(data_dir),
+            llm=llm,
+            candidate_provider=_candidates,
+            client_factory=lambda cookie: BilibiliAPIClient(
+                cookie=cookie,
+                proxy=_fish_bilibili_proxy(),
+            ),
+            main_account_provider=_fish_main_account,
+            # Plans are written by the comment-thread discovery route into the
+            # same ``fish/`` directory; consuming one here skips a second
+            # comment fetch and acts in the same round that discovered it.
+            plan_store=FishPlanStore(data_dir),
+        )
+        app.state.fish_engine_cache = (signature, engine)
+        return engine
+
+    def _fish_bilibili_proxy() -> Any:
+        """Explicit B站 proxy from the main config (empty means direct)."""
+        from openbiliclaw.config import load_config
+
+        cfg = _pin_active_runtime_config(load_config())
+        return getattr(cfg.bilibili, "proxy", None) or None
+
+    def _fish_account_payload(status: Any) -> dict[str, Any]:
+        return {
+            "has_cookie": bool(status.has_cookie),
+            "authenticated": bool(status.authenticated),
+            "mid": int(status.mid),
+            "uname": str(status.uname),
+            "message": str(status.message),
+            "isolated": bool(status.isolated),
+        }
+
+    @app.get("/api/fish/status", response_model=None)
+    async def fish_status() -> dict[str, Any]:
+        """Lab status: switch, account, level, today's count, recent ledger."""
+        engine = _fish_engine_for(_fish_data_dir())
+        return dict(await engine.status())
+
+    @app.get("/api/fish/config", response_model=None)
+    def fish_get_config() -> dict[str, Any]:
+        from openbiliclaw.fish.config import load_fish_config
+
+        config = load_fish_config(_fish_data_dir())
+        return {"ok": True, "config": config.to_public_dict()}
+
+    @app.put("/api/fish/config", response_model=None)
+    async def fish_put_config(
+        request: Request, payload: Annotated[dict[str, Any], Body()]
+    ) -> dict[str, Any] | JSONResponse:
+        """Patch the lab config. Values are clamped, never rejected outright."""
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.fish.config import (
+            FishConfig,
+            load_fish_config,
+            save_fish_config,
+        )
+
+        data_dir = _fish_data_dir()
+        current = load_fish_config(data_dir).to_public_dict()
+        if isinstance(payload.get("config"), dict):
+            payload = cast("dict[str, Any]", payload["config"])
+        current.update({k: v for k, v in payload.items() if k in current})
+        normalized = save_fish_config(data_dir, FishConfig(**cast("Any", current)))
+        return {"ok": True, "config": normalized.to_public_dict()}
+
+    @app.post("/api/fish/account", response_model=None)
+    async def fish_set_account(
+        request: Request, payload: Annotated[dict[str, Any], Body()]
+    ) -> dict[str, Any] | JSONResponse:
+        """Validate and store the fish's own cookie."""
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.fish.account import FishAccount
+
+        cookie = str(payload.get("cookie") or "").strip()
+        if not cookie:
+            return JSONResponse(
+                status_code=400,
+                content={"ok": False, "message": "Cookie 不能为空"},
+            )
+        account = FishAccount(_fish_data_dir())
+        try:
+            account.save_cookie(cookie)
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"ok": False, "message": str(exc)})
+        main_mid, main_cookie, _main_uname = await _fish_main_account()
+        status = await account.status(main_mid=main_mid, main_cookie=main_cookie)
+        if not status.authenticated or not status.isolated:
+            account.clear_cookie()
+            return {
+                "ok": False,
+                "message": status.message,
+                "account": _fish_account_payload(status),
+            }
+        return {"ok": True, "message": "大肥鱼登录成功。", "account": _fish_account_payload(status)}
+
+    @app.delete("/api/fish/account", response_model=None)
+    async def fish_clear_account(request: Request) -> dict[str, Any] | JSONResponse:
+        """Forget the fish cookie."""
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.fish.account import FishAccount
+
+        FishAccount(_fish_data_dir()).clear_cookie()
+        return {"ok": True}
+
+    @app.post("/api/fish/run", response_model=None)
+    async def fish_run(
+        request: Request, payload: Annotated[dict[str, Any], Body()]
+    ) -> dict[str, Any] | JSONResponse:
+        """Run one pass now (dry-run by default unless the config says otherwise)."""
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
+        dry_run = payload.get("dry_run")
+        engine = _fish_engine_for(_fish_data_dir())
+        result = await engine.run_once(
+            trigger=str(payload.get("trigger") or "manual"),
+            dry_run=bool(dry_run) if isinstance(dry_run, bool) else None,
+        )
+        return {
+            "ok": result.ok,
+            "status": result.status,
+            "message": result.message,
+            "bvid": result.bvid,
+            "target_rpid": result.target_rpid,
+            "reply": result.reply,
+            "reply_rpid": result.reply_rpid,
+            "record": result.record,
+        }
+
+    @app.get("/api/fish/ledger", response_model=None)
+    def fish_ledger(limit: int = 50) -> dict[str, Any]:
+        from openbiliclaw.fish.store import FishStore
+
+        bounded = max(1, min(int(limit), 200))
+        return {"ok": True, "items": FishStore(_fish_data_dir()).recent(limit=bounded)}
 
     @app.post("/api/sources/dy/cookie", response_model=DouyinCookieResponse, deprecated=True)
     async def sync_douyin_cookie(payload: DouyinCookieIn) -> DouyinCookieResponse:
@@ -15283,7 +15520,7 @@ def create_app(
             format_event_context,
         )
 
-        rec_title = str(recommendation.get("title", ""))
+        rec_title = str(recommendation.get("title") or "")
         source_platform = (
             str(recommendation.get("source_platform") or SOURCE_BILIBILI).strip().lower()
             or SOURCE_BILIBILI
@@ -15302,7 +15539,7 @@ def create_app(
             context=feedback_context,
             metadata={
                 "recommendation_id": resolved_recommendation_id,
-                "bvid": recommendation.get("bvid", ""),
+                "bvid": recommendation.get("bvid") or "",
                 "feedback_type": feedback_type,
                 "feedback_note": note,
                 "event_namespace": "recommendation",
@@ -15369,7 +15606,7 @@ def create_app(
             with suppress(Exception):
                 record_immediate_feedback_cognition(
                     feedback_type=feedback_type,
-                    title=str(recommendation.get("title", "")),
+                    title=str(recommendation.get("title") or ""),
                     note=note,
                 )
         return FeedbackResponse(
@@ -24802,5 +25039,44 @@ def create_app(
     _setup_dir = _Path(__file__).resolve().parent.parent / "web" / "setup"
     if _setup_dir.is_dir():
         app.mount("/setup", _StaticFiles(directory=_setup_dir, html=True), name="setup-wizard")
+
+    # ── Blue Fish Lab background loop ─────────────────────────────
+    # A lab feature: the loop wakes every 5 minutes, but the engine only
+    # acts when the lab is enabled and dry-run is off. Every failure is
+    # caught inside the loop so it can never take the daemon down.
+    if os.environ.get("OPENBILICLAW_FISH_LOOP_DISABLED", "").strip() != "1":
+
+        @app.on_event("startup")
+        async def startup_blue_fish_loop() -> None:
+            try:
+                from openbiliclaw.fish.engine import run_fish_loop
+
+                data_dir = _fish_data_dir()
+
+                async def _fish_discovery_tick() -> None:
+                    # One route through the standard discovery pipeline: the
+                    # comment-thread strategy returns BV ids for the batch
+                    # evaluator and leaves a reply plan for the action pass
+                    # right after it. It is inert unless the lab is enabled.
+                    await ctx.run_discovery_route(strategies=["comment_thread"], limit=5)
+
+                app.state.fish_task = asyncio.create_task(
+                    run_fish_loop(
+                        _fish_engine_for(data_dir),
+                        data_dir=data_dir,
+                        discovery_tick=_fish_discovery_tick,
+                    ),
+                    name="blue_fish_loop",
+                )
+            except Exception:  # noqa: BLE001 - never block startup for a lab loop
+                logger.warning("Blue Fish loop failed to start", exc_info=True)
+
+        @app.on_event("shutdown")
+        async def shutdown_blue_fish_loop() -> None:
+            task = getattr(app.state, "fish_task", None)
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
 
     return app
