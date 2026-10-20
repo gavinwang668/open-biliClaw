@@ -613,7 +613,10 @@ class BlueFishEngine:
         want_dm = channel in {"dm", "both"}
         if want_dm and owner_mid <= 0:
             if not want_comment:
-                logger.info("Blue Fish owner notice skipped: the DM channel needs the owner mid")
+                logger.warning(
+                    "Blue Fish owner notice skipped: notify_channel=dm needs the owner mid "
+                    "(log in the main account first)"
+                )
                 return None
             want_dm = False
         public_text = _owner_notice_text(name, candidate)
