@@ -8636,6 +8636,10 @@ def create_app(
         text, so a stale nickname would silently drop the mention). A stale
         answer is harmless, and a 10-minute cache keeps the status endpoint
         from doing a nav call on every poll.
+
+        When the owner's cookie is dead, the lab config's ``owner_mid`` is the
+        fallback reference: it keeps the isolation check and DM targeting
+        working, and the public profile endpoint supplies the nickname.
         """
         import time as _time
 
@@ -8669,8 +8673,29 @@ def create_app(
                 uname = ""
             finally:
                 await client.close()
+        if mid <= 0:
+            from openbiliclaw.fish.config import load_fish_config
+
+            lab = load_fish_config(cfg.data_path)
+            if int(lab.owner_mid) > 0:
+                mid = int(lab.owner_mid)
+                uname = await _owner_name_for_mid(mid) or uname
         app.state.fish_main_account_cache = (now, mid, cookie, uname)
         return mid, cookie, uname
+
+    async def _owner_name_for_mid(mid: int) -> str:
+        """Public nickname lookup used when the owner's cookie cannot answer."""
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+
+        client = BilibiliAPIClient(cookie="", proxy=_fish_bilibili_proxy())
+        try:
+            data = await client.get_space_profile(mid)
+            return str(data.get("name") or "")
+        except Exception:  # noqa: BLE001 - a missing nickname just disables the @
+            logger.debug("owner nickname lookup failed for mid %s", mid, exc_info=True)
+            return ""
+        finally:
+            await client.close()
 
     def _fish_engine_for(data_dir: Any) -> Any:
         from openbiliclaw.bilibili.api import BilibiliAPIClient

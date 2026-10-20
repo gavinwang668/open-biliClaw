@@ -171,3 +171,12 @@ def test_parse_active_hours_returns_minutes() -> None:
     assert parse_active_hours("09:30-23:05") == (570, 1385)
     assert parse_active_hours("24:00-25:00") is None
     assert parse_active_hours("") is None
+
+
+def test_owner_mid_clamps_and_round_trips() -> None:
+    parsed, _ = parse_fish_config({"owner_mid": 222156})
+    negative, warnings = parse_fish_config({"owner_mid": -5})
+
+    assert parsed.owner_mid == 222156
+    assert negative.owner_mid == 0
+    assert any("owner_mid" in warning for warning in warnings)

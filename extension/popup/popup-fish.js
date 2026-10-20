@@ -41,6 +41,7 @@ const el = {
   allowTopLevel: $("fishAllowTopLevel"),
   notifyOwner: $("fishNotifyOwner"),
   ownerName: $("fishOwnerName"),
+  ownerMid: $("fishOwnerMid"),
   notifyDailyLimit: $("fishNotifyDailyLimit"),
   notifyChannel: $("fishNotifyChannel"),
   saveConfig: $("fishSaveConfigBtn"),
@@ -97,6 +98,7 @@ if (el.enabled && el.saveConfig) {
       allow_top_level: Boolean(el.allowTopLevel.checked),
       notify_owner: Boolean(el.notifyOwner?.checked),
       owner_name: String(el.ownerName?.value || "").trim(),
+      owner_mid: numberValue(el.ownerMid, 0),
       notify_daily_limit: numberValue(el.notifyDailyLimit, 1),
       notify_channel: String(el.notifyChannel?.value || "comment"),
     };
@@ -138,6 +140,9 @@ if (el.enabled && el.saveConfig) {
     }
     if (el.ownerName) {
       el.ownerName.value = config.owner_name || "";
+    }
+    if (el.ownerMid) {
+      el.ownerMid.value = String(config.owner_mid ?? 0);
     }
     if (el.notifyDailyLimit) {
       el.notifyDailyLimit.value = String(config.notify_daily_limit ?? 1);

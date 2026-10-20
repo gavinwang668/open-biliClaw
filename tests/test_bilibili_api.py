@@ -1457,3 +1457,33 @@ async def test_send_private_message_requires_a_logged_in_cookie() -> None:
 
     with pytest.raises(BilibiliAuthExpiredError):
         await client.send_private_message(123, "hi")
+
+
+async def test_get_space_profile_signs_the_wbi_request() -> None:
+    client = BilibiliAPIClient(cookie="")
+    fake = RouteAsyncClient(
+        {
+            "/x/web-interface/nav": [
+                {
+                    "code": 0,
+                    "data": {
+                        "wbi_img": {
+                            "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+                            "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+                        }
+                    },
+                }
+            ],
+            "/x/space/wbi/acc/info": [{"code": 0, "data": {"mid": 222156, "name": "littlewish"}}],
+        }
+    )
+    client._client = fake
+
+    data = await client.get_space_profile(222156)
+
+    assert data["name"] == "littlewish"
+    url, params, _headers = fake.calls[-1]
+    assert url.endswith("/x/space/wbi/acc/info")
+    assert params["mid"] == "222156"
+    assert params["w_rid"]
+    assert params["wts"]

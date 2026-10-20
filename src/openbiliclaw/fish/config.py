@@ -55,6 +55,7 @@ _MAX_TRIGGER_CHARS = 300
 _MAX_OWNER_CHARS = 30
 _NOTIFY_LIMIT_BOUNDS = (0, 3)
 _MIN_VIEW_COUNT_BOUNDS = (0, 10_000_000)
+_OWNER_MID_BOUNDS = (0, 10_000_000_000_000)
 _MIN_PUBLISH_AGE_BOUNDS = (0, 365)
 NOTIFY_CHANNELS = ("comment", "dm", "both")
 _MAX_NAME_CHARS = 20
@@ -101,6 +102,9 @@ class FishConfig:
     # B站 resolves ``@昵称`` from the comment text, so the nickname must match
     # the owner's profile exactly. Empty = read it from the main account's nav.
     owner_name: str = ""
+    # Owner mid, used when the main account's cookie is dead: it is both the
+    # DM receiver and the isolation reference (the fish must differ from it).
+    owner_mid: int = 0
     notify_daily_limit: int = 1
     # How the owner gets told: a public comment @-mention, a private message,
     # or both. "both" mirrors the subagent-style flow — the public comment is
@@ -131,6 +135,7 @@ class FishConfig:
             "allow_top_level": self.allow_top_level,
             "notify_owner": self.notify_owner,
             "owner_name": self.owner_name,
+            "owner_mid": self.owner_mid,
             "notify_daily_limit": self.notify_daily_limit,
             "notify_channel": self.notify_channel,
         }
@@ -406,6 +411,13 @@ def parse_fish_config(raw: object) -> tuple[FishConfig, list[str]]:
             default=defaults.owner_name,
             max_chars=_MAX_OWNER_CHARS,
             field_name="owner_name",
+            warnings=warnings,
+        ),
+        owner_mid=_clamp_int(
+            raw.get("owner_mid"),
+            default=defaults.owner_mid,
+            bounds=_OWNER_MID_BOUNDS,
+            field_name="owner_mid",
             warnings=warnings,
         ),
         notify_daily_limit=_clamp_int(

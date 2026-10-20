@@ -1550,6 +1550,7 @@
             <div class="settings-advanced-fields">
               <label class="settings-advanced-toggle"><input id="fishNotifyOwner" type="checkbox"><span>每天在评论区 @ 我一次</span></label>
               <label class="settings-field"><span>我的 B 站昵称（留空自动读取）</span><input id="fishOwnerName" type="text" maxlength="30" autocomplete="off" placeholder="留空则用主账号昵称"></label>
+              <label class="settings-field"><span>我的 mid（可选，主号登录失效时用）</span><input id="fishOwnerMid" type="number" min="0" max="10000000000000" step="1" inputmode="numeric" placeholder="0"></label>
               <label class="settings-field"><span>每天最多通知几次</span><input id="fishNotifyDailyLimit" type="number" min="0" max="3" step="1" inputmode="numeric" placeholder="1"></label>
               <label class="settings-field"><span>通知方式</span><select id="fishNotifyChannel">
                 <option value="comment">评论区 @ 你（公开）</option>
