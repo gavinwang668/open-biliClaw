@@ -25,7 +25,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, tzinfo
 from typing import TYPE_CHECKING, Any, Protocol
 
 from openbiliclaw.llm.json_utils import extract_llm_json_object
@@ -67,6 +67,8 @@ class _SupportsComments(Protocol):
         root: int | None = None,
         parent: int | None = None,
     ) -> dict[str, Any]: ...
+
+    async def send_private_message(self, uid: int, text: str) -> dict[str, Any]: ...
 
     async def close(self) -> None: ...
 
@@ -126,6 +128,7 @@ class BlueFishEngine:
         clock: Callable[[], datetime] | None = None,
         main_account_provider: Callable[[], Awaitable[tuple[int, str, str]]] | None = None,
         plan_store: FishPlanStore | None = None,
+        local_tz: tzinfo | None = None,
     ) -> None:
         self._data_dir = data_dir
         self._account = account
@@ -140,6 +143,9 @@ class BlueFishEngine:
         # (pick straight from the ranked pool), which is what tests and any
         # composition without the route get.
         self._plan_store = plan_store
+        # Hour windows are wall-clock, so they need a local timezone even
+        # though every stored timestamp stays UTC.
+        self._local_tz: tzinfo = local_tz or datetime.now().astimezone().tzinfo or UTC
         self._lock = asyncio.Lock()
 
     # ── read-only surface ────────────────────────────────────────────────
@@ -172,7 +178,7 @@ class BlueFishEngine:
         """Return everything the settings panel needs in one call."""
         config = load_fish_config(self._data_dir)
         stats = self._store.view(self._today()).stats
-        account, _owner_name = await self._account_status()
+        account, _owner_name, _owner_mid = await self._account_status()
         return {
             "ok": True,
             "config": config.to_public_dict(),
@@ -217,7 +223,7 @@ class BlueFishEngine:
             now = self._clock()
             today = self._today(now)
 
-            account, owner_name = await self._account_status()
+            account, owner_name, owner_mid = await self._account_status()
             view = self._store.view(today)
             gate = check_can_run(
                 config,
@@ -230,6 +236,7 @@ class BlueFishEngine:
                 manual=effective_manual,
                 failure_streak=view.stats.failure_streak,
                 last_failure_at=view.stats.last_failure_at,
+                local_now=now.astimezone(self._local_tz),
             )
             if not gate.ok:
                 return FishRunResult(False, gate.code, gate.message)
@@ -257,6 +264,7 @@ class BlueFishEngine:
                         config=config,
                         dry_run=effective_dry_run,
                         owner_name=owner_name,
+                        owner_mid=owner_mid,
                     )
                     # A failed notice must not block the reply path: the
                     # comment section may simply be closed, and retrying it
@@ -386,6 +394,7 @@ class BlueFishEngine:
             persona_prompt=config.persona_prompt,
             reply_rules=config.reply_rules,
             audience=config.audience_prompt,
+            trigger=config.trigger_prompt,
             video={
                 "bvid": candidate.bvid,
                 "title": candidate.title,
@@ -563,7 +572,7 @@ class BlueFishEngine:
 
     # ── helpers ─────────────────────────────────────────────────────────
 
-    async def _account_status(self) -> tuple[FishAccountStatus, str]:
+    async def _account_status(self) -> tuple[FishAccountStatus, str, int]:
         main_mid = 0
         main_cookie = ""
         owner_name = ""
@@ -573,7 +582,7 @@ class BlueFishEngine:
             except Exception:  # noqa: BLE001 - isolation degrades to "unknown"
                 main_mid, main_cookie, owner_name = 0, "", ""
         status = await self._account.status(main_mid=main_mid, main_cookie=main_cookie)
-        return status, owner_name
+        return status, owner_name, main_mid
 
     async def _notify_owner(
         self,
@@ -583,20 +592,34 @@ class BlueFishEngine:
         config: FishConfig,
         dry_run: bool,
         owner_name: str,
+        owner_mid: int,
     ) -> FishRunResult | None:
-        """Post one public comment that mentions the owner under a video.
+        """Tell the owner about one video: comment @, private message, or both.
 
-        Returns ``None`` when there is nothing to notify about (no nickname),
-        letting the pass fall through to the reply flow. The text is built
-        deterministically — no extra model call — and B站 resolves the leading
-        ``@昵称`` into a mention, which is what reaches the owner's message box.
+        Returns ``None`` when there is nothing to send (no nickname, or a
+        DM-only channel with no owner mid), letting the pass fall through to
+        the reply flow. Both texts are deterministic — no extra model call.
+
+        ``both`` mirrors the subagent-style flow: the public comment is the
+        primary act, so a failed comment never falls through to a DM.
         """
 
         name = str(config.owner_name or owner_name or "").strip()
         if not name:
             logger.info("Blue Fish owner notice skipped: no owner nickname")
             return None
-        text = _owner_notice_text(name, candidate)
+        channel = str(config.notify_channel or "comment")
+        want_comment = channel in {"comment", "both"}
+        want_dm = channel in {"dm", "both"}
+        if want_dm and owner_mid <= 0:
+            if not want_comment:
+                logger.info("Blue Fish owner notice skipped: the DM channel needs the owner mid")
+                return None
+            want_dm = False
+        public_text = _owner_notice_text(name, candidate)
+        dm_text = _owner_dm_text(candidate)
+        shown_text = public_text if want_comment else dm_text
+
         if dry_run:
             record = self._record(
                 candidate,
@@ -605,44 +628,82 @@ class BlueFishEngine:
                 target_rpid=0,
                 target_uname=name,
                 target_text="",
-                reply=text,
+                reply=shown_text,
                 reason="",
                 error="",
                 mode="notify",
+                delivery=_delivery_label(comment=want_comment, dm=want_dm),
             )
             return FishRunResult(
                 True,
                 "preview",
                 "预览完成（通知没有发出去）。",
                 bvid=candidate.bvid,
-                reply=text,
+                reply=shown_text,
                 record=record,
             )
-        try:
-            posted = await client.post_comment(candidate.bvid, message=text)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Blue Fish owner notice failed for %s: %s", candidate.bvid, exc)
-            record = self._record(
-                candidate,
-                status="failed",
-                dry_run=False,
-                target_rpid=0,
-                target_uname=name,
-                target_text="",
-                reply=text,
-                reason="",
-                error=f"通知没发出去：{exc}",
-                mode="notify",
-            )
-            return FishRunResult(
-                False,
-                "notify_failed",
-                f"通知没发出去：{exc}",
-                bvid=candidate.bvid,
-                reply=text,
-                record=record,
-            )
-        reply_rpid = _posted_rpid(posted)
+
+        delivered: list[str] = []
+        errors: list[str] = []
+        reply_rpid = 0
+        if want_comment:
+            try:
+                posted = await client.post_comment(candidate.bvid, message=public_text)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Blue Fish owner comment failed for %s: %s", candidate.bvid, exc)
+                record = self._record(
+                    candidate,
+                    status="failed",
+                    dry_run=False,
+                    target_rpid=0,
+                    target_uname=name,
+                    target_text="",
+                    reply=public_text,
+                    reason="",
+                    error=f"通知评论没发出去：{exc}",
+                    mode="notify",
+                )
+                return FishRunResult(
+                    False,
+                    "notify_failed",
+                    f"通知没发出去：{exc}",
+                    bvid=candidate.bvid,
+                    reply=public_text,
+                    record=record,
+                )
+            delivered.append("comment")
+            reply_rpid = _posted_rpid(posted)
+
+        if want_dm:
+            try:
+                await client.send_private_message(owner_mid, dm_text)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Blue Fish owner DM failed for %s: %s", owner_mid, exc)
+                errors.append(f"私信没发出去：{exc}")
+                if not delivered:
+                    record = self._record(
+                        candidate,
+                        status="failed",
+                        dry_run=False,
+                        target_rpid=0,
+                        target_uname=name,
+                        target_text="",
+                        reply=dm_text,
+                        reason="",
+                        error=errors[-1],
+                        mode="notify",
+                    )
+                    return FishRunResult(
+                        False,
+                        "notify_failed",
+                        errors[-1],
+                        bvid=candidate.bvid,
+                        reply=dm_text,
+                        record=record,
+                    )
+            else:
+                delivered.append("dm")
+
         record = self._record(
             candidate,
             status="notified",
@@ -650,18 +711,19 @@ class BlueFishEngine:
             target_rpid=0,
             target_uname=name,
             target_text="",
-            reply=text,
+            reply=shown_text,
             reason="",
-            error="",
+            error="; ".join(errors),
             mode="notify",
             reply_rpid=reply_rpid,
+            delivery=_delivery_label(comment="comment" in delivered, dm="dm" in delivered),
         )
         return FishRunResult(
             True,
             "notified",
-            f"已经通知你了：{text}",
+            "已经通知你了" + ("（部分失败）" if errors else "") + "。",
             bvid=candidate.bvid,
-            reply=text,
+            reply=shown_text,
             reply_rpid=reply_rpid,
             record=record,
         )
@@ -704,6 +766,7 @@ class BlueFishEngine:
         error: str,
         mode: str = "reply",
         reply_rpid: int = 0,
+        delivery: str = "",
     ) -> dict[str, Any]:
         now = self._clock()
         record: dict[str, Any] = {
@@ -724,7 +787,10 @@ class BlueFishEngine:
             "dry_run": bool(dry_run),
             "error": error,
         }
+        if delivery:
+            record["delivery"] = delivery
         self._store.append(record)
+        self._store.append_report(record, when=now)
         return record
 
     def _today(self, now: datetime | None = None) -> date:
@@ -763,6 +829,23 @@ def _parse_decision(payload: dict[str, Any], *, max_chars: int) -> tuple[str, in
         # let the length gate record it rather than silently trimming.
         logger.warning("Blue Fish reply is far over budget (%d chars)", len(reply))
     return action, target_rpid, reply, reason
+
+
+def _delivery_label(*, comment: bool, dm: bool) -> str:
+    """Stable label for the ledger: ``comment`` / ``dm`` / ``comment+dm``."""
+
+    return "+".join(name for name, wanted in (("comment", comment), ("dm", dm)) if wanted)
+
+
+def _owner_dm_text(candidate: FishCandidate) -> str:
+    """Private-message body: no @ prefix, and the link is clickable here."""
+
+    title = " ".join(str(candidate.title or "").split())[:60] or "这条视频"
+    lines = [f"推荐你看看这条：《{title}》。"]
+    bvid = str(candidate.bvid or "").strip()
+    if bvid:
+        lines.append(f"https://www.bilibili.com/video/{bvid}")
+    return "\n".join(lines)
 
 
 def _owner_notice_due(config: FishConfig, *, view: FishLedgerView) -> bool:

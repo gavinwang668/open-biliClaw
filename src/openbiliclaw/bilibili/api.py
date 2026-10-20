@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import time
@@ -246,6 +247,8 @@ class BilibiliAPIClient:
     """
 
     _BASE_URL = "https://api.bilibili.com"
+    # Private messages live on a different host (same cookie / csrf).
+    _VC_BASE_URL = "https://api.vc.bilibili.com"
     DEFAULT_USER_AGENT: ClassVar[str] = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -1897,6 +1900,86 @@ class BilibiliAPIClient:
         if not isinstance(items, list):
             return []
         return [item for item in items if isinstance(item, dict)][: max(0, int(limit))]
+
+    async def send_private_message(self, uid: int, text: str) -> dict[str, Any]:
+        """Send one text private message from this account to ``uid``.
+
+        The chat endpoint lives on ``api.vc.bilibili.com`` (not the main API
+        host) and uses the same session cookie + csrf token as the comment
+        API. Used by the Blue Fish Lab's "private message the owner" delivery
+        channel.
+
+        Args:
+            uid: Receiver mid.
+            text: Plain-text body (B站 caps a message at 1000 characters).
+
+        Returns:
+            The decoded ``data`` object.
+
+        Raises:
+            BilibiliAPIError: upstream rejected the message (rate limit, risk
+                control, receiver restrictions, …).
+            BilibiliAuthExpiredError: the cookie is no longer logged in.
+        """
+
+        target = int(uid)
+        if target <= 0:
+            raise ValueError("私信接收者 mid 不合法")
+        body = str(text).strip()
+        if not body:
+            raise ValueError("私信内容不能为空")
+        if len(body) > 1000:
+            raise BilibiliAPIError("私信内容过长（最多 1000 字）")
+        sender = _cookie_value(self._cookie, "DedeUserID")
+        if not sender:
+            raise BilibiliAuthExpiredError(
+                "发送私信需要登录 Cookie（缺少 DedeUserID）",
+                code=-101,
+            )
+        csrf = self._csrf_token()
+        await self._respect_rate_limit()
+        try:
+            resp = await self._client.post(
+                f"{self._VC_BASE_URL}/web_im/v1/web_im/send_msg",
+                data={
+                    "msg[sender_uid]": sender,
+                    "msg[receiver_id]": str(target),
+                    "msg[receiver_type]": "1",
+                    "msg[msg_type]": "1",
+                    "msg[msg_status]": "0",
+                    "msg[content]": json.dumps({"content": body}, ensure_ascii=False),
+                    "msg[timestamp]": str(int(time.time())),
+                    "csrf": csrf,
+                    "csrf_token": csrf,
+                },
+                headers={"referer": "https://www.bilibili.com"},
+            )
+            resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise self._sanitized_http_error("POST", "web_im/send_msg", exc) from exc
+
+        try:
+            payload = resp.json()
+        except ValueError as exc:
+            raise BilibiliAPIError("Bilibili API returned invalid JSON on web_im/send_msg") from exc
+        if not isinstance(payload, dict):
+            raise BilibiliAPIError("Bilibili API returned invalid data on web_im/send_msg")
+        try:
+            code = int(payload.get("code", 0))
+        except (TypeError, ValueError) as exc:
+            raise BilibiliAPIError("Bilibili API returned invalid code on web_im/send_msg") from exc
+        if code == -101:
+            raise BilibiliAuthExpiredError("Bilibili login required to send a message", code=code)
+        if code != 0:
+            raise BilibiliAPIError(
+                str(payload.get("message") or "send private message failed"), code=code
+            )
+        data = payload.get("data")
+        if data is None:
+            return {}
+        if not isinstance(data, dict):
+            raise BilibiliAPIError("Bilibili API returned invalid data on web_im/send_msg")
+        return cast("dict[str, Any]", data)
 
     async def delete_comment(self, bvid: str, rpid: int) -> None:
         """Delete one of the current user's comments (``/x/v2/reply/del``)."""

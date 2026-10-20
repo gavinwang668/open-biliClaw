@@ -26,8 +26,10 @@ const el = {
   personaPrompt: $("fishPersonaPrompt"),
   replyRules: $("fishReplyRules"),
   audience: $("fishAudiencePrompt"),
+  trigger: $("fishTriggerPrompt"),
   dailyLimit: $("fishDailyLimit"),
   minInterval: $("fishMinInterval"),
+  activeHours: $("fishActiveHours"),
   perVideoLimit: $("fishPerVideoLimit"),
   maxChars: $("fishMaxChars"),
   maxCandidates: $("fishMaxCandidates"),
@@ -38,6 +40,7 @@ const el = {
   notifyOwner: $("fishNotifyOwner"),
   ownerName: $("fishOwnerName"),
   notifyDailyLimit: $("fishNotifyDailyLimit"),
+  notifyChannel: $("fishNotifyChannel"),
   saveConfig: $("fishSaveConfigBtn"),
   preview: $("fishPreviewBtn"),
   run: $("fishRunBtn"),
@@ -73,8 +76,10 @@ if (el.enabled && el.saveConfig) {
       persona_prompt: String(el.personaPrompt.value || ""),
       reply_rules: String(el.replyRules.value || ""),
       audience_prompt: String(el.audience?.value || ""),
+      trigger_prompt: String(el.trigger?.value || ""),
       daily_limit: numberValue(el.dailyLimit, 3),
       min_interval_minutes: numberValue(el.minInterval, 30),
+      active_hours: String(el.activeHours?.value || "").trim(),
       per_video_limit: numberValue(el.perVideoLimit, 1),
       max_chars: numberValue(el.maxChars, 80),
       max_candidates: numberValue(el.maxCandidates, 5),
@@ -88,6 +93,7 @@ if (el.enabled && el.saveConfig) {
       notify_owner: Boolean(el.notifyOwner?.checked),
       owner_name: String(el.ownerName?.value || "").trim(),
       notify_daily_limit: numberValue(el.notifyDailyLimit, 1),
+      notify_channel: String(el.notifyChannel?.value || "comment"),
     };
   }
 
@@ -101,8 +107,14 @@ if (el.enabled && el.saveConfig) {
     if (el.audience) {
       el.audience.value = config.audience_prompt || "";
     }
+    if (el.trigger) {
+      el.trigger.value = config.trigger_prompt || "";
+    }
     el.dailyLimit.value = String(config.daily_limit ?? 3);
     el.minInterval.value = String(config.min_interval_minutes ?? 30);
+    if (el.activeHours) {
+      el.activeHours.value = config.active_hours || "";
+    }
     el.perVideoLimit.value = String(config.per_video_limit ?? 1);
     el.maxChars.value = String(config.max_chars ?? 80);
     el.maxCandidates.value = String(config.max_candidates ?? 5);
@@ -118,6 +130,9 @@ if (el.enabled && el.saveConfig) {
     }
     if (el.notifyDailyLimit) {
       el.notifyDailyLimit.value = String(config.notify_daily_limit ?? 1);
+    }
+    if (el.notifyChannel) {
+      el.notifyChannel.value = String(config.notify_channel || "comment");
     }
   }
 

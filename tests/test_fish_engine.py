@@ -37,6 +37,12 @@ class _FakeNavClient:
     async def get_nav_info(self) -> NavInfo:
         return NavInfo(is_login=True, uname=self._uname, mid=self._mid)
 
+    async def send_private_message(self, uid: int, text: str) -> dict[str, Any]:
+        if self.message_error is not None:
+            raise self.message_error
+        self.messages.append({"uid": uid, "text": text})
+        return {"msg_key": 1}
+
     async def close(self) -> None:
         return None
 
@@ -48,8 +54,10 @@ class _FakeClient:
         self.comments = comments
         self.fetch_error = fetch_error
         self.posts: list[dict[str, Any]] = []
+        self.messages: list[dict[str, Any]] = []
         self.cookies: list[str] = []
         self.fetch_calls: list[str] = []
+        self.message_error: Exception | None = None
 
     async def get_video_comments(self, bvid: str, limit: int = 20) -> list[CommentInfo]:
         self.fetch_calls.append(bvid)
@@ -67,6 +75,12 @@ class _FakeClient:
     ) -> dict[str, Any]:
         self.posts.append({"bvid": bvid, "message": message, "root": root, "parent": parent})
         return {"rpid": 900_000 + len(self.posts)}
+
+    async def send_private_message(self, uid: int, text: str) -> dict[str, Any]:
+        if self.message_error is not None:
+            raise self.message_error
+        self.messages.append({"uid": uid, "text": text})
+        return {"msg_key": 1}
 
     async def close(self) -> None:
         return None
@@ -128,6 +142,7 @@ def _build(
     candidates: list[FishCandidate] | None = None,
     fetch_error: Exception | None = None,
     plan_store: FishPlanStore | None = None,
+    local_tz: Any = None,
 ) -> tuple[BlueFishEngine, _FakeClient, _FakeLLM, FishStore]:
     effective = config or FishConfig(enabled=True, dry_run=True)
     save_fish_config(tmp_path, effective)
@@ -157,6 +172,7 @@ def _build(
         clock=lambda: NOW,
         main_account_provider=_main_account,
         plan_store=plan_store,
+        local_tz=local_tz,
     )
     return engine, client, llm, store
 
@@ -839,3 +855,219 @@ def _main_account_for(mid: int, cookie: str, uname: str) -> Any:
         return mid, cookie, uname
 
     return _provider
+
+
+# ── delivery channel: comment / DM / both ──────────────────────────────
+
+
+async def test_owner_notice_can_be_a_private_message(tmp_path) -> None:
+    engine, client, _llm, store = _build(
+        tmp_path,
+        config=FishConfig(
+            enabled=True,
+            dry_run=False,
+            notify_owner=True,
+            notify_channel="dm",
+        ),
+    )
+
+    result = await engine.run_once(trigger="schedule", manual=False)
+
+    assert result.status == "notified"
+    assert client.posts == []
+    assert len(client.messages) == 1
+    assert client.messages[0]["uid"] == 111
+    assert "一条测试视频" in client.messages[0]["text"]
+    assert "https://www.bilibili.com/video/BV1xx411c7mD" in client.messages[0]["text"]
+    row = store.read()[-1]
+    assert row["status"] == "notified"
+    assert row["delivery"] == "dm"
+
+
+async def test_owner_notice_can_do_both(tmp_path) -> None:
+    engine, client, _llm, store = _build(
+        tmp_path,
+        config=FishConfig(
+            enabled=True,
+            dry_run=False,
+            notify_owner=True,
+            notify_channel="both",
+        ),
+    )
+
+    result = await engine.run_once(trigger="schedule", manual=False)
+
+    assert result.status == "notified"
+    assert len(client.posts) == 1
+    assert len(client.messages) == 1
+    assert store.read()[-1]["delivery"] == "comment+dm"
+
+
+async def test_a_failed_dm_after_the_comment_is_still_a_notification(tmp_path) -> None:
+    save_fish_config(
+        tmp_path,
+        FishConfig(enabled=True, dry_run=False, notify_owner=True, notify_channel="both"),
+    )
+    account = FishAccount(tmp_path, client_factory=lambda _cookie: _FakeNavClient(mid=222))
+    account.save_cookie(FISH_COOKIE)
+    client = _FakeClient(list(COMMENTS))
+    client.message_error = RuntimeError("对方设置了不接收陌生人私信")
+    engine = BlueFishEngine(
+        data_dir=tmp_path,
+        account=account,
+        store=FishStore(tmp_path),
+        llm=_FakeLLM(_decision()),
+        candidate_provider=_candidates_for([_candidate()]),
+        client_factory=lambda _cookie: client,
+        clock=lambda: NOW,
+        main_account_provider=_main_account_for(111, "SESSION=owner", "主人"),
+        plan_store=None,
+    )
+
+    result = await engine.run_once(trigger="schedule", manual=False)
+
+    assert result.status == "notified"
+    row = FishStore(tmp_path).read()[-1]
+    assert row["delivery"] == "comment"
+    assert "私信没发出去" in row["error"]
+
+
+async def test_a_dm_only_notice_without_the_owner_mid_falls_back_to_reply(tmp_path) -> None:
+    engine, client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(
+            enabled=True,
+            dry_run=False,
+            notify_owner=True,
+            notify_channel="dm",
+        ),
+        main_mid=0,
+        main_cookie="",
+    )
+
+    result = await engine.run_once(trigger="schedule", manual=False)
+
+    assert result.status == "published"
+    assert client.messages == []
+
+
+async def test_a_dm_only_failure_is_recorded_then_the_pass_continues(tmp_path) -> None:
+    save_fish_config(
+        tmp_path,
+        FishConfig(enabled=True, dry_run=False, notify_owner=True, notify_channel="dm"),
+    )
+    account = FishAccount(tmp_path, client_factory=lambda _cookie: _FakeNavClient(mid=222))
+    account.save_cookie(FISH_COOKIE)
+    client = _FakeClient(list(COMMENTS))
+    client.message_error = RuntimeError("风控拦截")
+    engine = BlueFishEngine(
+        data_dir=tmp_path,
+        account=account,
+        store=FishStore(tmp_path),
+        llm=_FakeLLM(_decision()),
+        candidate_provider=_candidates_for([_candidate()]),
+        client_factory=lambda _cookie: client,
+        clock=lambda: NOW,
+        main_account_provider=_main_account_for(111, "SESSION=owner", "主人"),
+        plan_store=None,
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    # The failure is recorded with its cause, and the ordinary reply path is
+    # not starved by a broken delivery channel.
+    rows = FishStore(tmp_path).read()
+    assert rows[0]["status"] == "failed"
+    assert "风控拦截" in rows[0]["error"]
+    assert client.messages == []
+    assert result.status == "published"
+
+
+async def test_trigger_prompt_reaches_the_user_message(tmp_path) -> None:
+    engine, _client, llm, _store = _build(
+        tmp_path,
+        config=FishConfig(
+            enabled=True,
+            dry_run=False,
+            trigger_prompt="只在评论区认真讨论技术时插话",
+        ),
+    )
+
+    await engine.run_once(trigger="manual")
+
+    user_prompt = llm.calls[-1]["user_input"]
+    assert "<trigger>" in user_prompt
+    assert "只在评论区认真讨论技术时插话" in user_prompt
+
+
+async def test_empty_trigger_means_no_extra_condition(tmp_path) -> None:
+    engine, _client, llm, _store = _build(tmp_path, config=FishConfig(enabled=True, dry_run=False))
+
+    await engine.run_once(trigger="manual")
+
+    user_prompt = llm.calls[-1]["user_input"]
+    assert "<trigger>" in user_prompt
+    assert "没有额外条件" in user_prompt
+
+
+async def test_active_hours_are_evaluated_in_the_local_timezone(tmp_path) -> None:
+    from zoneinfo import ZoneInfo
+
+    shanghai = ZoneInfo("Asia/Shanghai")
+    # NOW is 12:00 UTC = 20:00 in Shanghai.
+    blocked, blocked_client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, active_hours="23:00-09:00"),
+        local_tz=shanghai,
+    )
+    blocked_result = await blocked.run_once(trigger="schedule", manual=False)
+
+    assert blocked_result.status == "outside_active_hours"
+    assert blocked_client.posts == []
+
+    import shutil
+
+    allowed_dir = tmp_path / "allowed"
+    shutil.copytree(tmp_path, allowed_dir, ignore=shutil.ignore_patterns("allowed"))
+    allowed, allowed_client, _llm2, _store2 = _build(
+        allowed_dir,
+        config=FishConfig(enabled=True, dry_run=False, active_hours="18:00-23:00"),
+        local_tz=shanghai,
+    )
+    allowed_result = await allowed.run_once(trigger="schedule", manual=False)
+
+    assert allowed_result.status == "published"
+    assert len(allowed_client.posts) == 1
+
+
+# ── daily report ───────────────────────────────────────────────────────
+
+
+async def test_each_act_is_also_written_to_a_daily_report(tmp_path) -> None:
+    engine, _client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False),
+    )
+
+    await engine.run_once(trigger="manual")
+
+    report = tmp_path / "fish" / "out" / f"{NOW.date().isoformat()}.md"
+    text = report.read_text(encoding="utf-8")
+    assert text.startswith(f"# 大肥鱼日报 {NOW.date().isoformat()}")
+    assert "[published]" in text
+    assert "一条测试视频" in text
+    assert "https://www.bilibili.com/video/BV1xx411c7mD" in text
+
+
+async def test_the_report_appends_one_bullet_per_attempt(tmp_path) -> None:
+    engine, _client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=True),
+    )
+
+    await engine.run_once(trigger="manual")
+    await engine.run_once(trigger="manual")
+
+    text = (tmp_path / "fish" / "out" / f"{NOW.date().isoformat()}.md").read_text(encoding="utf-8")
+    assert text.count("- ") == 2
+    assert text.count("# 大肥鱼日报") == 1

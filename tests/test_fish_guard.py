@@ -151,3 +151,44 @@ def test_dry_run_bypasses_the_failure_breaker() -> None:
     )
 
     assert result.ok is True
+
+
+# ── active hours ───────────────────────────────────────────────────────
+
+
+def test_active_hours_blocks_outside_the_window() -> None:
+    config = FishConfig(enabled=True, active_hours="18:00-23:00")
+    local_now = NOW.replace(hour=12, minute=0)
+
+    result = _run(config, local_now=local_now)
+
+    assert result.code == "outside_active_hours"
+
+
+def test_active_hours_allows_inside_the_window() -> None:
+    config = FishConfig(enabled=True, active_hours="18:00-23:00")
+    local_now = NOW.replace(hour=20, minute=30)
+
+    assert _run(config, local_now=local_now).ok is True
+
+
+def test_overnight_window_wraps_midnight() -> None:
+    config = FishConfig(enabled=True, active_hours="18:00-09:00")
+
+    assert _run(config, local_now=NOW.replace(hour=23, minute=0)).ok is True
+    assert _run(config, local_now=NOW.replace(hour=3, minute=0)).ok is True
+    assert _run(config, local_now=NOW.replace(hour=12, minute=0)).code == "outside_active_hours"
+
+
+def test_manual_run_ignores_active_hours() -> None:
+    config = FishConfig(enabled=True, active_hours="18:00-23:00")
+
+    result = _run(config, local_now=NOW.replace(hour=12), manual=True)
+
+    assert result.ok is True
+
+
+def test_empty_active_hours_means_all_day() -> None:
+    config = FishConfig(enabled=True, active_hours="")
+
+    assert _run(config, local_now=NOW.replace(hour=4)).ok is True

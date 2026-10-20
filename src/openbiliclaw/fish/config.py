@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -50,8 +51,10 @@ _MIN_COMMENT_LIKES_BOUNDS = (0, 10_000)
 
 _MAX_PERSONA_CHARS = 4_000
 _MAX_AUDIENCE_CHARS = 300
+_MAX_TRIGGER_CHARS = 300
 _MAX_OWNER_CHARS = 30
 _NOTIFY_LIMIT_BOUNDS = (0, 3)
+NOTIFY_CHANNELS = ("comment", "dm", "both")
 _MAX_NAME_CHARS = 20
 _MAX_BLOCKED_WORDS = 50
 _MAX_BLOCKED_WORD_CHARS = 20
@@ -69,6 +72,12 @@ class FishConfig:
     # Optional targeting hint: "only answer people who look like X". Empty
     # means "no restriction" — the fish just picks the most natural comment.
     audience_prompt: str = ""
+    # Optional "only speak when …" policy. Goes into the <trigger> section;
+    # the model may still skip, but this is the user's own condition.
+    trigger_prompt: str = ""
+    # Optional daily window ("09:00-23:00", overnight allowed). Empty means
+    # the fish may act at any hour; scheduled runs outside it are skipped.
+    active_hours: str = ""
     max_chars: int = 80
     daily_limit: int = 3
     min_interval_minutes: int = 30
@@ -87,6 +96,10 @@ class FishConfig:
     # the owner's profile exactly. Empty = read it from the main account's nav.
     owner_name: str = ""
     notify_daily_limit: int = 1
+    # How the owner gets told: a public comment @-mention, a private message,
+    # or both. "both" mirrors the subagent-style flow — the public comment is
+    # the primary act and the DM only goes out after it succeeded.
+    notify_channel: str = "comment"
 
     def to_public_dict(self) -> dict[str, Any]:
         """Return a JSON-safe view for the settings UI."""
@@ -97,6 +110,8 @@ class FishConfig:
             "persona_prompt": self.persona_prompt,
             "reply_rules": self.reply_rules,
             "audience_prompt": self.audience_prompt,
+            "trigger_prompt": self.trigger_prompt,
+            "active_hours": self.active_hours,
             "max_chars": self.max_chars,
             "daily_limit": self.daily_limit,
             "min_interval_minutes": self.min_interval_minutes,
@@ -109,6 +124,7 @@ class FishConfig:
             "notify_owner": self.notify_owner,
             "owner_name": self.owner_name,
             "notify_daily_limit": self.notify_daily_limit,
+            "notify_channel": self.notify_channel,
         }
 
 
@@ -193,6 +209,49 @@ def _clean_text(
     return text
 
 
+_ACTIVE_HOURS_RE = re.compile(r"^(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})$")
+
+
+def parse_active_hours(value: object) -> tuple[int, int] | None:
+    """Parse ``HH:MM-HH:MM`` into (start, end) minutes, or ``None`` if invalid.
+
+    An overnight window (``18:00-09:00``) is expressed by ``start > end`` —
+    the caller wraps. Empty input means "no window".
+    """
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = _ACTIVE_HOURS_RE.match(text)
+    if match is None:
+        return None
+    start_hour, start_minute, end_hour, end_minute = (int(part) for part in match.groups())
+    if start_hour > 23 or end_hour > 23 or start_minute > 59 or end_minute > 59:
+        return None
+    return start_hour * 60 + start_minute, end_hour * 60 + end_minute
+
+
+def _clean_active_hours(value: object, *, warnings: list[str]) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if parse_active_hours(text) is None:
+        warnings.append("active_hours 需要形如 09:00-23:00，已忽略（全天可发言）")
+        return ""
+    return text
+
+
+def _clean_channel(value: object, *, default: str, warnings: list[str]) -> str:
+    """Whitelist the owner-notification delivery channel."""
+    text = str(value or "").strip().lower()
+    if not text:
+        return default
+    if text in NOTIFY_CHANNELS:
+        return text
+    warnings.append(f"notify_channel 只能是 {' / '.join(NOTIFY_CHANNELS)}，已回落 {default}")
+    return default
+
+
 def _clean_blocked_words(value: object, *, warnings: list[str]) -> list[str]:
     if not isinstance(value, list):
         if value not in (None, ""):
@@ -260,6 +319,14 @@ def parse_fish_config(raw: object) -> tuple[FishConfig, list[str]]:
             field_name="audience_prompt",
             warnings=warnings,
         ),
+        trigger_prompt=_clean_text(
+            raw.get("trigger_prompt"),
+            default=defaults.trigger_prompt,
+            max_chars=_MAX_TRIGGER_CHARS,
+            field_name="trigger_prompt",
+            warnings=warnings,
+        ),
+        active_hours=_clean_active_hours(raw.get("active_hours"), warnings=warnings),
         max_chars=_clamp_int(
             raw.get("max_chars"),
             default=defaults.max_chars,
@@ -324,6 +391,11 @@ def parse_fish_config(raw: object) -> tuple[FishConfig, list[str]]:
             default=defaults.notify_daily_limit,
             bounds=_NOTIFY_LIMIT_BOUNDS,
             field_name="notify_daily_limit",
+            warnings=warnings,
+        ),
+        notify_channel=_clean_channel(
+            raw.get("notify_channel"),
+            default=defaults.notify_channel,
             warnings=warnings,
         ),
     )

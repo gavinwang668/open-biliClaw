@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
+from .config import parse_active_hours
+
 if TYPE_CHECKING:
     from .config import FishConfig
 
@@ -76,6 +78,7 @@ def check_can_run(
     manual: bool,
     failure_streak: int = 0,
     last_failure_at: datetime | None = None,
+    local_now: datetime | None = None,
 ) -> GateResult:
     """Decide whether this run may proceed at all."""
     if not config.enabled:
@@ -109,6 +112,14 @@ def check_can_run(
             "daily_limit",
             f"今天已经发了 {today_published} 条，达到每日上限 {config.daily_limit} 条。",
         )
+    if not manual and local_now is not None:
+        window = parse_active_hours(config.active_hours)
+        if window is not None and not _within_window(window, local_now):
+            return GateResult(
+                False,
+                "outside_active_hours",
+                f"现在不在设定的发言时段（{config.active_hours}）内，先不说话。",
+            )
     if not manual and last_published_at is not None:
         gap = now - last_published_at
         if gap < timedelta(minutes=config.min_interval_minutes):
@@ -120,6 +131,20 @@ def check_can_run(
                 f"再等 {max(1, int(remaining.total_seconds() // 60))} 分钟。",
             )
     return _OK
+
+
+def _within_window(window: tuple[int, int], local_now: datetime) -> bool:
+    """Whether ``local_now`` falls inside the configured minute window."""
+
+    start, end = window
+    minutes = local_now.hour * 60 + local_now.minute
+    if start == end:
+        # A zero-length window means "all day" rather than "never".
+        return True
+    if start < end:
+        return start <= minutes < end
+    # Overnight: 18:00-09:00 wraps around midnight.
+    return minutes >= start or minutes < end
 
 
 def check_reply_text(config: FishConfig, text: str) -> GateResult:
