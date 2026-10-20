@@ -745,6 +745,22 @@ class BilibiliAPIClient:
         sanitized["w_rid"] = hashlib.md5((query + mixin_key).encode()).hexdigest()
         return sanitized
 
+    async def get_space_profile(self, mid: int) -> dict[str, Any]:
+        """Return a public user profile (``name`` / ``mid`` / ``sign``) by mid.
+
+        Uses the WBI-signed ``/x/space/wbi/acc/info`` endpoint, which answers
+        anonymously. The Blue Fish Lab needs the owner's nickname to @ them
+        when the owner's own cookie has expired; it must not require that
+        cookie just to read a public display name.
+        """
+
+        target = int(mid)
+        if target <= 0:
+            raise ValueError("mid 不合法")
+        img_key, sub_key = await self._get_wbi_keys()
+        params = self._sign_wbi_params({"mid": target}, img_key=img_key, sub_key=sub_key)
+        return await self._get_json("/x/space/wbi/acc/info", params=params)
+
     async def get_nav_info(self) -> NavInfo:
         """Get the current login state from Bilibili nav API."""
         data = await self._get_json("/x/web-interface/nav")

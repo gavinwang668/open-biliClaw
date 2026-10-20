@@ -8,6 +8,8 @@
 
 `CommentInfo` 还携带 `rpid` / `root` / `parent`（2026-10-19 起，默认 `0`）：`root` 是楼层根评论、`parent` 是被回复的那条，配合 `post_comment(root=..., parent=...)` 就能发楼中楼。蓝鱼实验室是第一个消费方；旧调用方不读这三个字段时行为逐字节不变。
 
+`get_space_profile(mid)` 用 WBI 签名的 `/x/space/wbi/acc/info` 匿名查公开资料（`name` / `mid` / `sign`），供蓝鱼在主号 Cookie 失效时解析主人昵称；该接口可能返回 `-352 风控校验失败`，调用方按「查不到」处理。
+
 `send_private_message(uid, text)` 走 `api.vc.bilibili.com/web_im/v1/web_im/send_msg`（与评论共用 Cookie + csrf，另带 `referer`）；蓝鱼实验室的「私信通知」用它，上游拒绝 / 风控返回真实错误码。
 
 `get_reply_notifications(limit=...)` 读取消息中心的 `/x/msgfeed/reply`（「回复我的 / @我」）：每条通知带 `item.at_details`（这条评论 @ 了谁）与 `item.subject_id`（视频评论为 `aid`），蓝鱼实验室的 @ 主人联调用例靠它证明提及真的到达；生产链路不依赖该接口。

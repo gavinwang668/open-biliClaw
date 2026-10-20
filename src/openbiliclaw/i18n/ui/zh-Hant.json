@@ -1,6 +1,5 @@
 {
   "locale": "zh-Hant",
-  "note": "Generated from zh-Hans with OpenCC s2twp; re-run the build script after copy changes.",
   "messages": {
     "(Gemini SDK 不需要 base_url)": "(Gemini SDK 不需要 base_url)",
     "(不启用 embedding)": "(不啟用 embedding)",
@@ -1533,6 +1532,7 @@
     "我想多聊聊这个": "我想多聊聊這個",
     "我感觉你大概是这样的": "我感覺你大概是這樣的",
     "我的 B 站昵称（留空自动读取）": "我的 B 站暱稱（留空自動讀取）",
+    "我的 mid（可选，主号登录失效时用）": "我的 mid（可選，主號登入失效時用）",
     "我的收藏": "我的收藏",
     "我的画像": "我的畫像",
     "或 DashScope": "或 DashScope",
@@ -2889,6 +2889,7 @@
     "；校验完成前不会改动当前数据。": "；校驗完成前不會改動當前資料。",
     "🔧 调用工具：": "🔧 呼叫工具："
   },
+  "note": "Generated from zh-Hans with OpenCC s2twp; re-run the build script after copy changes.",
   "patterns": {
     "/auth/status 请求失败：HTTP {0}": "/auth/status 請求失敗：HTTP {0}",
     "AI 当前想更新为：{0}": "AI 當前想更新為：{0}",

@@ -1532,6 +1532,7 @@
     "我想多聊聊这个": "I'd like to talk more about this ",
     "我感觉你大概是这样的": "Here's how I read you",
     "我的 B 站昵称（留空自动读取）": "My Bilibili nickname (leave blank to auto-detect)",
+    "我的 mid（可选，主号登录失效时用）": "My mid (optional, used when the main login has expired)",
     "我的收藏": "My Favorites",
     "我的画像": "My Profile",
     "或 DashScope": "or DashScope",
