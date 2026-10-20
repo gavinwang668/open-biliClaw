@@ -662,6 +662,8 @@ Chat: `session style → durable turn freezes style → API-owned agent task →
 
 Configuration: `save / approve → shared apply queue → replace only the loop for known chat settings; drain and rebuild for other changes`. Local chat updates preserve active conversations and learning tasks.
 
+Background configuration: `successful full apply → queue settles → parent confirms old children exited → workers / recommendation / images read new settings`. The active data directory and durable candidates survive; model repairs can resume pool filling.
+
 The full architecture overview ASCII diagrams (runtime concurrency gates, agent orchestration, source adapters, discovery / recommendation / saved-sync pipelines) have been moved to a separate document to keep the README compact:
 
 Publication date preference: `[sources.<name>].recommendation_date_*` per source → out-of-window candidates are filtered before LLM evaluation → effective inventory → PoolCurator soft/strict serving semantics.

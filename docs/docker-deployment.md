@@ -233,6 +233,8 @@ docker exec -it openbiliclaw-backend openbiliclaw init
 
 ## 配置
 
+通过 Web / 本机设置 API 成功应用模型配置后，`serve-api` 的父 supervisor 会等待应用队列结束，在下一次约 5 秒巡检重启后台 worker / 推荐 / 图片服务，使候选评估和文案使用新模型。已有候选保留，数据目录仍固定为父进程当前持锁路径；无新增 Compose 服务或依赖。直接编辑 TOML 不触发 API handoff，仍需重启 backend 容器。旧镜像遇到修正模型后空池持续为零，也应完整重启 backend 后核对 `child-discovery-worker.log`。
+
 一行安装脚本会先在宿主机生成 `config.toml`，再同步到 Docker volume 的 `/app/runtime/config.toml`。配置要改时，优先重跑同一条安装 / bootstrap 命令；高级排查时可以直接编辑容器内文件。
 
 ```bash

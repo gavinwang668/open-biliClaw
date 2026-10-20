@@ -108,6 +108,9 @@ async def test_put_config_success_saves_snapshot_then_hot_reloads(
     assert status["applied_revision"] == body["apply_revision"]
     assert load_config(config_path).llm.openai.model == "gpt-4.1-mini"
     assert (tmp_path / "config.toml.bak").read_bytes() == before
+    from openbiliclaw.proc import backend_config_generation
+
+    assert backend_config_generation(app) == 1
 
 
 @pytest.mark.asyncio
@@ -332,6 +335,7 @@ async def test_put_config_rolls_back_when_hot_reload_fails(
     assert body["reloaded"] is False
     assert body["rollback_applied"] is False
     assert "simulated" in status["message"]
+    assert app.state.backend_config_generation == 0
     assert config_path.read_bytes() == before
     assert (tmp_path / "config.toml.bak").read_bytes() == before
 

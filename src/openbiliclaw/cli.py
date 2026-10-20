@@ -1237,6 +1237,12 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
 
     from openbiliclaw.api.app import create_app
     from openbiliclaw.config import load_config
+    from openbiliclaw.proc import (
+        ChildProcessSupervisor,
+        ManagedChild,
+        backend_child_env,
+        backend_config_generation,
+    )
 
     worker_requested = _worker_mode_requested()
     if worker_requested:
@@ -1272,67 +1278,91 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
         port,
         api_host=host,
     )
-    worker_process: Any | None = None
-    discovery_worker_process: Any | None = None
-    recommendation_process: Any | None = None
-    image_service_process: Any | None = None
+    children: list[ManagedChild] = []
+    if worker_requested:
+        children.extend(
+            [
+                ManagedChild(
+                    "worker",
+                    lambda: _spawn_background_child(
+                        "worker",
+                        "openbiliclaw.worker",
+                        backend_child_env(api_app, OPENBILICLAW_FULL_WORKER="1"),
+                    ),
+                ),
+                ManagedChild(
+                    "discovery-worker",
+                    lambda: _spawn_background_child(
+                        "discovery-worker",
+                        "openbiliclaw.discovery_worker",
+                        backend_child_env(
+                            api_app, OPENBILICLAW_DISCOVERY_WORKER="1", OPENBILICLAW_FULL_WORKER="1"
+                        ),
+                    ),
+                ),
+                ManagedChild(
+                    "recommendation",
+                    lambda: _spawn_background_child(
+                        "recommendation",
+                        "openbiliclaw.recommendation_server",
+                        backend_child_env(
+                            api_app,
+                            OPENBILICLAW_RECOMMENDATION_ONLY="1",
+                            OPENBILICLAW_FULL_WORKER="1",
+                        ),
+                    ),
+                ),
+            ]
+        )
+    children.append(
+        ManagedChild(
+            "image-service",
+            lambda: _spawn_background_child(
+                "image-service", "openbiliclaw.image_service", backend_child_env(api_app)
+            ),
+        )
+    )
+    child_supervisor = ChildProcessSupervisor(
+        children, config_generation_provider=lambda: backend_config_generation(api_app)
+    )
     # 必须在 uvicorn 启动前装上,uvicorn 保存/恢复的"原始处理器"才是钩子;
     # 两条 uvicorn 启动路径(uvicorn.run / server.run)都被外层 finally 覆盖。
     restore_sigterm_handler = _install_sigterm_cleanup_hook()
     try:
+        child_supervisor.start()
+        child_pids = child_supervisor.pids
         if worker_requested:
-            worker_env = {**os.environ, "OPENBILICLAW_FULL_WORKER": "1"}
-            worker_process = _spawn_background_child("worker", "openbiliclaw.worker", worker_env)
             _print_status_panel(
                 "info",
                 "Worker 进程",
-                f"已启动独立 full worker pid={worker_process.pid}（OPENBILICLAW_WORKER=1）",
+                f"已启动独立 full worker pid={child_pids.get('worker')}（OPENBILICLAW_WORKER=1）",
             )
 
             # Dedicated discovery runtime worker: runs the same
             # ContinuousRefreshController as the API used to, but in a separate
             # process so HTTP endpoints never compete with discovery/eval.
-            discovery_env = {
-                **os.environ,
-                "OPENBILICLAW_DISCOVERY_WORKER": "1",
-                "OPENBILICLAW_FULL_WORKER": "1",
-            }
-            discovery_worker_process = _spawn_background_child(
-                "discovery-worker", "openbiliclaw.discovery_worker", discovery_env
-            )
             _print_status_panel(
                 "info",
                 "Discovery Worker 进程",
-                f"已启动独立 discovery worker pid={discovery_worker_process.pid}",
+                f"已启动独立 discovery worker pid={child_pids.get('discovery-worker')}",
             )
 
             # Dedicated recommendation API process on a Unix socket. The main
             # API proxies /api/recommendations/* here so full recommendation
             # ranking runs on its own process/CPU without extra TCP ports.
-            recommendation_env = {
-                **os.environ,
-                "OPENBILICLAW_RECOMMENDATION_ONLY": "1",
-                "OPENBILICLAW_FULL_WORKER": "1",
-            }
-            recommendation_process = _spawn_background_child(
-                "recommendation", "openbiliclaw.recommendation_server", recommendation_env
-            )
             _print_status_panel(
                 "info",
                 "Recommendation API 进程",
-                f"已启动独立推荐 API pid={recommendation_process.pid}"
+                f"已启动独立推荐 API pid={child_pids.get('recommendation')}"
                 f"（{recommendation_transport}）",
             )
 
         # Dedicated image proxy process: image fetching/compression lives here,
         # so it cannot squeeze recommendation serving / reshuffle / chat APIs.
-        image_service_process = _spawn_background_child(
-            "image-service", "openbiliclaw.image_service", {**os.environ}
-        )
         _print_status_panel(
             "info",
             "Image Proxy 进程",
-            f"已启动独立 image-proxy pid={image_service_process.pid}（端口 8421）",
+            f"已启动独立 image-proxy pid={child_pids.get('image-service')}（端口 8421）",
         )
         # Main API forwards image requests to this local service.
         image_service_port = os.environ.get("OPENBILICLAW_IMAGE_SERVICE_PORT", "8421")
@@ -1354,30 +1384,7 @@ def _run_api_server(*, host: str = "127.0.0.1", port: int = 8420) -> None:
         # SIGTERM 应走默认处置立即退出,而不是在 finally 里再抛异常
         # 打断剩余子进程的 terminate。
         restore_sigterm_handler()
-        if recommendation_process is not None:
-            recommendation_process.terminate()
-            try:
-                recommendation_process.wait(timeout=5)
-            except Exception:
-                recommendation_process.kill()
-        if discovery_worker_process is not None:
-            discovery_worker_process.terminate()
-            try:
-                discovery_worker_process.wait(timeout=5)
-            except Exception:
-                discovery_worker_process.kill()
-        if image_service_process is not None:
-            image_service_process.terminate()
-            try:
-                image_service_process.wait(timeout=5)
-            except Exception:
-                image_service_process.kill()
-        if worker_process is not None:
-            worker_process.terminate()
-            try:
-                worker_process.wait(timeout=5)
-            except Exception:
-                worker_process.kill()
+        child_supervisor.stop()
         if tailnet_supervisor is not None:
             tailnet_supervisor.stop()
 

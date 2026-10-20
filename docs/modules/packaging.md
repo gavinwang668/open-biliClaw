@@ -4,6 +4,7 @@
 
 | Feature | Status | Contract |
 | --- | --- | --- |
+| Background configuration recovery | Implemented | After a successful full API handoff and a settled settings queue, the shared parent supervisor replaces all backend children on its next 5-second sweep. Old processes must exit before replacements start; children retain the parent's locked data path through `backend_child_env`. Known chat-only updates preserve workers. Runtime helpers: `backend_config_generation(app)` and `ChildProcessSupervisor(config_generation_provider=...)`; no installer/dependency change. |
 | macOS Developer ID | Implemented | Explicitly sign all nested Mach-O binaries and code bundles inside-out with secure timestamps and Hardened Runtime, then seal the app. |
 | Apple notarization | Implemented | Submit app ZIP, require `Accepted`, staple and assess app; create final ZIP/DMG, sign DMG, notarize, staple and assess DMG. Errors stop the build. |
 | Local experimental builds | Retained outside hosted CI | Without either signing option, retain ad-hoc signing and the existing installation helper/first-launch guidance. Partial signing configuration is an error. |

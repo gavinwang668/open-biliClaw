@@ -1973,6 +1973,13 @@ def _apply_env_overrides(raw: dict[str, Any]) -> dict[str, Any]:
     for env_key, env_value in os.environ.items():
         if not env_key.startswith(prefix):
             continue
+        if env_key == "OPENBILICLAW_RUNTIME_DATA_DIR":
+            # Internal parent -> child fence: a hot-respawn must retain the
+            # parent's migration-locked path even if the saved data_dir awaits
+            # a full application restart. Disk-only reads ignore this override.
+            if env_value.strip():
+                raw.setdefault("general", {})["data_dir"] = env_value
+            continue
         # Auth vars are multi-word (PASSWORD_HASH, SESSION_TTL_HOURS, …); the naive
         # `_` split would mis-nest them — e.g. PASSWORD_HASH → api.auth.password.hash,
         # injecting a dict at auth.password (later hashed as its repr) or raising

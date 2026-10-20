@@ -4,6 +4,8 @@
 
 ## v0.3.229：TikTok 新来源、远程访问安全收紧与 B 站登录失效横幅死锁修复（2026-10-16）
 
+- 修复多进程补池配置不生效：API 热重载曾只更新主进程，discovery worker 继续持有旧模型或暂停状态，导致已有原始候选却没有可推荐内容。桌面与 `start` / `serve-api` 统一监督后台进程，设置队列成功结束后重启读取配置快照的子进程；先确认旧进程退出，保留父入口锁定的数据目录，失败回滚/排队修订期间不切到中间配置。增加真实子进程 + SQLite 的候选评估、入池与文案回归（可推荐数 0 → 1）。详见 [诊断与验证](testing/2026-10-20-empty-pool-recovery.md)。
+
 - **多语言基础设施（#305）**：`[general].language` 现在真正驱动界面、CLI 与新生成的模型输出，支持 `zh-Hans`（默认）/ `zh-Hant`（繁體・台灣）/ `en`；旧值 `zh`、`zh-TW`、`en-US` 等自动规范化，未知语言在 `PUT /api/config` 保存时 400 拒绝。新增 `openbiliclaw language [locale]` 与 `OPENBILICLAW_LANG` 单次覆盖、`GET /api/i18n/locales`、`/i18n/ui/<locale>.json` 静态目录；桌面 Web、移动 Web、设置向导与插件侧边栏共用 `web/shared/i18n.js`，按渲染后的 DOM 文本匹配目录翻译（内容与用户输入不翻译，`data-i18n-skip` 保护指定区域）。UI 目录由 `scripts/build_i18n_catalogs.py` 从源码生成：2797 条文案 + 197 条插值模式（如「模型：{0}」「{0} 分钟前」），`zh-Hant` 由 OpenCC `s2twp` 生成，英文 100% 覆盖并由 `tests/test_i18n.py` 守护；数字与短日期按 locale 格式化（`331K` / `Sep 5` 对 `33.1万` / `9月5日`）。聊天与推荐理由的 system prompt 保持字节静态，locale 以 `<output_language>` 指令进 user prompt，provider prompt cache 不受影响；`zh-Hant` 额外约束只用繁體字（真实 provider 实测：仅写「Traditional Chinese」首轮仍可能回简体），配置保存/应用提示也按新语言返回；历史推荐 / 画像文本保留原语言、不批量重译。详见 [多语言模块](modules/i18n.md)。
 
 - 修复 Safari 默认 Cookie store 不完整时扩展无法同步 B 站登录的问题（#304）：仅 Safari 构建通过 `getAllCookieStores()` 逐 store 查找，只有唯一候选 store 同时包含 `SESSDATA` / `bili_jct` / `DedeUserID` 才上传，不跨 store 拼接登录态，也不静默选择多个完整候选之一；缺失诊断仅记录 Cookie 名称，不记录值。

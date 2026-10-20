@@ -400,6 +400,8 @@ WARN extension presence required; backend will pause background LLM work after g
 
 如果配置导致 LLM registry 无法构建，`start` 不会直接让 popup 完全失联，而是以降级模式启动本地 API，并在 uvicorn 启动前打印 `降级模式 / Degraded mode` 面板。面板会列出 `llm_registry_unavailable` 和 blocking issue，并提示打开扩展设置页保存修复配置；校验通过后当前进程会原地构建完整 runtime，无需重启 daemon。
 
+`start` / `serve-api` 与桌面包共用 `ChildProcessSupervisor`：子进程崩溃会退避重启；完整配置应用队列结束后，下一次约 5 秒巡检会停止旧后台进程并从新配置重新拉起。discovery worker 因旧模型故障停住的候选会重新进入既有评估/入池流程。仅聊天 loop 设置局部应用不触发后台重启；数据目录继续固定为父入口锁定的 active path，修改目录仍需完整退出重开。没有新增命令或安装步骤。
+
 如果数据库已损坏：
 
 ```bash

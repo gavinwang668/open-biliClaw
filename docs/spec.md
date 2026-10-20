@@ -288,6 +288,10 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 ## 3. 系统架构
 
 ```text
+config save → safe API handoff → committed generation (wait for settings queue)
+            → parent supervisor → stop old children → reload workers / recommendation / images
+                                └ retain parent's locked data path; durable candidates resume
+
 recommendation request → main API → optional Unix-socket recommendation process
                                   → current SQLite snapshot → full ranking worker
                                   → atomic history + shown COMMIT → cards + exact platform inventory

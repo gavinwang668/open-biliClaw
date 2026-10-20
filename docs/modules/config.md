@@ -15,6 +15,8 @@ cp config.example.toml config.toml
 
 ## 配置文件位置与恢复
 
+后台子进程由父入口自动携带内部环境变量 `OPENBILICLAW_RUNTIME_DATA_DIR`，将热重启后的 `load_config()` 固定在父进程已经持有 migration lock 的目录；不需要用户配置。磁盘新保存的 `general.data_dir` 仍只在完整退出并重新启动后生效，`load_config(..., consult_environment=False)` 继续返回磁盘目标值，供回滚与 restart-required 判断使用。模型与 scheduler 设置成功应用后，父进程自动重启读取配置快照的后台服务，避免 API 配置已更新而补池 evaluator 留在旧配置。
+
 源码 / AI 一键安装 / 桌面安装包默认都使用同一个运行目录：macOS / Linux 为 `~/OpenBiliClaw`，Windows 为 `%USERPROFILE%\OpenBiliClaw`。`config.toml` 保存主配置，`config.local.toml` 是可选本机覆盖文件，加载时后者覆盖前者。
 
 桌面安装包启动时会先检查 `config.toml` 与 `config.local.toml` 是否可解析、是否能构建运行时 `Config` 对象。若发现 TOML 语法错误、文件编码错误，或结构形状导致配置对象无法构建，入口会把坏文件改名为 `config.toml.invalid` / `config.local.toml.invalid`（已有同名备份时追加 `.1`、`.2`），再从随包 `config.example.toml` 重新生成默认 `config.toml` 并打开 `/setup/` 重新初始化。这个恢复流程只处理配置文件，不会移动或删除 `data/`、数据库、Cookie 缓存或日志。

@@ -5,6 +5,10 @@
 OpenBiliClaw 采用分层架构设计，从上到下依次为：
 
 ```text
+config save → safe API handoff → committed generation (wait for settings queue)
+            → parent supervisor → stop old children → reload workers / recommendation / images
+                                └ retain parent's locked data path; durable candidates resume
+
 local embedding provider / diagnosis → automatic acceleration → valid vector
                                      └ runner failure → shared CPU mode → validated vector / failure
 recommendation request → main API → optional Unix-socket recommendation process
