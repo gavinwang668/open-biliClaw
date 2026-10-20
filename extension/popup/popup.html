@@ -8016,6 +8016,24 @@
       </div>
 
       <div class="settings-section">
+        <h3>在评论区 @ 你</h3>
+        <p class="settings-hint">打开后，它每天挑一条推荐，在视频评论区发一条 @ 你的评论，让这条推荐以 B 站消息的形式提醒到你。</p>
+        <p class="settings-hint">评论是公开的：别人也能看到大肥鱼 @ 了你的主号。</p>
+        <div class="settings-field-row">
+          <input id="fishNotifyOwner" type="checkbox" data-settings-ignore-dirty>
+          <label for="fishNotifyOwner">每天在评论区 @ 我一次</label>
+        </div>
+        <div class="settings-field">
+          <label for="fishOwnerName">我的 B 站昵称（留空自动读取）</label>
+          <input id="fishOwnerName" type="text" maxlength="30" autocomplete="off" placeholder="留空则用主账号昵称" data-settings-ignore-dirty>
+        </div>
+        <div class="settings-field">
+          <label for="fishNotifyDailyLimit">每天最多通知几次</label>
+          <input id="fishNotifyDailyLimit" type="number" min="0" max="3" step="1" placeholder="1" data-settings-ignore-dirty>
+        </div>
+      </div>
+
+      <div class="settings-section">
         <h3>节奏与上限</h3>
         <div class="settings-field">
           <label for="fishDailyLimit">每天最多发几条</label>

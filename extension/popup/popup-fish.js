@@ -31,6 +31,9 @@ const el = {
   minLikes: $("fishMinLikes"),
   blockedWords: $("fishBlockedWords"),
   allowTopLevel: $("fishAllowTopLevel"),
+  notifyOwner: $("fishNotifyOwner"),
+  ownerName: $("fishOwnerName"),
+  notifyDailyLimit: $("fishNotifyDailyLimit"),
   saveConfig: $("fishSaveConfigBtn"),
   preview: $("fishPreviewBtn"),
   run: $("fishRunBtn"),
@@ -78,6 +81,9 @@ if (el.enabled && el.saveConfig) {
         .map((word) => word.trim())
         .filter(Boolean),
       allow_top_level: Boolean(el.allowTopLevel.checked),
+      notify_owner: Boolean(el.notifyOwner?.checked),
+      owner_name: String(el.ownerName?.value || "").trim(),
+      notify_daily_limit: numberValue(el.notifyDailyLimit, 1),
     };
   }
 
@@ -100,6 +106,15 @@ if (el.enabled && el.saveConfig) {
     el.minLikes.value = String(config.min_comment_likes ?? 0);
     el.blockedWords.value = (config.blocked_words || []).join(", ");
     el.allowTopLevel.checked = Boolean(config.allow_top_level);
+    if (el.notifyOwner) {
+      el.notifyOwner.checked = Boolean(config.notify_owner);
+    }
+    if (el.ownerName) {
+      el.ownerName.value = config.owner_name || "";
+    }
+    if (el.notifyDailyLimit) {
+      el.notifyDailyLimit.value = String(config.notify_daily_limit ?? 1);
+    }
   }
 
   function renderStatus(payload) {

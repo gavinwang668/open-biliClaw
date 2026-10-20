@@ -124,7 +124,7 @@ class BlueFishEngine:
         candidate_provider: CandidateProvider,
         client_factory: ClientFactory,
         clock: Callable[[], datetime] | None = None,
-        main_account_provider: Callable[[], Awaitable[tuple[int, str]]] | None = None,
+        main_account_provider: Callable[[], Awaitable[tuple[int, str, str]]] | None = None,
         plan_store: FishPlanStore | None = None,
     ) -> None:
         self._data_dir = data_dir
@@ -172,7 +172,7 @@ class BlueFishEngine:
         """Return everything the settings panel needs in one call."""
         config = load_fish_config(self._data_dir)
         stats = self._store.view(self._today()).stats
-        account = await self._account_status()
+        account, _owner_name = await self._account_status()
         return {
             "ok": True,
             "config": config.to_public_dict(),
@@ -189,6 +189,7 @@ class BlueFishEngine:
                 "level": stats.level,
                 "published_total": stats.published_total,
                 "today_published": stats.today_published,
+                "today_notified": stats.today_notified,
                 "last_run_at": stats.last_run_at,
             },
             "recent": self._store.recent(limit=20),
@@ -216,7 +217,7 @@ class BlueFishEngine:
             now = self._clock()
             today = self._today(now)
 
-            account = await self._account_status()
+            account, owner_name = await self._account_status()
             view = self._store.view(today)
             gate = check_can_run(
                 config,
@@ -236,30 +237,48 @@ class BlueFishEngine:
             if self._llm is None:
                 return FishRunResult(False, "llm_unavailable", "当前没有可用的模型，先配置 LLM。")
 
-            # A discovery-produced plan is one-shot: the comment-thread route
-            # already fetched this comment section, so consuming the plan here
-            # removes a second fetch and keeps discovery and the public act in
-            # the same round. The gates above already ran; the ledger is
-            # re-checked inside ``_visit`` exactly like a pool candidate.
-            plan = self._plan_store.take_fresh(now=now) if self._plan_store is not None else None
-
             try:
                 candidates = await self._candidate_provider(config.max_candidates)
             except Exception as exc:  # noqa: BLE001 - reported, never raised
                 logger.warning("Blue Fish candidate lookup failed: %s", exc)
-                if plan is None:
-                    return FishRunResult(False, "candidate_error", f"拿不到候选视频：{exc}")
                 candidates = []
-
-            if plan is None and not candidates:
-                return FishRunResult(
-                    False,
-                    "no_candidates",
-                    "没有可去的视频：推荐池还是空的，先去跑一轮发现。",
-                )
 
             client = self._client_factory(self._account.load_cookie())
             try:
+                # One public act per pass. The owner notification is the only
+                # act that touches the owner's identity, so it goes first when
+                # it is due; the reply path (plan or pool) waits for the next
+                # round, and the min-interval gate sees the notification
+                # because the ledger view includes it.
+                if _owner_notice_due(config, view=view) and candidates:
+                    notified = await self._notify_owner(
+                        client,
+                        candidates[0],
+                        config=config,
+                        dry_run=effective_dry_run,
+                        owner_name=owner_name,
+                    )
+                    # A failed notice must not block the reply path: the
+                    # comment section may simply be closed, and retrying it
+                    # forever would starve every other act. The failure is
+                    # recorded, so the breaker still sees it.
+                    if notified is not None and notified.status != "notify_failed":
+                        return notified
+
+                # A discovery-produced plan is one-shot: the comment-thread
+                # route already fetched this comment section, so consuming the
+                # plan here removes a second fetch and keeps discovery and the
+                # public act in the same round. The gates above already ran;
+                # the ledger is re-checked inside ``_visit``.
+                plan = (
+                    self._plan_store.take_fresh(now=now) if self._plan_store is not None else None
+                )
+                if plan is None and not candidates:
+                    return FishRunResult(
+                        False,
+                        "no_candidates",
+                        "没有可去的视频：推荐池还是空的，先去跑一轮发现。",
+                    )
                 if plan is not None:
                     result = await self._visit(
                         client,
@@ -544,15 +563,108 @@ class BlueFishEngine:
 
     # ── helpers ─────────────────────────────────────────────────────────
 
-    async def _account_status(self) -> FishAccountStatus:
+    async def _account_status(self) -> tuple[FishAccountStatus, str]:
         main_mid = 0
         main_cookie = ""
+        owner_name = ""
         if self._main_account_provider is not None:
             try:
-                main_mid, main_cookie = await self._main_account_provider()
+                main_mid, main_cookie, owner_name = await self._main_account_provider()
             except Exception:  # noqa: BLE001 - isolation degrades to "unknown"
-                main_mid, main_cookie = 0, ""
-        return await self._account.status(main_mid=main_mid, main_cookie=main_cookie)
+                main_mid, main_cookie, owner_name = 0, "", ""
+        status = await self._account.status(main_mid=main_mid, main_cookie=main_cookie)
+        return status, owner_name
+
+    async def _notify_owner(
+        self,
+        client: _SupportsComments,
+        candidate: FishCandidate,
+        *,
+        config: FishConfig,
+        dry_run: bool,
+        owner_name: str,
+    ) -> FishRunResult | None:
+        """Post one public comment that mentions the owner under a video.
+
+        Returns ``None`` when there is nothing to notify about (no nickname),
+        letting the pass fall through to the reply flow. The text is built
+        deterministically — no extra model call — and B站 resolves the leading
+        ``@昵称`` into a mention, which is what reaches the owner's message box.
+        """
+
+        name = str(config.owner_name or owner_name or "").strip()
+        if not name:
+            logger.info("Blue Fish owner notice skipped: no owner nickname")
+            return None
+        text = _owner_notice_text(name, candidate)
+        if dry_run:
+            record = self._record(
+                candidate,
+                status="preview",
+                dry_run=True,
+                target_rpid=0,
+                target_uname=name,
+                target_text="",
+                reply=text,
+                reason="",
+                error="",
+                mode="notify",
+            )
+            return FishRunResult(
+                True,
+                "preview",
+                "预览完成（通知没有发出去）。",
+                bvid=candidate.bvid,
+                reply=text,
+                record=record,
+            )
+        try:
+            posted = await client.post_comment(candidate.bvid, message=text)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Blue Fish owner notice failed for %s: %s", candidate.bvid, exc)
+            record = self._record(
+                candidate,
+                status="failed",
+                dry_run=False,
+                target_rpid=0,
+                target_uname=name,
+                target_text="",
+                reply=text,
+                reason="",
+                error=f"通知没发出去：{exc}",
+                mode="notify",
+            )
+            return FishRunResult(
+                False,
+                "notify_failed",
+                f"通知没发出去：{exc}",
+                bvid=candidate.bvid,
+                reply=text,
+                record=record,
+            )
+        reply_rpid = _posted_rpid(posted)
+        record = self._record(
+            candidate,
+            status="notified",
+            dry_run=False,
+            target_rpid=0,
+            target_uname=name,
+            target_text="",
+            reply=text,
+            reason="",
+            error="",
+            mode="notify",
+            reply_rpid=reply_rpid,
+        )
+        return FishRunResult(
+            True,
+            "notified",
+            f"已经通知你了：{text}",
+            bvid=candidate.bvid,
+            reply=text,
+            reply_rpid=reply_rpid,
+            record=record,
+        )
 
     async def _ask_model(
         self, messages: list[dict[str, str]], *, config: FishConfig
@@ -651,6 +763,30 @@ def _parse_decision(payload: dict[str, Any], *, max_chars: int) -> tuple[str, in
         # let the length gate record it rather than silently trimming.
         logger.warning("Blue Fish reply is far over budget (%d chars)", len(reply))
     return action, target_rpid, reply, reason
+
+
+def _owner_notice_due(config: FishConfig, *, view: FishLedgerView) -> bool:
+    """Whether this pass should spend its one public act on the owner notice."""
+
+    if not config.notify_owner:
+        return False
+    limit = int(config.notify_daily_limit)
+    if limit <= 0:
+        return False
+    return view.stats.today_notified < limit
+
+
+def _owner_notice_text(owner_name: str, candidate: FishCandidate) -> str:
+    """Build the deterministic owner-notification comment.
+
+    B站 resolves the leading ``@昵称`` into a real mention (the server fills
+    the reply's ``content.members`` from the text), which is what turns this
+    comment into a notification on the owner's account.
+    """
+
+    name = str(owner_name or "").strip()
+    title = " ".join(str(candidate.title or "").split())[:40] or "这条视频"
+    return f"@{name} 推荐你看看这条：《{title}》。我觉得正合你口味。"
 
 
 def _candidate_from_plan(plan: FishPlan) -> FishCandidate:

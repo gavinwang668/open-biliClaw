@@ -124,6 +124,7 @@ def _build(
     account_mid: int = 222,
     main_mid: int = 111,
     main_cookie: str = "SESSION=owner",
+    main_uname: str = "主人",
     candidates: list[FishCandidate] | None = None,
     fetch_error: Exception | None = None,
     plan_store: FishPlanStore | None = None,
@@ -139,8 +140,8 @@ def _build(
     llm = _FakeLLM(decision)
     store = FishStore(tmp_path)
 
-    async def _main_account() -> tuple[int, str]:
-        return main_mid, main_cookie
+    async def _main_account() -> tuple[int, str, str]:
+        return main_mid, main_cookie, main_uname
 
     async def _candidates(limit: int) -> list[FishCandidate]:
         pool = candidates if candidates is not None else [_candidate()]
@@ -686,3 +687,155 @@ async def test_the_ledger_records_which_path_produced_the_action(tmp_path) -> No
     await engine.run_once(trigger="manual")
 
     assert [row["via"] for row in store.read()] == ["plan", "pool"]
+
+
+# ── owner notification (@主人) ──────────────────────────────────────────
+
+
+async def test_owner_notice_posts_a_top_level_mention_once(tmp_path) -> None:
+    engine, client, _llm, store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, notify_owner=True),
+    )
+
+    result = await engine.run_once(trigger="schedule", manual=False)
+
+    assert result.status == "notified"
+    assert len(client.posts) == 1
+    posted = client.posts[0]
+    assert posted["bvid"] == "BV1xx411c7mD"
+    assert posted["root"] is None and posted["parent"] is None
+    assert posted["message"].startswith("@主人 ")
+    assert "一条测试视频" in posted["message"]
+    assert store.read()[-1]["status"] == "notified"
+    assert store.read()[-1]["mode"] == "notify"
+    assert store.view(NOW.date()).stats.today_notified == 1
+    # The notification is the only act of the round: no reply followed it.
+    assert [row["status"] for row in store.read()] == ["notified"]
+
+
+async def test_owner_notice_consumes_the_min_interval(tmp_path) -> None:
+    engine, _client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, notify_owner=True),
+    )
+
+    await engine.run_once(trigger="schedule", manual=False)
+    second = await engine.run_once(trigger="schedule", manual=False)
+
+    assert second.status == "min_interval"
+
+
+async def test_owner_notice_respects_the_daily_cap(tmp_path) -> None:
+    engine, client, _llm, store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, notify_owner=True),
+    )
+    store.append(
+        {
+            "ts": NOW.isoformat(),
+            "day": "2026-10-19",
+            "bvid": "BV1xx411c7mD",
+            "status": "notified",
+            "mode": "notify",
+        }
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status != "notified"
+    assert client.posts == []
+
+
+async def test_owner_notice_uses_the_configured_nickname(tmp_path) -> None:
+    engine, client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(
+            enabled=True,
+            dry_run=False,
+            notify_owner=True,
+            owner_name="老白",
+        ),
+        main_uname="另一个昵称",
+    )
+
+    result = await engine.run_once(trigger="schedule", manual=False)
+
+    assert result.status == "notified"
+    assert client.posts[0]["message"].startswith("@老白 ")
+
+
+async def test_owner_notice_falls_through_without_a_nickname(tmp_path) -> None:
+    engine, client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, notify_owner=True),
+        main_uname="",
+    )
+
+    result = await engine.run_once(trigger="schedule", manual=False)
+
+    # No nickname = nothing to mention; the pass falls back to the reply flow.
+    assert result.status == "published"
+    assert client.posts[0]["root"] == 1001
+
+
+async def test_owner_notice_dry_run_only_records(tmp_path) -> None:
+    engine, client, _llm, store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=True, notify_owner=True),
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "preview"
+    assert client.posts == []
+    assert store.read()[-1]["status"] == "preview"
+    assert store.read()[-1]["mode"] == "notify"
+    assert store.view(NOW.date()).stats.today_notified == 0
+
+
+class _NotifyFailingClient(_FakeClient):
+    """Fails the top-level notification, keeps the reply path working."""
+
+    async def post_comment(self, bvid: str, *, message: str, root=None, parent=None):
+        if root is None and parent is None:
+            self.posts.append({"bvid": bvid, "message": message, "root": root, "parent": parent})
+            raise RuntimeError("评论区已关闭")
+        return await super().post_comment(bvid, message=message, root=root, parent=parent)
+
+
+async def test_a_failed_owner_notice_does_not_block_the_reply(tmp_path) -> None:
+    save_fish_config(tmp_path, FishConfig(enabled=True, dry_run=False, notify_owner=True))
+    account = FishAccount(tmp_path, client_factory=lambda _cookie: _FakeNavClient(mid=222))
+    account.save_cookie(FISH_COOKIE)
+    client = _NotifyFailingClient(list(COMMENTS))
+    engine = BlueFishEngine(
+        data_dir=tmp_path,
+        account=account,
+        store=FishStore(tmp_path),
+        llm=_FakeLLM(_decision()),
+        candidate_provider=_candidates_for([_candidate()]),
+        client_factory=lambda _cookie: client,
+        clock=lambda: NOW,
+        main_account_provider=_main_account_for(111, "SESSION=owner", "主人"),
+        plan_store=None,
+    )
+
+    result = await engine.run_once(trigger="schedule", manual=False)
+
+    assert result.status == "published"
+    assert [row["status"] for row in FishStore(tmp_path).read()] == ["failed", "published"]
+
+
+def _candidates_for(pool: list[FishCandidate]) -> Any:
+    async def _provider(limit: int) -> list[FishCandidate]:
+        return pool[:limit]
+
+    return _provider
+
+
+def _main_account_for(mid: int, cookie: str, uname: str) -> Any:
+    async def _provider() -> tuple[int, str, str]:
+        return mid, cookie, uname
+
+    return _provider

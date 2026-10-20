@@ -52,6 +52,10 @@ class FishStats:
     level: int = 1
     published_total: int = 0
     today_published: int = 0
+    # Owner-notification comments posted today. A separate counter from
+    # ``today_published``: the notification has its own daily cap and does not
+    # consume the reply quota, but it is a public comment all the same.
+    today_notified: int = 0
     last_run_at: str = ""
     last_published_at: datetime | None = None
     # Trailing run of ``failed`` ledger rows. The engine refuses new publisher
@@ -129,11 +133,13 @@ class FishStore:
         """Scan the ledger once and derive every per-run check from it."""
         rows = self.read()
         published = [row for row in rows if str(row.get("status") or "") == "published"]
+        notified = [row for row in rows if str(row.get("status") or "") == "notified"]
         today_key = today.isoformat()
 
         answered: set[str] = set()
         per_video_total: dict[str, int] = {}
         published_today = 0
+        notified_today = 0
         last_published_at: datetime | None = None
         for row in published:
             bvid = str(row.get("bvid") or "")
@@ -146,6 +152,20 @@ class FishStore:
                 published_today += 1
             parsed = _parse_dt(row.get("ts"))
             if parsed is not None:
+                last_published_at = parsed
+        for row in notified:
+            bvid = str(row.get("bvid") or "")
+            if bvid:
+                # A notification is a public comment under that video too:
+                # counting it here keeps "don't walk back into a video" true
+                # for both acts.
+                per_video_total[bvid] = per_video_total.get(bvid, 0) + 1
+            if str(row.get("day") or "") == today_key:
+                notified_today += 1
+            parsed = _parse_dt(row.get("ts"))
+            if parsed is not None and (last_published_at is None or parsed > last_published_at):
+                # The min-interval gate is about public acts, not about replies
+                # specifically.
                 last_published_at = parsed
 
         xp = len(published) * _XP_PER_PUBLISHED
@@ -178,6 +198,7 @@ class FishStore:
                 level=level_for_xp(xp),
                 published_total=len(published),
                 today_published=published_today,
+                today_notified=notified_today,
                 last_run_at=last_run_at,
                 last_published_at=last_published_at,
                 failure_streak=failure_streak,

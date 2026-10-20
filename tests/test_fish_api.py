@@ -48,7 +48,15 @@ async def test_config_defaults_are_returned(client: httpx.AsyncClient) -> None:
 async def test_config_update_persists_and_clamps(client: httpx.AsyncClient) -> None:
     response = await client.put(
         "/api/fish/config",
-        json={"enabled": True, "dry_run": False, "max_chars": 99_999, "daily_limit": 2},
+        json={
+            "enabled": True,
+            "dry_run": False,
+            "max_chars": 99_999,
+            "daily_limit": 2,
+            "notify_owner": True,
+            "notify_daily_limit": 99,
+            "owner_name": "主" * 40,
+        },
     )
 
     assert response.status_code == 200
@@ -56,6 +64,9 @@ async def test_config_update_persists_and_clamps(client: httpx.AsyncClient) -> N
     assert config["enabled"] is True
     assert config["daily_limit"] == 2
     assert config["max_chars"] == 300
+    assert config["notify_owner"] is True
+    assert config["notify_daily_limit"] == 3
+    assert len(config["owner_name"]) == 30
 
     again = (await client.get("/api/fish/config")).json()["config"]
     assert again == config

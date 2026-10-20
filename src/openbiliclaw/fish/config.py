@@ -50,6 +50,8 @@ _MIN_COMMENT_LIKES_BOUNDS = (0, 10_000)
 
 _MAX_PERSONA_CHARS = 4_000
 _MAX_AUDIENCE_CHARS = 300
+_MAX_OWNER_CHARS = 30
+_NOTIFY_LIMIT_BOUNDS = (0, 3)
 _MAX_NAME_CHARS = 20
 _MAX_BLOCKED_WORDS = 50
 _MAX_BLOCKED_WORD_CHARS = 20
@@ -76,6 +78,15 @@ class FishConfig:
     min_comment_likes: int = 0
     blocked_words: list[str] = field(default_factory=list)
     allow_top_level: bool = False
+    # Owner notification: the fish posts one public comment per day that
+    # mentions the owner's B站 account, so the recommendation arrives as a
+    # normal "@了你" message instead of waiting for the app to be opened.
+    # Default off: it is the only fish act that touches the owner's identity.
+    notify_owner: bool = False
+    # B站 resolves ``@昵称`` from the comment text, so the nickname must match
+    # the owner's profile exactly. Empty = read it from the main account's nav.
+    owner_name: str = ""
+    notify_daily_limit: int = 1
 
     def to_public_dict(self) -> dict[str, Any]:
         """Return a JSON-safe view for the settings UI."""
@@ -95,6 +106,9 @@ class FishConfig:
             "min_comment_likes": self.min_comment_likes,
             "blocked_words": list(self.blocked_words),
             "allow_top_level": self.allow_top_level,
+            "notify_owner": self.notify_owner,
+            "owner_name": self.owner_name,
+            "notify_daily_limit": self.notify_daily_limit,
         }
 
 
@@ -297,6 +311,21 @@ def parse_fish_config(raw: object) -> tuple[FishConfig, list[str]]:
         ),
         blocked_words=_clean_blocked_words(raw.get("blocked_words"), warnings=warnings),
         allow_top_level=_coerce_bool(raw.get("allow_top_level"), default=defaults.allow_top_level),
+        notify_owner=_coerce_bool(raw.get("notify_owner"), default=defaults.notify_owner),
+        owner_name=_clean_text(
+            raw.get("owner_name"),
+            default=defaults.owner_name,
+            max_chars=_MAX_OWNER_CHARS,
+            field_name="owner_name",
+            warnings=warnings,
+        ),
+        notify_daily_limit=_clamp_int(
+            raw.get("notify_daily_limit"),
+            default=defaults.notify_daily_limit,
+            bounds=_NOTIFY_LIMIT_BOUNDS,
+            field_name="notify_daily_limit",
+            warnings=warnings,
+        ),
     )
     return config, warnings
 

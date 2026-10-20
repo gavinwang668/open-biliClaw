@@ -110,3 +110,35 @@ def test_audience_prompt_round_trips_through_save(tmp_path) -> None:
 
     assert saved.audience_prompt == "只想回在找片单的人"
     assert load_fish_config(tmp_path).audience_prompt == "只想回在找片单的人"
+
+
+def test_owner_notification_defaults_to_off() -> None:
+    config = FishConfig()
+
+    assert config.notify_owner is False
+    assert config.owner_name == ""
+    assert config.notify_daily_limit == 1
+
+
+def test_parse_clamps_the_owner_notification_fields() -> None:
+    config, warnings = parse_fish_config(
+        {"notify_owner": "yes", "owner_name": "  " + "主" * 40, "notify_daily_limit": 99}
+    )
+
+    assert config.notify_owner is True
+    assert len(config.owner_name) == 30
+    assert config.notify_daily_limit == 3
+    assert any("notify_daily_limit" in warning for warning in warnings)
+
+
+def test_owner_name_survives_a_save_round_trip(tmp_path) -> None:
+    saved = save_fish_config(
+        tmp_path,
+        FishConfig(enabled=True, notify_owner=True, owner_name="老白", notify_daily_limit=2),
+    )
+
+    assert saved.notify_owner is True
+    assert saved.owner_name == "老白"
+    assert saved.notify_daily_limit == 2
+    reloaded = load_fish_config(tmp_path)
+    assert reloaded == saved

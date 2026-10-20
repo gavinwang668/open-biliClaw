@@ -8623,13 +8623,15 @@ def create_app(
 
         return _pin_active_runtime_config(load_config()).data_path
 
-    async def _fish_main_account() -> tuple[int, str]:
-        """Return (main mid, main cookie) with a short cache.
+    async def _fish_main_account() -> tuple[int, str, str]:
+        """Return (main mid, main cookie, main nickname) with a short cache.
 
-        Used only to prove the fish is not the owner's own account. A stale
-        answer is harmless (the fish cookie itself is also compared), so a
-        10-minute cache keeps the status endpoint from doing a nav call on
-        every poll.
+        ``mid`` proves the fish is not the owner's own account; ``cookie`` is
+        compared with the fish's; ``uname`` is the exact text the owner
+        notification has to mention (B站 resolves ``@昵称`` from the comment
+        text, so a stale nickname would silently drop the mention). A stale
+        answer is harmless, and a 10-minute cache keeps the status endpoint
+        from doing a nav call on every poll.
         """
         import time as _time
 
@@ -8640,13 +8642,14 @@ def create_app(
         cached = getattr(app.state, "fish_main_account_cache", None)
         now = _time.monotonic()
         if isinstance(cached, tuple) and now - float(cached[0]) < 600:
-            return int(cached[1]), str(cached[2])
+            return int(cached[1]), str(cached[2]), str(cached[3])
         cfg = _pin_active_runtime_config(load_config())
         cookie = resolve_runtime_cookie(
             data_dir=cfg.data_path,
             configured_cookie=str(getattr(cfg.bilibili, "cookie", "") or ""),
         )
         mid = 0
+        uname = ""
         if cookie:
             client = BilibiliAPIClient(
                 cookie=cookie,
@@ -8656,12 +8659,14 @@ def create_app(
                 nav = await client.get_nav_info()
                 if nav.is_login:
                     mid = int(nav.mid)
+                    uname = str(nav.uname or "")
             except Exception:  # noqa: BLE001 - isolation check degrades to cookie compare
                 mid = 0
+                uname = ""
             finally:
                 await client.close()
-        app.state.fish_main_account_cache = (now, mid, cookie)
-        return mid, cookie
+        app.state.fish_main_account_cache = (now, mid, cookie, uname)
+        return mid, cookie, uname
 
     def _fish_engine_for(data_dir: Any) -> Any:
         from openbiliclaw.bilibili.api import BilibiliAPIClient
@@ -8781,7 +8786,7 @@ def create_app(
             account.save_cookie(cookie)
         except ValueError as exc:
             return JSONResponse(status_code=400, content={"ok": False, "message": str(exc)})
-        main_mid, main_cookie = await _fish_main_account()
+        main_mid, main_cookie, _main_uname = await _fish_main_account()
         status = await account.status(main_mid=main_mid, main_cookie=main_cookie)
         if not status.authenticated or not status.isolated:
             account.clear_cookie()
