@@ -155,6 +155,19 @@ class BlueFishEngine:
 
         return self._llm is not None
 
+    @property
+    def has_pending_plan(self) -> bool:
+        """Whether a fresh discovery plan is already waiting to be acted on.
+
+        The loop uses this to avoid scanning comment sections every tick
+        while it is not allowed to speak (interval / quota): one plan in hand
+        is enough, and ``take_fresh`` expires the ones that go stale.
+        """
+
+        if self._plan_store is None:
+            return False
+        return bool(self._plan_store.pending(now=self._clock()))
+
     async def status(self) -> dict[str, Any]:
         """Return everything the settings panel needs in one call."""
         config = load_fish_config(self._data_dir)
@@ -692,7 +705,11 @@ async def run_fish_loop(
         try:
             config = load_fish_config(data_dir)
             if config.enabled and not config.dry_run:
-                if discovery_tick is not None and engine.llm_available:
+                if (
+                    discovery_tick is not None
+                    and engine.llm_available
+                    and not engine.has_pending_plan
+                ):
                     try:
                         await discovery_tick()
                     except asyncio.CancelledError:

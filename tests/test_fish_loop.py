@@ -14,9 +14,16 @@ from openbiliclaw.fish.engine import run_fish_loop
 class _StubEngine:
     """Only the slice ``run_fish_loop`` touches."""
 
-    def __init__(self, calls: list[str], *, llm_available: bool = True) -> None:
+    def __init__(
+        self,
+        calls: list[str],
+        *,
+        llm_available: bool = True,
+        pending_plan: bool = False,
+    ) -> None:
         self._calls = calls
         self.llm_available = llm_available
+        self.has_pending_plan = pending_plan
 
     async def run_once(self, **kwargs: Any) -> Any:
         self._calls.append("run")
@@ -109,3 +116,30 @@ async def test_the_loop_is_inert_when_the_lab_is_disabled(tmp_path) -> None:
         await task
 
     assert calls == []
+
+
+async def test_a_pending_plan_stops_further_comment_scans(tmp_path) -> None:
+    """One plan in hand is enough: the tick must not rescan while it waits."""
+
+    save_fish_config(tmp_path, FishConfig(enabled=True, dry_run=False))
+    calls: list[str] = []
+
+    async def _tick() -> None:
+        calls.append("discover")
+
+    task = asyncio.create_task(
+        run_fish_loop(
+            _StubEngine(calls, pending_plan=True),
+            data_dir=tmp_path,
+            discovery_tick=_tick,
+        )
+    )
+    for _ in range(200):
+        if "run" in calls:
+            break
+        await asyncio.sleep(0.01)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert calls == ["run"]
