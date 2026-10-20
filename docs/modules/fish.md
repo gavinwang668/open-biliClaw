@@ -282,6 +282,27 @@ CLI 若需要，后续可加 `openbiliclaw fish run`，当前只提供 HTTP 接�
 
 真实发评论属于需要授权的人工验证，不在单元测试里做。
 
+## 无凭据端到端自检
+
+没有真实 Cookie 时，用 `scripts/fish_e2e_stub.py` 走一遍完整链路：本地起一个只回答
+鱼会用到的那几个 B 站接口的假服务 + 一个 OpenAI 兼容的假模型，然后把**真实**的
+FastAPI app、runtime context、`comment_thread` 发现路线、候选流水线、引擎、
+`BilibiliAPIClient`（真实 HTTP）、SQLite、账本、计划和日报全部跑起来。
+
+```bash
+python scripts/fish_e2e_stub.py            # 临时数据目录，跑完删掉
+python scripts/fish_e2e_stub.py --keep    # 保留目录，方便翻 data/fish/*
+```
+
+它逐项断言（PASS/FAIL，最后打印 `E2E OK`，失败时 exit 1）：
+
+- 真实客户端通过 nav 完成小号登录，隔离校验接受独立账号；
+- 画像未就绪时发现路线安静返回 0；
+- 评论里的 BV 号变成候选、进评估队列，同时留下一张带评论快照的计划；
+- 回复轮消费计划、**不再二次抓评论**，发出带 `@` 的楼中楼（root/parent 正确）；
+- 通知的 `dm` 与 `both` 两种投递，私信带标题和视频链接；
+- 账本 `delivery`、日报三行、主人的推荐行未被鱼改动、全程只有一次模型调用。
+
 ## 真实账号联调
 
 单元测试全是 fake client，真实接口的形状只能靠这一组 `integration` 用例守：

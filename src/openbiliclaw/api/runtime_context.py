@@ -893,7 +893,19 @@ class RuntimeContext:
         if engine is None or self.soul_engine is None:
             return 0
         try:
-            profile = await self.soul_engine.get_profile()
+            from openbiliclaw.soul.engine import SoulProfileNotInitializedError
+
+            try:
+                profile = await self.soul_engine.get_profile()
+            except SoulProfileNotInitializedError:
+                # Before the first profile commit there is nothing to discover
+                # for; the loop retries on the next tick. Not an error worth a
+                # traceback every five minutes.
+                logger.debug(
+                    "discovery route %s skipped: soul profile not initialized",
+                    ",".join(str(item) for item in strategies),
+                )
+                return 0
             items = await engine.produce_candidates(
                 profile,
                 strategies=list(strategies),
