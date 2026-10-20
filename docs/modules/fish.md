@@ -109,6 +109,9 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 所有字段在读写两头钳制：越界就近取边界值、类型不对回落默认值，并在日志里
 `WARNING` 记一条 —— 一个坏数字不该把设置页打挂。
 
+`active_hours` 用**进程本地时区**判断；Docker 里默认是 UTC，想让「晚上 9 点」对上你的时间，
+给容器加 `TZ=Asia/Shanghai`。
+
 ## 作为 B 站发现的一路
 
 鱼不只是推荐链路下游的动作层：它同时是 B 站 discover 上的一个**只读**策略
@@ -260,7 +263,7 @@ CLI 若需要，后续可加 `openbiliclaw fish run`，当前只提供 HTTP 接�
 |---|---|
 | `tests/test_fish_config.py` | 默认值、钳制、坏 JSON、屏蔽词去重 |
 | `tests/test_fish_guard.py` | 全部守卫分支、字数 / 屏蔽词 / 清洗 |
-| `tests/test_fish_engine.py` | dry-run 不发布、发布路径的 root/parent/@、配额、跨天视频查重、账号隔离、skip、超长、只写账本 |
+| `tests/test_fish_engine.py` | dry-run 不发布、发布路径的 root/parent/@、配额、跨天视频查重、账号隔离、skip、超长、只写账本；通知的 comment / dm / both、私信部分失败、`trigger` 进 user 消息、本机时区时段、日报追加 |
 | `tests/test_fish_api.py` | 路由、配置往返、空 cookie 拒绝、Cookie 文件隔离、扫码登录（生成 / 落盘 / 主号拒绝回滚 / pending 不落盘），以及**发布后不影响用户侧**（推荐行仍是未处理、cognition 没被调用、候选池仍包含它） |
 | `tests/test_fish_comment_thread.py` | 发现路线：BV 号抽取、去重 / 排除种子、计划交接、关闭与无 Cookie 时零网络 |
 | `tests/test_fish_plan.py` | 计划队列：往返、同视频去重、上限、过期丢弃、坏文件降级 |
