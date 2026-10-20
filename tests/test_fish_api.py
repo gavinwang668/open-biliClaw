@@ -251,3 +251,97 @@ async def test_fish_publish_never_touches_the_owners_profile(tmp_path, monkeypat
     ledger = (tmp_path / "data" / "fish" / "ledger.jsonl").read_text(encoding="utf-8")
     assert f'"recommendation_id": {recommendation_id}' in ledger
     await client.aclose()
+
+
+# ── QR login ───────────────────────────────────────────────────────────
+
+
+def _qr_cookie_url(cookie: str = "SESSDATA=fish%2Csess; bili_jct=csrf; DedeUserID=222") -> str:
+    return f"https://passport.biligame.com/crossDomain?{cookie.replace('; ', '&')}"
+
+
+def _patch_qr(
+    monkeypatch,
+    *,
+    poll_status: str = "confirmed",
+    isolate: bool = True,
+    message: str = "",
+) -> None:
+    from openbiliclaw.bilibili.api import BilibiliAPIClient
+    from openbiliclaw.fish.account import FishAccount, FishAccountStatus
+
+    async def _generate(self):  # type: ignore[no-untyped-def]
+        return {
+            "qrcode_key": "key-1",
+            "url": "https://passport.bilibili.com/h5-app/passport/login/scan?qrcode_key=key-1",
+        }
+
+    async def _poll(self, qrcode_key: str):  # type: ignore[no-untyped-def]
+        return {
+            "status": poll_status,
+            "message": message,
+            "url": _qr_cookie_url() if poll_status == "confirmed" else "",
+            "qrcode_key": qrcode_key,
+        }
+
+    async def _status(self, *, main_mid: int = 0, main_cookie: str = ""):  # type: ignore[no-untyped-def]
+        return FishAccountStatus(
+            has_cookie=True,
+            authenticated=True,
+            mid=222,
+            uname="大肥鱼",
+            isolated=isolate,
+            message=message,
+        )
+
+    monkeypatch.setattr(BilibiliAPIClient, "generate_qrcode", _generate)
+    monkeypatch.setattr(BilibiliAPIClient, "poll_qrcode", _poll)
+    monkeypatch.setattr(FishAccount, "status", _status)
+
+
+async def test_qr_login_returns_a_scannable_svg(client, monkeypatch) -> None:
+    _patch_qr(monkeypatch)
+
+    response = await client.post("/api/fish/account/qrcode")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["qrcode_key"] == "key-1"
+    assert body["qrcode_image"].startswith("data:image/svg+xml;base64,")
+    assert body["expires_in"] == 180
+
+
+async def test_qr_login_saves_an_isolated_account(client, tmp_path, monkeypatch) -> None:
+    _patch_qr(monkeypatch)
+
+    response = await client.get("/api/fish/account/qrcode/poll", params={"qrcode_key": "key-1"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "logged_in"
+    assert payload["account"]["mid"] == 222
+    cookie_file = tmp_path / "data" / "fish" / "bilibili_cookie.json"
+    assert cookie_file.exists()
+    assert "SESSDATA=fish,sess" in cookie_file.read_text(encoding="utf-8")
+
+
+async def test_qr_login_rejects_the_owner_account(client, tmp_path, monkeypatch) -> None:
+    _patch_qr(monkeypatch, isolate=False, message="大肥鱼必须是一个独立的小号")
+
+    response = await client.get("/api/fish/account/qrcode/poll", params={"qrcode_key": "key-1"})
+
+    payload = response.json()
+    assert payload["ok"] is False
+    assert payload["status"] == "rejected"
+    assert "独立" in payload["message"]
+    assert not (tmp_path / "data" / "fish" / "bilibili_cookie.json").exists()
+
+
+async def test_qr_login_pending_writes_no_cookie(client, tmp_path, monkeypatch) -> None:
+    _patch_qr(monkeypatch, poll_status="pending")
+
+    response = await client.get("/api/fish/account/qrcode/poll", params={"qrcode_key": "key-1"})
+
+    assert response.json()["status"] == "pending"
+    assert not (tmp_path / "data" / "fish" / "bilibili_cookie.json").exists()

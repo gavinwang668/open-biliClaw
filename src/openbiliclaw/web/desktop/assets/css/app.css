@@ -1227,6 +1227,11 @@
     .settings-advanced-section-head { display: grid; gap: 4px; }
     .settings-advanced-section-head h3 { margin: 0; color: var(--fg); }
     .settings-advanced-section .settings-note-inline { margin: 0; }
+    /* QR login: force a light plate so the black-on-transparent SVG stays
+       scannable in dark mode. */
+    .fish-qr-box { display: flex; justify-content: center; padding: var(--space-2); }
+    .fish-qr-box[hidden] { display: none; }
+    .fish-qr-box img { width: 180px; height: 180px; padding: 10px; border-radius: var(--radius-md); background: #fff; }
     .settings-advanced-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); min-width: 0; }
     .settings-advanced-toggle { display: flex; align-items: center; gap: var(--space-3); min-width: 0; min-height: 42px; padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--surface); color: var(--fg); font-weight: 650; }
     .settings-advanced-toggle input { width: auto; min-width: 18px; margin: 0; accent-color: var(--accent); }

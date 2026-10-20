@@ -8797,6 +8797,106 @@ def create_app(
             }
         return {"ok": True, "message": "大肥鱼登录成功。", "account": _fish_account_payload(status)}
 
+    @app.post("/api/fish/account/qrcode", response_model=None)
+    async def fish_account_qrcode(request: Request) -> dict[str, Any] | JSONResponse:
+        """Create a QR login session for the fish's own account.
+
+        The QR is rendered on the backend as an SVG data URL so both settings
+        panels only have to set an ``<img>`` src. The cookie is only written
+        by the poll endpoint, after B站 confirms the scan.
+        """
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.fish.qr import qr_svg_data_url
+
+        client = BilibiliAPIClient(cookie="", proxy=_fish_bilibili_proxy())
+        try:
+            data = await client.generate_qrcode()
+        except Exception as exc:  # noqa: BLE001 - surfaced to the settings panel
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "message": f"生成二维码失败：{exc}"},
+            )
+        finally:
+            await client.close()
+
+        qrcode_key = str(data.get("qrcode_key") or "").strip()
+        qrcode_url = str(data.get("url") or "").strip()
+        if not qrcode_key or not qrcode_url:
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "message": "B 站没有返回二维码内容"},
+            )
+        return {
+            "ok": True,
+            "qrcode_key": qrcode_key,
+            "qrcode_image": qr_svg_data_url(qrcode_url),
+            "expires_in": 180,
+        }
+
+    @app.get("/api/fish/account/qrcode/poll", response_model=None)
+    async def fish_account_qrcode_poll(
+        request: Request, qrcode_key: str = Query(...)
+    ) -> dict[str, Any] | JSONResponse:
+        """Poll the fish QR session; persist the cookie once B站 confirms it.
+
+        The same isolation rule as the paste path applies: an account whose
+        mid or cookie matches the owner's is rejected and the freshly written
+        cookie is rolled back, so a mis-scan can never leave the fish pointing
+        at the owner's own account.
+        """
+        denied = _bilibili_credential_gate(request)
+        if denied is not None:
+            return denied
+        from openbiliclaw.bilibili.api import BilibiliAPIClient
+        from openbiliclaw.fish.account import FishAccount
+
+        client = BilibiliAPIClient(cookie="", proxy=_fish_bilibili_proxy())
+        try:
+            data = await client.poll_qrcode(qrcode_key)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the settings panel
+            return JSONResponse(
+                status_code=502,
+                content={"ok": False, "status": "error", "message": f"二维码状态查询失败：{exc}"},
+            )
+        finally:
+            await client.close()
+
+        status = str(data.get("status") or "pending")
+        if status != "confirmed":
+            return {"ok": True, "status": status, "message": str(data.get("message") or "")}
+
+        cookie = _qr_cookie_header(str(data.get("url") or ""))
+        if not cookie:
+            return {
+                "ok": False,
+                "status": "error",
+                "message": "二维码已确认，但没有拿到 Cookie，请重试或改用粘贴。",
+            }
+        account = FishAccount(_fish_data_dir())
+        try:
+            account.save_cookie(cookie)
+        except ValueError as exc:
+            return {"ok": False, "status": "rejected", "message": str(exc)}
+        main_mid, main_cookie, _main_uname = await _fish_main_account()
+        account_status = await account.status(main_mid=main_mid, main_cookie=main_cookie)
+        if not account_status.authenticated or not account_status.isolated:
+            account.clear_cookie()
+            return {
+                "ok": False,
+                "status": "rejected",
+                "message": account_status.message,
+                "account": _fish_account_payload(account_status),
+            }
+        return {
+            "ok": True,
+            "status": "logged_in",
+            "message": "大肥鱼登录成功。",
+            "account": _fish_account_payload(account_status),
+        }
+
     @app.delete("/api/fish/account", response_model=None)
     async def fish_clear_account(request: Request) -> dict[str, Any] | JSONResponse:
         """Forget the fish cookie."""
@@ -24986,6 +25086,10 @@ def create_app(
             html = html.replace(
                 'src="/web/assets/js/chat-agent-core.js"',
                 f'src="/web/assets/js/chat-agent-core.js?v={version}"',
+            )
+            html = html.replace(
+                'src="/web/assets/js/fish-settings.js"',
+                f'src="/web/assets/js/fish-settings.js?v={version}"',
             )
             html = html.replace(
                 'src="/shared/agent-chat.js"',

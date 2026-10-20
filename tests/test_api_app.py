@@ -1649,6 +1649,7 @@ class TestBackendAPI:
         assert 'href="/web/assets/css/classic.css?v=' in response.text
         assert 'src="/web/assets/js/app.js?v=' in response.text
         assert 'src="/web/assets/js/chat-agent-core.js?v=' in response.text
+        assert 'src="/web/assets/js/fish-settings.js?v=' in response.text
         assert 'src="/shared/agent-chat.js?v=' in response.text
 
     def test_mobile_web_index_exposes_home_screen_metadata(self) -> None:

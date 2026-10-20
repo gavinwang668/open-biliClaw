@@ -50,6 +50,18 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 `AuthManager` 本来就按 `data_dir` 存 `<data_dir>/bilibili_cookie.json`，所以用
 `FishAccount(data_dir)` 拿到的就是一个完全独立的鉴权实例，没有改动现有鉴权代码。
 
+登录有两种方式，两条路走同一个隔离校验：
+
+- **扫码**（推荐）：设置页点「扫码登录」，用鱼那个号的手机 B 站扫面板上的码。
+  后端调 `/x/passport-login/web/qrcode/generate` + `poll`，确认后从返回的跨域 URL 里
+  取出 Cookie 再走 `save_cookie` + `status`；确认时选「记住我 / 长期」，选 24 小时第二天就得重扫。
+  二维码由后端用 `qrcode` 直接渲染成 SVG data URL（`fish/qr.py`），前端只设置 `<img src>`，
+  不引第三方图片服务。
+- **粘贴 Cookie**：原来的方式，适合已经有 Cookie 串的场景。
+
+扫码登录**同样会拒绝主号**：扫码确认后如果 `mid` 或 Cookie 与主号相同，刚写下的 Cookie
+会立刻回滚并返回「必须是一个独立的小号」。
+
 ## 数据布局
 
 ```
@@ -196,6 +208,8 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 | GET | `/api/fish/config` | 读配置（已钳制） |
 | PUT | `/api/fish/config` | 改配置，逐字段钳制，返回生效值 |
 | POST | `/api/fish/account` | 校验并保存鱼 cookie（与主号相同时拒绝并回滚） |
+| POST | `/api/fish/account/qrcode` | 生成扫码登录的二维码（返回 `qrcode_key` + SVG data URL，180 秒有效） |
+| GET | `/api/fish/account/qrcode/poll?qrcode_key=` | 轮询扫码状态；`confirmed` 时落 Cookie 并按隔离规则校验，失败回滚 |
 | DELETE | `/api/fish/account` | 清除鱼 cookie |
 | POST | `/api/fish/run` | 跑一轮（`dry_run` 可覆盖配置） |
 | GET | `/api/fish/ledger?limit=50` | 读账本，最新在前 |
@@ -238,7 +252,7 @@ CLI 若需要，后续可加 `openbiliclaw fish run`，当前只提供 HTTP 接�
 | `tests/test_fish_config.py` | 默认值、钳制、坏 JSON、屏蔽词去重 |
 | `tests/test_fish_guard.py` | 全部守卫分支、字数 / 屏蔽词 / 清洗 |
 | `tests/test_fish_engine.py` | dry-run 不发布、发布路径的 root/parent/@、配额、跨天视频查重、账号隔离、skip、超长、只写账本 |
-| `tests/test_fish_api.py` | 路由、配置往返、空 cookie 拒绝、Cookie 文件隔离，以及**发布后不影响用户侧**（推荐行仍是未处理、cognition 没被调用、候选池仍包含它） |
+| `tests/test_fish_api.py` | 路由、配置往返、空 cookie 拒绝、Cookie 文件隔离、扫码登录（生成 / 落盘 / 主号拒绝回滚 / pending 不落盘），以及**发布后不影响用户侧**（推荐行仍是未处理、cognition 没被调用、候选池仍包含它） |
 | `tests/test_fish_comment_thread.py` | 发现路线：BV 号抽取、去重 / 排除种子、计划交接、关闭与无 Cookie 时零网络 |
 | `tests/test_fish_plan.py` | 计划队列：往返、同视频去重、上限、过期丢弃、坏文件降级 |
 | `tests/test_fish_loop.py` | tick 顺序：先发现后动作、发现失败不挡动作、关闭时完全不动 |

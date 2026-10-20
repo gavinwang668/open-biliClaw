@@ -186,3 +186,16 @@ OpenBiliClaw 已经能发现内容、理解用户、写推荐语。缺的是**�
   （`status="notified"`、`mode="notify"`），并计入最小间隔和 `per_video_limit`。
 - 默认关闭的理由：评论是公开的，@ 主号等于公开把两个号关联；没配昵称或主号昵称读不到时
   不发、静默回落成普通回复。
+
+## 14. 2026-10-20 增补：扫码登录小号
+
+只支持粘贴 Cookie 让配置门槛偏高（要会从浏览器里复制 SESSDATA / bili_jct）。补上扫码：
+
+- 后端 `POST /api/fish/account/qrcode` 调 `/x/passport-login/web/qrcode/generate`，
+  把登录 URL 用 `qrcode` 渲染成 SVG data URL 返回；`GET /api/fish/account/qrcode/poll`
+  轮询状态，`confirmed` 时从跨域 URL 提取 Cookie、`save_cookie`、再跑一遍隔离校验。
+- 前端两个设置面板共用同一套流程：点「扫码登录」→ 显示二维码 → 每 2 秒轮询 →
+  `scanned` / `expired` / `logged_in` / `rejected` 各自给一句人话。
+- 隔离规则不变：扫到主号（mid 或 Cookie 相同）立刻回滚 Cookie 并拒绝；
+  `pending` 阶段不写任何 Cookie。
+- 二维码在深色主题下也要能扫，所以 `<img>` 固定白底。
