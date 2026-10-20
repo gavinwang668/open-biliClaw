@@ -166,6 +166,10 @@ durable turn → 固定时间/payload → 确认入口（待聊列表/卡片） 
 ### 推荐交互一致性
 
 ```text
+config save → safe API handoff → settled queue → parent supervisor
+            → confirm old children exited → reload workers / recommendation / images
+            → same locked data directory + durable candidate recovery
+
 recommendation request → main API → default Unix-socket recommendation process
                                   → current SQLite snapshot → full ranking worker
                                   → atomic history + shown COMMIT → cards + exact platform inventory

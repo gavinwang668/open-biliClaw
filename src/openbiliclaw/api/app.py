@@ -2591,6 +2591,9 @@ def create_app(
     config_runtime_reload_lock = asyncio.Lock()
     config_apply_task: asyncio.Task[None] | None = None
     config_apply_pending: _QueuedConfigApply | None = None
+    # Parent process supervisors use this committed generation to replace
+    # delegated evaluators that otherwise retain stale providers indefinitely.
+    app.state.backend_config_generation = 0
     config_apply_revision = 0
     config_applied_revision = 0
     config_apply_state: Literal["idle", "queued", "applying", "applied", "failed"] = "idle"
@@ -3561,6 +3564,7 @@ def create_app(
                     run_post_reload_llm_work=run_post_reload_llm_work,
                     resume_execution_lanes=resume_execution_lanes,
                 )
+                app.state.backend_config_generation += 1
             except BaseException:
                 # Rebuild is atomic: on construction failure ctx still exposes the
                 # old runtime; after publication it exposes the new one. Resolve at

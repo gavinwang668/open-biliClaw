@@ -74,6 +74,8 @@ Discovery 配置模型也公开 `eval_scorer="llm|shadow|learned"`。`GET /api/c
 
 ## 配置保存与后台应用
 
+多进程部署：完整 `_rebuild_runtime_with_lane_handoff()` 成功后才递增 app-owned `backend_config_generation`，父 supervisor 等待整条配置队列结束后重启子进程，使后台评估、推荐文案和推荐服务一起读取新配置。构造失败不发布 generation，后置恢复失败先回滚；仅已知聊天字段局部应用不触发重启。该 generation 是进程内协作接口，不新增 HTTP 字段；API 的 `applied` 表示主运行时已完成，后台子进程会在下一次约 5 秒巡检切换，实际运行状态仍看 worker heartbeat。
+
 `PUT /api/config` 把“持久化成功”和“运行时已经切换”分成两个明确阶段。请求仍在 `_CONFIG_SAVE_LOCK` 内完成校验、`config.toml.bak` 快照、`config.toml` 写入和凭据存储，然后统一立即返回 `202 apply_state="queued"`、`apply_revision` 与已脱敏配置快照；运行时 lane 由 app-owned latest-wins 队列在后台安全应用，前端通过 `GET /api/config/apply-status` 或 runtime event 观察终态，不把 202 当作失败。
 
 `GET /api/config` 和 `PUT /api/config` 同时公开 B 站发布日期偏好：`recommendation_date_preset`、

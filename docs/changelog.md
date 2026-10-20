@@ -4,6 +4,9 @@
 
 ## v0.3.229：TikTok 新来源、远程访问安全收紧与 B 站登录失效横幅死锁修复（2026-10-16）
 
+- 修复多进程补池配置不生效：API 热重载曾只更新主进程，discovery worker 继续持有旧模型或暂停状态，导致已有原始候选却没有可推荐内容。桌面与 `start` / `serve-api` 统一监督后台进程，设置队列成功结束后重启读取配置快照的子进程；先确认旧进程退出，保留父入口锁定的数据目录，失败回滚/排队修订期间不切到中间配置。增加真实子进程 + SQLite 的候选评估、入池与文案回归（可推荐数 0 → 1）。详见 [诊断与验证](testing/2026-10-20-empty-pool-recovery.md)。
+- 补充空池修复的真实请求验收：本机 B 站、模型、Ollama、主 API 及四个子进程的推荐 HTTP 链路完成 `0 → 3 → 消费后 0 → 自动补回 1`，画像及评分门槛未变；同时保留原主备模型的 429/500 失败证据，成功轮次明确使用隔离实例中切换的可用模型。详见 [真实请求验收](testing/2026-10-21-empty-pool-live-requests.md)。
+
 - **蓝鱼实验室「养蓝色大肥鱼」（实验性，默认关闭）**：新增 `src/openbiliclaw/fish/`，一只**独立的小号**从推荐池挑视频、读评论区、挑一条评论回复并 @ 对方。账号隔离是硬约束——凭证独立存在 `<data_dir>/fish/bilibili_cookie.json`，绝不回退主账号 cookie，鱼的 mid 或 cookie 与主号相同即拒绝运行；配置与追加式账本都在 `data/fish/`，删目录即重置。它是**动作层而非第二套管线**：候选直接取已评估的推荐池（`exclude_processed=True`），模型只负责挑评论与写回复；发布后的评论**只写鱼自己的账本**，不写推荐反馈、不把推荐行标成已评论、不触发 cognition，用户画像与推荐列表都不受鱼的影响；等级与配额由账本推导，没有独立的 `state.json`，查重也只看账本（`bvid:rpid` + 跨天累计的单视频上限）。默认 `dry_run` 只预览，真实发布前还要过日配额、最小间隔、单视频上限、`bvid:rpid` 查重、字数与屏蔽词、`allow_top_level` 代码级判断六道硬闸；连续 3 条失败且最近一次在 60 分钟内时定时轮自动暂停（手动触发可绕过）。评论按 `cursor.next` 翻页取满（最多 5 页，老返回结构仍单请求）；新增可选的 `audience_prompt`「只回哪类人」，进 user 消息的 `<audience>` 段；发布成功后把 B 站返回的 `reply_rpid` 记进账本。新增 `/api/fish/{status,config,account,run,ledger}` 七个接口（写操作走 B 站凭据门禁，`config/status/account/ledger` 在 degraded 模式仍可用），桌面 Web 与扩展 popup 设置页各新增「养蓝色大肥鱼」Tab，人设与说话规矩可直接编辑。提示词遵守缓存约定（静态 system + user 携带人设/视频/评论/约束）。详见 [蓝鱼实验室](modules/fish.md) 与 [设计说明](plans/2026-10-19-blue-fish-lab-spec.md)。
 
 - **蓝鱼成为 B 站发现的一路**：新增只读策略 `CommentThreadStrategy`（`comment_thread`），从已评估推荐池取 1–3 个种子（先按鱼账本跳过已回过的视频与评论）读评论区，把评论里点名的 BV 号还原成 `DiscoveredContent` 交给统一 batch evaluator；同一趟把「种子视频 + 评论快照」写进 `data/fish/plans.json`（最多 3 条、45 分钟过期），由动作层在原有隔离 / 熔断 / 配额 / 间隔 / 账本查重闸门内执行，`discover()` 本身绝不发帖。动作层优先消费计划（不再重复抓评论），没有计划时回退到原推荐池路径。路线只在 API runtime 注册（CLI 没有动作层），实验室关闭或没有独立 Cookie 时零网络请求。详见 [蓝鱼实验室](modules/fish.md#作为-b-站发现的一路)。

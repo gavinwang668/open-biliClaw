@@ -9,6 +9,8 @@
 
 ## The only thing you actually need to do
 
+Runtime recovery on this branch: saving a repaired model through the local settings API now also restarts delegated backend workers after the apply queue settles. Source, Docker and desktop entry points share this behavior; no install command or new dependency is required. On older builds, fully quit/reopen the tray app (or restart the daemon/container) after correcting the model; refreshing the browser does not update a running evaluator. See [pool recovery diagnostics](testing/2026-10-20-empty-pool-recovery.md).
+
 Source-branch dependency note (Instagram/image transport): normal Python dependency installation now requires `httpx[socks]>=0.28` and explicit `httpcore>=1.0,<2`; no extra daemon or installer step is needed. Proxied overseas cover downloads require TLS-verified `https://1.1.1.1/dns-query` reachability through the configured proxy. Only public CDN hostnames are queried; see [privacy](privacy.md). Do not disable TLS verification or public-IP validation to fix a network failure. Installer commands and their post-install summary are unchanged; this does not claim the branch has been released.
 
 Pick the command for the user's shell — **detect the platform from the user's environment, do not let them choose if you can tell**:

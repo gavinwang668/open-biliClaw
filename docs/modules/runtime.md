@@ -26,12 +26,17 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 ## 已实现功能
 
+多进程补池配置恢复：主 API 成功完成完整 runtime handoff 后发布进程内配置 generation；桌面入口与 `start` / `serve-api` 共用 supervisor，设置队列完全结束后在下一次 5 秒巡检停止旧子进程并重新构建 worker、discovery worker、推荐服务与图片服务。配置修好后不再让补池 evaluator 永久使用旧 provider。启动时重新领取 durable 候选，并复用已有失败候选复活策略；不降低评分或可推荐文案门槛。已知聊天设置的局部应用不重启后台。
+
+2026-10-21 本机真实请求验收已覆盖主 API + 四个子进程、B 站自动抓取、模型评分、推荐文案、本地 embedding、HTTP 推荐消费与再次自动补池，canonical available 为 `0 → 3 → 0 → 1`。原主备模型的批量请求另有 429/500 服务端阻塞，成功轮次切换了实际可用模型，详见 [条件与证据](../testing/2026-10-21-empty-pool-live-requests.md)。
+
 已知聊天配置局部应用：配置队列只在完整候选差异限于已知五项 agent 字段时替换 loop，保留所有后台 owner；严格相等的配置直接完成修订。白名单外差异仍安全排空后完整重建。
 
 资格来自显式聊天配置审批；普通设置保存保持完整重载，以应用 Cookie jar 等配置对象外的变化。合并 pending 修订或接替失败修订时保留完整重建要求。
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
+| 多进程配置恢复 | ✅（进程级回归） | 完整配置应用后由父 supervisor 替换旧 worker，等待队列结束和旧 owner 退出，固定 active data path，保留候选继续评估与文案入池。 |
 | Instagram 手动补库 | ✅（自动化） | 普通刷新实际调用来源 producer；scheduler 关闭仍可同步评估和生成文案；失败不包装成空跑成功。 |
 | 封面 DNS/IP 安全边界 | ✅（自动化） | 每次抓取/重定向解析全部地址并拒绝非公网；连接固定 IP，保留 CDN 的 Host/TLS 校验；HTTP CONNECT 和 SOCKS5 同样使用数字目的地址。 |
 | Instagram 显式初始化补池 | ✅（自动化） | 本轮来源选择驱动正式 producer；新建/恢复 task 在 kick 前归属当前 init；小批量 flush 后同步生成推荐表达，scheduler 可保持关闭。完整真站验收边界见 Instagram 台账。 |
@@ -138,6 +143,8 @@ RuntimeContext 重建 RecommendationEngine 时透传视觉开关、帧数、两�
 后新 embedding provenance 会重新筛选待处理池。
 
 ## 公开 API
+
+`proc.ChildProcessSupervisor(..., config_generation_provider=...)` 接受返回 `int | None` 的进程内版本读取器；`None` 表示设置队列尚未完成，暂缓配置驱动的重启。`proc.backend_config_generation(app)` 读取 API 成功 handoff 后递增的 `app.state.backend_config_generation`，并在 `config_apply_task` 仍运行时返回 `None`，合并排队修订与失败回滚期间不会拉起中间配置。旧 child 的 terminate / kill 均需确认退出后才能启动替代 claim owner；无法停止时保留旧指针并在下次巡检重试。`proc.backend_child_env(app, **overrides)` 把父进程锁定的 active data path 传给所有子进程，数据目录变更仍需完整应用重启。
 
 `RuntimeContext.try_apply_agent_config(config) -> bool` 是配置队列在 reload lock 内使用的同步发布入口：仅允许已知五项聊天配置差异（详见 [配置模块](config.md)），构造新 `AgentLoop` 后同步更新 runtime/tool-context 配置引用。完整候选严格相等时不替换任何组件并返回成功。在途 loop、LLM service、工具、审批 store、画像与学习队列均保留；其他差异返回 `False`，由调用方继续原完整 handoff。成功仍由原队列维护 last-good、修订号和事件通知。
 
