@@ -98,6 +98,8 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 | `max_candidates` | `5` | 每轮看几个视频（1–20） |
 | `comments_per_video` | `10` | 每个视频取几条评论（1–50） |
 | `min_comment_likes` | `0` | 只回点赞 ≥ N 的评论（0–10000） |
+| `min_view_count` | `0` | 只回播放量 ≥ N 的视频（0 = 不限；0–10000000）。开启后统计缺失的候选会被挡掉 |
+| `min_publish_age_days` | `0` | 只在发布 ≥ N 天后回（0 = 不限；0–365）。开启后没有可解析发布时间的候选同样挡掉 |
 | `blocked_words` | `[]` | 命中即丢弃这条回复（最多 50 个） |
 | `allow_top_level` | `false` | 是否允许发顶层评论 |
 | `notify_owner` | `false` | 每天在评论区 @ 主人一次，把一条推荐送进主人的 B 站消息 |
@@ -216,7 +218,7 @@ Tab（点了才发请求），启动时多一个每 5 分钟醒一次、只看�
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/fish/status` | 开关、账号、等级 / 经验（由账本推导）、今日计数、最近 20 条账本 |
+| GET | `/api/fish/status` | 开关、账号、等级 / 经验（由账本推导）、今日计数、最近 20 条账本、`today_report`（今日日报全文） |
 | GET | `/api/fish/config` | 读配置（已钳制） |
 | PUT | `/api/fish/config` | 改配置，逐字段钳制，返回生效值 |
 | POST | `/api/fish/account` | 校验并保存鱼 cookie（与主号相同时拒绝并回滚） |
@@ -263,7 +265,7 @@ CLI 若需要，后续可加 `openbiliclaw fish run`，当前只提供 HTTP 接�
 |---|---|
 | `tests/test_fish_config.py` | 默认值、钳制、坏 JSON、屏蔽词去重 |
 | `tests/test_fish_guard.py` | 全部守卫分支、字数 / 屏蔽词 / 清洗 |
-| `tests/test_fish_engine.py` | dry-run 不发布、发布路径的 root/parent/@、配额、跨天视频查重、账号隔离、skip、超长、只写账本；通知的 comment / dm / both、私信部分失败、`trigger` 进 user 消息、本机时区时段、日报追加 |
+| `tests/test_fish_engine.py` | dry-run 不发布、发布路径的 root/parent/@、配额、跨天视频查重、账号隔离、skip、超长、只写账本；通知的 comment / dm / both、私信部分失败、`trigger` 进 user 消息、本机时区时段、日报追加、质量门槛、状态页日报 |
 | `tests/test_fish_api.py` | 路由、配置往返、空 cookie 拒绝、Cookie 文件隔离、扫码登录（生成 / 落盘 / 主号拒绝回滚 / pending 不落盘），以及**发布后不影响用户侧**（推荐行仍是未处理、cognition 没被调用、候选池仍包含它） |
 | `tests/test_fish_comment_thread.py` | 发现路线：BV 号抽取、去重 / 排除种子、计划交接、关闭与无 Cookie 时零网络 |
 | `tests/test_fish_plan.py` | 计划队列：往返、同视频去重、上限、过期丢弃、坏文件降级 |

@@ -1071,3 +1071,84 @@ async def test_the_report_appends_one_bullet_per_attempt(tmp_path) -> None:
     text = (tmp_path / "fish" / "out" / f"{NOW.date().isoformat()}.md").read_text(encoding="utf-8")
     assert text.count("- ") == 2
     assert text.count("# 大肥鱼日报") == 1
+
+
+# ── supply quality gates ───────────────────────────────────────────────
+
+
+async def test_min_view_count_blocks_a_low_view_candidate(tmp_path) -> None:
+    engine, client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, min_view_count=1000),
+        candidates=[_candidate(view_count=12)],
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "quality_gate"
+    assert client.posts == []
+
+
+async def test_min_view_count_allows_a_popular_candidate(tmp_path) -> None:
+    engine, client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, min_view_count=1000),
+        candidates=[_candidate(view_count=50_000)],
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "published"
+    assert len(client.posts) == 1
+
+
+async def test_publish_age_gate_blocks_fresh_and_undated_videos(tmp_path) -> None:
+    fresh = _candidate(published_at=(NOW - timedelta(hours=6)).isoformat())
+    undated = _candidate(bvid="BV1undated01", published_at="")
+
+    for candidate in (fresh, undated):
+        engine, client, _llm, _store = _build(
+            tmp_path / candidate.bvid,
+            config=FishConfig(enabled=True, dry_run=False, min_publish_age_days=3),
+            candidates=[candidate],
+        )
+        result = await engine.run_once(trigger="manual")
+        assert result.status == "quality_gate", candidate.bvid
+        assert client.posts == []
+
+
+async def test_publish_age_gate_allows_an_old_video(tmp_path) -> None:
+    old = _candidate(published_at=(NOW - timedelta(days=10)).isoformat())
+    engine, client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, min_publish_age_days=3),
+        candidates=[old],
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "published"
+    assert len(client.posts) == 1
+
+
+async def test_quality_gates_are_off_by_default(tmp_path) -> None:
+    engine, client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False),
+        candidates=[_candidate(view_count=0, published_at="")],
+    )
+
+    result = await engine.run_once(trigger="manual")
+
+    assert result.status == "published"
+    assert len(client.posts) == 1
+
+
+async def test_today_report_is_exposed_on_the_status_endpoint(tmp_path) -> None:
+    engine, _client, _llm, _store = _build(tmp_path, config=FishConfig(enabled=True, dry_run=False))
+    await engine.run_once(trigger="manual")
+
+    status = await engine.status()
+
+    assert "大肥鱼日报" in status["today_report"]
+    assert "一条测试视频" in status["today_report"]

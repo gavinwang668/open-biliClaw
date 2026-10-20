@@ -1496,7 +1496,7 @@
               <h3 id="fishIntroHeading">养蓝色大肥鱼</h3>
             </div>
             <p class="settings-note-inline">大肥鱼是一个独立的小号，有自己的 Cookie、自己的人设和自己的账本。</p>
-            <p class="settings-note-inline">它会挑一条评论回复并 @ 对方；打开下面的通知后，还会每天发一条 @ 你的评论，把一条推荐直接送到你的 B 站消息里。默认只预览不发布；如果它用的账号就是你自己，它会直接拒绝运行。</p>
+            <p class="settings-note-inline">它会挑一条评论回复并 @ 对方；打开下面的通知后，还会每天挑一条推荐告诉你（评论区 @ 你、私信你，或两个都发）。默认只预览不发布；如果它用的账号就是你自己，它会直接拒绝运行。</p>
             <div class="settings-advanced-fields">
               <label class="settings-advanced-toggle"><input id="fishEnabled" type="checkbox"><span>启用「养蓝色大肥鱼」（实验室）</span></label>
               <label class="settings-advanced-toggle"><input id="fishDryRun" type="checkbox"><span>只预览不发布（推荐保持开启）</span></label>
@@ -1573,6 +1573,8 @@
               <label class="settings-field"><span>每轮看几个视频</span><input id="fishMaxCandidates" type="number" min="1" max="20" step="1" inputmode="numeric" placeholder="5"></label>
               <label class="settings-field"><span>每个视频看几条评论</span><input id="fishCommentsPerVideo" type="number" min="1" max="50" step="1" inputmode="numeric" placeholder="10"></label>
               <label class="settings-field"><span>只回点赞 ≥</span><input id="fishMinLikes" type="number" min="0" max="10000" step="1" inputmode="numeric" placeholder="0"></label>
+              <label class="settings-field"><span>只回播放量 ≥（0 = 不限）</span><input id="fishMinViews" type="number" min="0" max="10000000" step="1" inputmode="numeric" placeholder="0"></label>
+              <label class="settings-field"><span>只在发布几天后回（0 = 不限）</span><input id="fishMinAgeDays" type="number" min="0" max="365" step="1" inputmode="numeric" placeholder="0"></label>
               <label class="settings-field full"><span>屏蔽词（逗号分隔）</span><input id="fishBlockedWords" type="text" autocomplete="off" placeholder="剧透, 广告"></label>
               <label class="settings-advanced-toggle"><input id="fishAllowTopLevel" type="checkbox"><span>允许它在视频下发顶层评论</span></label>
             </div>
@@ -1591,6 +1593,10 @@
             </div>
             <p class="settings-probe-status" id="fishRunResult" aria-live="polite"></p>
             <ul class="settings-note-inline" id="fishLedger" style="list-style:none;padding:0;margin:12px 0 0"></ul>
+            <details class="fish-report">
+              <summary>今日日报</summary>
+              <pre id="fishReport"></pre>
+            </details>
           </section>
         </div>
 
