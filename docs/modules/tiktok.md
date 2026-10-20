@@ -1,5 +1,7 @@
 # TikTok 模块（实验性）
 
+交付状态：已随 v0.3.229 发布，仍为实验性、默认关闭。公开发现与登录后关键词搜索已有实测；非空真实账号画像、周期增量和 Firefox 登录态仍待验，站内收藏暂缓。发布状态与能力验收分开记录，最新证据见 [验收台账](../platform-source-acceptance.tiktok.md)。
+
 ## 概述
 
 TikTok 模块把 TikTok 公开短视频接入 OpenBiliClaw 的 discovery 候选供给，对应 issue #88。模块现有**两个可切换的后端**，由 `[sources.tiktok].mode` 选择：

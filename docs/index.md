@@ -107,7 +107,7 @@
 
 ### TikTok 来源验收补全（2026-10-04）
 
-TikTok discovery-only 接入的冻结范围、排除项与验证证据见 [契约](platform-source-contract.tiktok.toml) 和 [验收记录](platform-source-acceptance.tiktok.md)。
+TikTok 已随 v0.3.229 发布，仍为实验性、默认关闭。公开发现与登录后搜索已有实测；非空账号画像、周期增量及 Firefox 登录态待验，站内收藏暂缓。各能力的契约与最新证据分别见 [契约](platform-source-contract.tiktok.toml) 和 [验收记录](platform-source-acceptance.tiktok.md)。
 
 - [桌面打包与 macOS 签名公证](modules/packaging.md) — 本机凭据、CI Secrets、正式与实验安装包及验收。
 

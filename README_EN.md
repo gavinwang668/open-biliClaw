@@ -32,10 +32,10 @@ Source mirror in China: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo23
 
 > **New sources: Instagram & TikTok** — both experimental and disabled by default.
 >
-> - **Instagram**, included since v0.3.227: discover topics and creators, and optionally import your likes, saves, and follows to build a profile. [Setup](docs/modules/instagram.md) · [Tested scope](docs/platform-source-acceptance.instagram.md).
-> - **TikTok**, included since v0.3.229: discover feed, hashtag, and creator videos, plus keyword search after browser login. Real discovery, model evaluation, recommendations, and desktop/mobile Web rendering have passed acceptance. [Setup](docs/modules/tiktok.md) · [Tested scope](docs/platform-source-acceptance.tiktok.md).
+> - **Instagram**, included since v0.3.227 and still experimental: discover topics and creators; after granting site access and signing in within the same browser, import a bounded, read-only snapshot of your recent likes, saves, and follows. Recommendation-card saves stay local. [Setup](docs/modules/instagram.md) · [Tested scope](docs/platform-source-acceptance.instagram.md).
+> - **TikTok**, included since v0.3.229 and still experimental: discover public feed, hashtag, and creator videos without signing in, plus keyword search after browser login. Public discovery → real model evaluation → recommendations and desktop/mobile Web rendering have been exercised. [Setup](docs/modules/tiktok.md) · [Tested scope](docs/platform-source-acceptance.tiktok.md).
 >
-> TikTok native favorites are deferred; nonempty real-account profiling and incremental sync still need verification ([#295](https://github.com/whiteguo233/OpenBiliClaw/issues/295)). Instagram's full Likes history, second-account and Firefox/mobile-device checks remain incomplete; refresh to see cross-device save changes. Neither source claims complete account-capability acceptance.
+> TikTok native favorites are deferred; nonempty real-account profiling, incremental sync, and signed-in Firefox still need verification ([#295](https://github.com/whiteguo233/OpenBiliClaw/issues/295)). Instagram's full Likes history, second-account, signed-in Firefox, and physical-phone checks remain incomplete; refresh to see cross-device save changes. Neither source claims complete account-capability acceptance.
 
 A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, TikTok, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, experimental Instagram, and the open web — without handing your profile to another platform.
 
@@ -710,7 +710,7 @@ localhost-only. The two edges are mutually exclusive, and the default HTTP path 
 | **Xiaohongshu** | passive collection · search · creator subscriptions · init import | Extension reads your logged-in pages; zero backend crawling |
 | **Douyin** | init import · search · hot · feed | CLI and daemon share the formal producer; extension background tabs fetch candidates for the unified eval pool |
 | **YouTube** | init import · Takeout offline import · search / trending / channel | Extension reads profile signals; steady-state refill is backend-direct |
-| **TikTok** (experimental, main; next release) | Feed · hashtag · creator · keyword search after login | Disabled by default; guest discovery plus extension-synced login search verified. Desktop/mobile Web recommendations work; nonempty account profiling/incremental sync remain unverified, native favorites deferred. [Details](docs/modules/tiktok.md) |
+| **TikTok** (since v0.3.229, experimental) | Feed · hashtag · creator · keyword search after login | Disabled by default; guest discovery plus extension-synced login search verified. Desktop/mobile Web recommendations work; nonempty account profiling/incremental sync remain unverified, native favorites deferred. [Details](docs/modules/tiktok.md) |
 | **X (Twitter)** | init import · search · For-You · followed authors | Server-side read-only cookie replay for discovery; native bookmark executor's first real favorite finished `synced` |
 | **Zhihu** | init import · search · hot · feed · creator · related | Extension reads logged-in tabs; renders as text cards |
 | **Reddit** | init import · search · hot · subreddit · related | Backend rdt-cli for discovery by default; Saved executor is fixture-tested, but the first real write remains uncertain after a 2xx response lacked old-DOM confirmation |
@@ -718,7 +718,7 @@ localhost-only. The two edges are mutually exclusive, and the default HTTP path 
 | **Bangumi** | public-collection init · search · ranked · date browse | Official anonymous read-only API; no cookie/token, and date results may include unreleased subjects |
 | **V2EX** | search · Node · Tab · hot · latest | Official anonymous API / JSON Feed; optional PAT for API 2.0 enrichment; Topic text cards |
 | **GitHub** | starred-repository init · search · ranked · latest | Official REST API; anonymous with an optional PAT, public repositories only, text cards |
-| **Instagram (experimental)** | topic / creator discovery · liked / saved / following init | Disabled by default; isolated read-only browser tasks, no cookie export or native save write-back; see the acceptance ledger |
+| **Instagram (experimental)** | topic / creator discovery · liked / saved / following init | Available since v0.3.227, disabled by default; bounded personal imports require site access and login in the same browser. No cookie export; card saves stay local. [Tested scope](docs/platform-source-acceptance.instagram.md) |
 | **Generic Web** | browser + LLM extraction | Adapts to any webpage |
 
 What happens after discovery:
