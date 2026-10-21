@@ -173,6 +173,8 @@
 - 新增 `tiktok_tag` / `tiktok_user` discovery 策略与 `TiktokDiscoveryProducer`（镜像 YouTube producer：每日执行 ledger、节流、pool 缺口门、统一 candidate pipeline、关键词规划器 P1.7/P1.8 生命周期）；`[scheduler.pool_source_shares]` 增加 `tiktok` 配额。
 - `tiktok` 从 douyin 平台族别名拆分为独立平台族（`requires_overseas_network=True`），source-auth 契约按公开源接入（无需登录），API config / status / credentials 面同步覆盖。
 
+- 修复打包版 Ollama embedding 无法构建导致 init 永远 409（issue #318）：Windows 桌面安装包里 openai SDK 的 httpx 包装在构造时抛 `'AsyncHttpxClientWrapper' object has no attribute '_mounts'`，而 Ollama embedding 复用了 `OllamaProvider`（`OpenAIProvider.__init__` 会创建 `AsyncOpenAI`），异常被 `build_embedding_service` 的裸 `except` 吞掉 → `/api/init-status` 只报 `misconfigured`、`POST /api/init` 恒 409、推荐池恒空，用户改 base_url / provider 都绕不过去。现在 embedding 走新增的 `OllamaEmbeddingProvider`（原生 httpx 直连 `/api/embeddings`，不构造任何 chat SDK 客户端），`embed()` 的 CPU 回退 / 重试 / 响应体日志抽成 `embed_via_native_api()` 供两条路径共用；构建失败改为带 traceback 的 WARNING，不再静默返回 None。真实 Ollama + 真实 HTTP 请求的修复前后对照见 [验收记录](testing/2026-10-22-issue-318-embedding-e2e.md)：坏 SDK 注入下 main 复现 `misconfigured` 与 `POST /api/init` 恒 409，修复版 `embedding_check: ok` 且 init 返回 202。
+
 ## v0.3.229：TikTok 新来源、远程访问安全收紧与 B 站登录失效横幅死锁修复（2026-10-16）
 
 - TikTok 新增实验性发现与登录态关键词搜索；B 站凭据及配置写入接口收紧远程访问；修复 B 站登录失效横幅在 Cookie 修复后仍悬挂的问题。Chrome / Firefox AMO 已提交待审核，桌面安装包、双架构 Docker 镜像与插件包均已发布，完整回执见 [发布记录](testing/2026-10-16-release-0.3.229.md)。
