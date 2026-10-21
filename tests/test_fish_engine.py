@@ -20,12 +20,16 @@ RECOMMENDATION_ID = 7
 
 
 class _FakeLLM:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, notice: str | None = None) -> None:
         self.content = content
+        self.notice = notice
         self.calls: list[dict[str, Any]] = []
 
     async def complete_structured_task(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
+        system = str(kwargs.get("system_instruction") or "")
+        if self.notice is not None and "不是回复网友" in system:
+            return SimpleNamespace(content=json.dumps({"notice": self.notice}, ensure_ascii=False))
         return SimpleNamespace(content=self.content)
 
 
@@ -143,6 +147,7 @@ def _build(
     fetch_error: Exception | None = None,
     plan_store: FishPlanStore | None = None,
     local_tz: Any = None,
+    notice: str | None = None,
 ) -> tuple[BlueFishEngine, _FakeClient, _FakeLLM, FishStore]:
     effective = config or FishConfig(enabled=True, dry_run=True)
     save_fish_config(tmp_path, effective)
@@ -152,7 +157,7 @@ def _build(
         list(comments if comments is not None else COMMENTS),
         fetch_error=fetch_error,
     )
-    llm = _FakeLLM(decision)
+    llm = _FakeLLM(decision, notice=notice)
     store = FishStore(tmp_path)
 
     async def _main_account() -> tuple[int, str, str]:
@@ -1197,3 +1202,31 @@ async def test_a_comment_notice_does_use_up_the_video_slot(tmp_path) -> None:
 
     assert result.status == "nothing_to_say"
     assert client.posts == []
+
+
+async def test_the_owner_notice_uses_the_model_line(tmp_path) -> None:
+    engine, client, llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, notify_owner=True),
+        notice="这个院子才 55 平，我截图截了三张。",
+    )
+
+    result = await engine.run_once(trigger="schedule", manual=False)
+
+    assert result.status == "notified"
+    assert client.posts[0]["message"] == "@主人 这个院子才 55 平，我截图截了三张。"
+    # The notice round spent exactly one model call — for the notice itself.
+    assert len(llm.calls) == 1
+    assert "不是回复网友" in str(llm.calls[0]["system_instruction"])
+
+
+async def test_the_owner_notice_falls_back_to_the_template_without_the_model(tmp_path) -> None:
+    engine, client, _llm, _store = _build(
+        tmp_path,
+        config=FishConfig(enabled=True, dry_run=False, notify_owner=True),
+    )
+
+    result = await engine.run_once(trigger="schedule", manual=False)
+
+    assert result.status == "notified"
+    assert client.posts[0]["message"].startswith("@主人 推荐你看看这条：《一条测试视频》")

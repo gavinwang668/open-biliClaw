@@ -1029,6 +1029,23 @@ def _builder_test_inputs() -> list[tuple[str, dict, dict]]:
     """
     return [
         (
+            "build_blue_fish_notice_prompt",
+            dict(
+                persona_name="大肥鱼",
+                persona_prompt="你是一只鱼",
+                reply_rules="说短一点",
+                owner_name="主人",
+                video={"bvid": "BV1xx", "title": "视频 A", "topic": "游戏"},
+            ),
+            dict(
+                persona_name="小蓝",
+                persona_prompt="你是一只害羞的鱼",
+                reply_rules="不要接梗",
+                owner_name="老白",
+                video={"bvid": "BV2yy", "title": "视频 B", "topic": "手工"},
+            ),
+        ),
+        (
             "build_blue_fish_reply_prompt",
             dict(
                 persona_name="大肥鱼",
@@ -2556,3 +2573,24 @@ def test_blue_fish_reply_prompt_keeps_the_trigger_in_the_user_message() -> None:
     # The cache contract: per-call trigger never leaks into the static system.
     assert "<trigger>" not in system
     assert "只在评论区认真讨论技术时开口" not in system
+
+
+def test_blue_fish_notice_prompt_keeps_the_persona_in_the_user_message() -> None:
+    from openbiliclaw.llm.prompts import build_blue_fish_notice_prompt
+
+    messages = build_blue_fish_notice_prompt(
+        persona_name="大肥鱼",
+        persona_prompt="你是一只慢热的鱼",
+        reply_rules="说短一点",
+        owner_name="littlewish",
+        video={"bvid": "BV1xx", "title": "55 平的院子", "topic": "庭院"},
+    )
+
+    system, user = messages[0]["content"], messages[1]["content"]
+    assert "不是回复网友" in system
+    assert "55 平的院子" in user
+    assert "littlewish" in user
+    assert "你是一只慢热的鱼" in user
+    # Cache contract: per-call persona / owner / video never leak into system.
+    assert "littlewish" not in system
+    assert "55 平的院子" not in system

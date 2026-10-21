@@ -51,6 +51,8 @@ DECISION = {
     "target_rpid": 1001,
     "reply": "那个 0.5 秒的空镜我也倒回去看了两遍",
     "reason": "有具体细节可接",
+    # The notice call parses the same payload; the fake answers both tasks.
+    "notice": "这个院子才 55 平，我截图截了三张。",
 }
 
 
@@ -313,9 +315,9 @@ async def _run(port: int, data_dir: Path) -> int:
     _expect(
         bool(state.messages)
         and state.messages[-1]["msg[receiver_id]"] == "111"
-        and TITLE in dm_text
+        and DECISION["notice"] in dm_text
         and f"https://www.bilibili.com/video/{SEED}" in dm_text,
-        "DM carries the title and the video link",
+        "DM carries the generated line and the video link",
         failures,
     )
 
@@ -351,7 +353,9 @@ async def _run(port: int, data_dir: Path) -> int:
         "owner recommendation row untouched by the fish",
         failures,
     )
-    _expect(state.llm_calls == 1, f"one model call in total ({state.llm_calls})", failures)
+    _expect(
+        state.llm_calls == 3, f"one model call per reply / notice ({state.llm_calls})", failures
+    )
 
     await client.aclose()
     server.shutdown()

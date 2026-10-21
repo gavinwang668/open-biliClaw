@@ -393,6 +393,7 @@ _MAINTENANCE_CALLERS: set[str] = {
     # interactive, not supply), so it shares the maintenance lane instead of
     # being classified as an unknown caller.
     "fish.comment_reply",
+    "fish.owner_notice",
 }
 
 
