@@ -1430,6 +1430,7 @@ async def test_send_private_message_posts_to_the_chat_endpoint() -> None:
     assert payload["msg[receiver_type]"] == "1"
     assert payload["msg[msg_type]"] == "1"
     assert payload["csrf"] == payload["csrf_token"] == "csrf123"
+    assert payload["msg[dev_id]"].startswith("web_")
     assert '"content": "推荐你看这条"' in str(payload["msg[content]"])
     assert headers is not None and headers["referer"] == "https://www.bilibili.com"
 
