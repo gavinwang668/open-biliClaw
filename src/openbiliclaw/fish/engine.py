@@ -29,7 +29,10 @@ from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any, Protocol
 
 from openbiliclaw.llm.json_utils import extract_llm_json_object
-from openbiliclaw.llm.prompts import build_blue_fish_reply_prompt
+from openbiliclaw.llm.prompts import (
+    build_blue_fish_notice_prompt,
+    build_blue_fish_reply_prompt,
+)
 
 from .comments import usable_comments
 from .config import FishConfig, load_fish_config
@@ -642,8 +645,9 @@ class BlueFishEngine:
                 )
                 return None
             want_dm = False
-        public_text = _owner_notice_text(name, candidate)
-        dm_text = _owner_dm_text(candidate)
+        notice_line = await self._notice_line(candidate, config=config, owner_name=name)
+        public_text = _owner_notice_text(name, candidate, line=notice_line)
+        dm_text = _owner_dm_text(candidate, line=notice_line)
         shown_text = public_text if want_comment else dm_text
 
         if dry_run:
@@ -753,6 +757,56 @@ class BlueFishEngine:
             reply_rpid=reply_rpid,
             record=record,
         )
+
+    async def _notice_line(
+        self,
+        candidate: FishCandidate,
+        *,
+        config: FishConfig,
+        owner_name: str,
+    ) -> str:
+        """Ask the model for the one-liner that tells the owner about a video.
+
+        The notice is the only text the owner reads from the fish, so it gets
+        the same persona treatment as a reply instead of a fixed template.
+        Returns ``""`` when the model is unavailable or ignores the contract;
+        the caller falls back to the deterministic template.
+        """
+
+        if self._llm is None:
+            return ""
+        messages = build_blue_fish_notice_prompt(
+            persona_name=config.persona_name,
+            persona_prompt=config.persona_prompt,
+            reply_rules=config.reply_rules,
+            owner_name=owner_name,
+            video={
+                "title": candidate.title,
+                "up_name": candidate.up_name,
+                "description": candidate.description[:300],
+                "topic": candidate.topic,
+            },
+        )
+        try:
+            response = await self._llm.complete_structured_task(
+                system_instruction=messages[0]["content"],
+                user_input=messages[1]["content"],
+                max_tokens=256,
+                temperature=0.9,
+                caller="fish.owner_notice",
+                reasoning_effort=None,
+                inject_core_memory=False,
+            )
+        except Exception as exc:  # noqa: BLE001 - fall back to the template
+            logger.warning("Blue Fish notice generation failed: %s", exc)
+            return ""
+        payload = extract_llm_json_object(str(getattr(response, "content", "") or ""))
+        if payload is None:
+            return ""
+        text = " ".join(str(payload.get("notice") or "").split())
+        if not text:
+            return ""
+        return text[:60]
 
     async def _ask_model(
         self, messages: list[dict[str, str]], *, config: FishConfig
@@ -897,11 +951,11 @@ def _delivery_label(*, comment: bool, dm: bool) -> str:
     return "+".join(name for name, wanted in (("comment", comment), ("dm", dm)) if wanted)
 
 
-def _owner_dm_text(candidate: FishCandidate) -> str:
+def _owner_dm_text(candidate: FishCandidate, *, line: str = "") -> str:
     """Private-message body: no @ prefix, and the link is clickable here."""
 
     title = " ".join(str(candidate.title or "").split())[:60] or "这条视频"
-    lines = [f"推荐你看看这条：《{title}》。"]
+    lines = [" ".join(str(line or "").split()) or f"推荐你看看这条：《{title}》。"]
     bvid = str(candidate.bvid or "").strip()
     if bvid:
         lines.append(f"https://www.bilibili.com/video/{bvid}")
@@ -919,7 +973,7 @@ def _owner_notice_due(config: FishConfig, *, view: FishLedgerView) -> bool:
     return view.stats.today_notified < limit
 
 
-def _owner_notice_text(owner_name: str, candidate: FishCandidate) -> str:
+def _owner_notice_text(owner_name: str, candidate: FishCandidate, *, line: str = "") -> str:
     """Build the deterministic owner-notification comment.
 
     B站 resolves the leading ``@昵称`` into a real mention (the server fills
@@ -929,7 +983,8 @@ def _owner_notice_text(owner_name: str, candidate: FishCandidate) -> str:
 
     name = str(owner_name or "").strip()
     title = " ".join(str(candidate.title or "").split())[:40] or "这条视频"
-    return f"@{name} 推荐你看看这条：《{title}》。我觉得正合你口味。"
+    body = " ".join(str(line or "").split()) or f"推荐你看看这条：《{title}》。我觉得正合你口味。"
+    return f"@{name} {body}"
 
 
 def _candidate_from_plan(plan: FishPlan) -> FishCandidate:

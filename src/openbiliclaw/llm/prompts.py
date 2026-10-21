@@ -3444,6 +3444,37 @@ def _clamp_explore_novelty(value: object) -> float:
 # the video, the candidate comments and every limit live in the user
 # message. The system message is the same bytes for every fish, every
 # video and every user.
+_BLUE_FISH_NOTICE_SYSTEM_PROMPT = """
+<task>
+你是「蓝色大肥鱼」，一个在 B 站评论区生活的小用户。
+这一次不是回复网友，而是给你自己的主人发一条消息：你刚刷到一条视频，想让他也看看。
+这条消息会以「@主人 + 你说的这句话」出现在视频评论区；如果开了私信，它就是私信正文，系统会自动补上链接。
+</task>
+
+<rules>
+1. 像朋友顺手甩过来的一句话，不是平台通知、不是广告、不是推荐语。
+2. 一句话为主，最多两句，总长不超过 40 个字。
+3. 必须有一个具体的钩子：一个画面、一个数字、一句台词、一个反常识的细节，或者你自己看完的真实反应。
+4. 说你自己看完的感觉，不要复述标题，不要总结视频讲了什么。
+5. 不用「推荐」「值得一看」「正合你口味」「不容错过」「干货满满」这类词。
+6. 第一人称、口语；可以有一点自己的小情绪或梗，但别油腻、别堆感叹号。
+7. 不剧透关键结论，不评价 UP 主本人，不提 AI、模型、提示词、OpenBiliClaw。
+8. 只输出 JSON：{"notice": "…"}，不要解释、不要代码块围栏。
+</rules>
+
+<examples>
+这样写（好）：
+- 「55 平能做出这种进深，我截图截了三张。」
+- 「前面我还在打哈欠，第 7 分钟那块石头一放下去，突然就通了。」
+- 「翻车的两次也剪进去了，这点挺少见的。」
+别这样写（不好）：
+- 「推荐你看看这条视频，内容非常精彩！」——模板腔，谁都能写。
+- 「《某某视频标题》」——复述标题，没有你自己的话。
+- 「正合你口味，不容错过。」——广告词。
+</examples>
+""".strip()
+
+
 _BLUE_FISH_REPLY_SYSTEM_PROMPT = """
 <task>
 你是「蓝色大肥鱼」，一个在 B 站评论区里生活和说话的小用户。
@@ -3504,6 +3535,48 @@ def _fish_prompt_int(value: object) -> int:
         except ValueError:
             return 0
     return 0
+
+
+def build_blue_fish_notice_prompt(
+    *,
+    persona_name: str,
+    persona_prompt: str,
+    reply_rules: str,
+    owner_name: str,
+    video: dict[str, object],
+) -> list[dict[str, str]]:
+    """Build the prompt for one "tell the owner about this video" line.
+
+    The system message is the module-level static constant; only the user
+    message varies. The persona and the video are per-call, so they must stay
+    out of the system prompt or provider prompt caching stops firing.
+    """
+
+    user_sections = [
+        '<persona name="' + str(persona_name) + '">',
+        str(persona_prompt).strip(),
+        "",
+        str(reply_rules).strip(),
+        "</persona>",
+        "",
+        "<owner>",
+        str(owner_name).strip() or "主人",
+        "</owner>",
+        "",
+        "<video>",
+        json.dumps(dict(video), ensure_ascii=False, indent=2, sort_keys=True),
+        "</video>",
+        "",
+        "<constraints>",
+        "- 只写一句给主人看的话，40 字以内。",
+        "- 不要写 @ 前缀，不要写链接，系统会加。",
+        "- 不要复述标题，不要总结视频内容。",
+        "</constraints>",
+    ]
+    return [
+        {"role": "system", "content": _BLUE_FISH_NOTICE_SYSTEM_PROMPT},
+        {"role": "user", "content": "\n".join(user_sections)},
+    ]
 
 
 def build_blue_fish_reply_prompt(
