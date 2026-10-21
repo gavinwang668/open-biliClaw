@@ -1965,6 +1965,10 @@ class BilibiliAPIClient:
                     "msg[msg_status]": "0",
                     "msg[content]": json.dumps({"content": body}, ensure_ascii=False),
                     "msg[timestamp]": str(int(time.time())),
+                    # B站 rejects a message without a device id with
+                    # ``-400 请求错误``. Derive a stable one from the sender so
+                    # every message from this account looks like one device.
+                    "msg[dev_id]": "web_" + hashlib.md5(f"fish:{sender}".encode()).hexdigest()[:16],
                     "csrf": csrf,
                     "csrf_token": csrf,
                 },

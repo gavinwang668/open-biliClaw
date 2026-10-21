@@ -820,7 +820,7 @@ class _NotifyFailingClient(_FakeClient):
         return await super().post_comment(bvid, message=message, root=root, parent=parent)
 
 
-async def test_a_failed_owner_notice_does_not_block_the_reply(tmp_path) -> None:
+async def test_a_failed_owner_notice_is_not_replaced_by_a_public_reply(tmp_path) -> None:
     save_fish_config(tmp_path, FishConfig(enabled=True, dry_run=False, notify_owner=True))
     account = FishAccount(tmp_path, client_factory=lambda _cookie: _FakeNavClient(mid=222))
     account.save_cookie(FISH_COOKIE)
@@ -839,8 +839,10 @@ async def test_a_failed_owner_notice_does_not_block_the_reply(tmp_path) -> None:
 
     result = await engine.run_once(trigger="schedule", manual=False)
 
-    assert result.status == "published"
-    assert [row["status"] for row in FishStore(tmp_path).read()] == ["failed", "published"]
+    assert result.status == "notify_failed"
+    assert [row["status"] for row in FishStore(tmp_path).read()] == ["failed"]
+    # Only the attempted (failed) comment is recorded; no reply was published.
+    assert len(client.posts) == 1
 
 
 def _candidates_for(pool: list[FishCandidate]) -> Any:
@@ -951,7 +953,7 @@ async def test_a_dm_only_notice_without_the_owner_mid_falls_back_to_reply(tmp_pa
     assert client.messages == []
 
 
-async def test_a_dm_only_failure_is_recorded_then_the_pass_continues(tmp_path) -> None:
+async def test_a_dm_only_failure_surfaces_without_publishing(tmp_path) -> None:
     save_fish_config(
         tmp_path,
         FishConfig(enabled=True, dry_run=False, notify_owner=True, notify_channel="dm"),
@@ -974,13 +976,15 @@ async def test_a_dm_only_failure_is_recorded_then_the_pass_continues(tmp_path) -
 
     result = await engine.run_once(trigger="manual")
 
-    # The failure is recorded with its cause, and the ordinary reply path is
-    # not starved by a broken delivery channel.
+    # The failure is recorded with its cause and surfaces as this round's
+    # result: the owner asked for a private notice, so silently publishing a
+    # public reply instead would be a different act.
     rows = FishStore(tmp_path).read()
     assert rows[0]["status"] == "failed"
     assert "风控拦截" in rows[0]["error"]
     assert client.messages == []
-    assert result.status == "published"
+    assert client.posts == []
+    assert result.status == "notify_failed"
 
 
 async def test_trigger_prompt_reaches_the_user_message(tmp_path) -> None:

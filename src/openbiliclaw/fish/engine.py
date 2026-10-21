@@ -288,11 +288,12 @@ class BlueFishEngine:
                         owner_name=owner_name,
                         owner_mid=owner_mid,
                     )
-                    # A failed notice must not block the reply path: the
-                    # comment section may simply be closed, and retrying it
-                    # forever would starve every other act. The failure is
-                    # recorded, so the breaker still sees it.
-                    if notified is not None and notified.status != "notify_failed":
+                    # A failed notice surfaces as this round's result. It
+                    # must NOT fall through to the ordinary reply: the owner
+                    # asked for a notice (possibly a private DM), and silently
+                    # publishing a public reply instead is a different act.
+                    # The failure is recorded and the breaker sees it.
+                    if notified is not None:
                         return notified
 
                 # A discovery-produced plan is one-shot: the comment-thread
