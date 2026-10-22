@@ -1,5 +1,7 @@
 # 后端 API
 
+扫码登录修复（2026-10-23）：`poll_qrcode()` 保留成功码 `0`，仅成功时返回本次响应的白名单 Cookie（内部字段 `cookie`，不返回前端）。主账号和大肥鱼扫码接口优先使用响应 Cookie，兼容旧 URL 参数回退；大肥鱼仍执行独立账号校验。网页、插件与移动端共用后端逻辑，CLI 登录路径未变。无配置、依赖或安装流程变更。
+
 `POST /api/recommendations/refresh` 的显式补库现包含 Instagram：来源启用且有配额缺口时运行一次有界 producer → eval → copy，不受后台 scheduler 开关影响。来源失败投影 `manual_refresh_state=failed` 和 `refresh.failed`，不再变成“成功但无候选”；部分已入库内容不回滚。`GET /api/image-proxy` 对每个重定向执行 DNS/IP 拒绝与数字连接地址固定，非公网目的地址返回 403，非标准端口返回 400；证书验证、大小和媒体类型限制保持。
 
 `POST /api/init` 选择 Instagram 时，第 4 阶段复用正式 topic/creator producer，任务在通知扩展前登记到该 init run（含恢复采用的任务），因此 `next-task` 的 init-only ID 过滤继续生效。未选择 B 站的 Instagram 初始化不再调用旧的 B 站四策略；关闭后台 scheduler 仍可显式执行。小批候选即时评估并同步生成文案，不改评分阈值；其它旧来源的第 4 阶段路由本次保持兼容。

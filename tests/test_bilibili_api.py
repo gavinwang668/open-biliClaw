@@ -1488,3 +1488,30 @@ async def test_get_space_profile_signs_the_wbi_request() -> None:
     assert params["mid"] == "222156"
     assert params["w_rid"]
     assert params["wts"]
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [(0, "confirmed"), (86101, "pending"), (86090, "scanned"), (86038, "expired")],
+)
+async def test_qr_poll_preserves_codes_and_only_returns_confirmed_cookies(code, status):
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={"code": 0, "data": {"code": code, "url": "https://www.bilibili.com/"}},
+            headers=[
+                ("set-cookie", "SESSDATA=fake-session; Path=/"),
+                ("set-cookie", "unrelated=excluded; Path=/"),
+            ],
+        )
+
+    client = BilibiliAPIClient(cookie="")
+    await client._client.aclose()
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        result = await client.poll_qrcode("fake-key")
+        assert result["raw_code"] == code
+        assert result["status"] == status
+        assert result["cookie"] == ("SESSDATA=fake-session" if code == 0 else "")
+    finally:
+        await client.close()

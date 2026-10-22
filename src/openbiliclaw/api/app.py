@@ -7991,7 +7991,9 @@ def create_app(
         status = str(data.get("status", "pending"))
         user = None
         if status == "confirmed":
-            cookie_header = _qr_cookie_header(str(data.get("url", "") or ""))
+            cookie_header = str(data.get("cookie") or "") or _qr_cookie_header(
+                str(data.get("url", "") or "")
+            )
             if cookie_header:
                 result = await _write_source_credential(
                     "bilibili",
@@ -8913,7 +8915,7 @@ def create_app(
         if status != "confirmed":
             return {"ok": True, "status": status, "message": str(data.get("message") or "")}
 
-        cookie = _qr_cookie_header(str(data.get("url") or ""))
+        cookie = str(data.get("cookie") or "") or _qr_cookie_header(str(data.get("url") or ""))
         if not cookie:
             return {
                 "ok": False,
