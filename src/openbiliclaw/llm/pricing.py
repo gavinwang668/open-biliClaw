@@ -136,10 +136,11 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         # local Ollama to GPT-4o-class). Without knowing the route, use
         # a midrange estimate and let users override per-call.
         #
-        # Exception: the advertised ``:free`` route is billed at zero, so
-        # estimating it at the generic fallback would overstate the cost
-        # report for the exact route model discovery recommends.
-        "minimax/minimax-m3.1-flash:free": (0.0, 0.0),
+        # Exception: the advertised MiniMax Flash route has a published
+        # list price ($0.15/$0.60 per M, 2026-10-23), so estimating it at
+        # the generic fallback would overstate the cost report for the
+        # exact route model discovery recommends.
+        "minimax/minimax-m3.1-flash": (0.00108, 0.00432),
         "default": (0.005, 0.015),
     },
     "orcarouter": {
@@ -212,8 +213,8 @@ def estimate_cost(
     non_cached = prompt_tokens - cached_tokens
 
     discount = CACHE_HIT_DISCOUNT.get(provider, 0.5)
-    if provider in {"openai", "openai_compatible"} and model == "MiniMax-M3.1-Flash":
-        discount = 0.10  # $0.015 per M cached input tokens at the direct list price.
+    if model in {"MiniMax-M3.1-Flash", "minimax/minimax-m3.1-flash"}:
+        discount = 0.10  # $0.015 per M cached input on the direct and OpenRouter list prices.
     return round(
         (non_cached / 1000.0) * input_rate
         + (cached_tokens / 1000.0) * input_rate * discount

@@ -33,11 +33,11 @@
 
 - **MiniMax 预设默认切到 `MiniMax-M3.1-Flash`**：CLI 交互配置与无人值守安装器（`--llm-preset minimax`）统一默认 Flash，M3 作为第二个当前文本选项，已保存的旧模型与自定义模型 ID 仍可继续使用。
 
-- Flash 自适应推理保持开启，直连按量价格按 $0.15 / $0.60 每百万 token 补登记（缓存输入按 0.10 折算；OpenRouter `:free` 路由按 0 记账，不再套用网关兜底价）；模型发现只过滤历史 MiniMax 文本别名，不动非文本模型与其它 provider，OpenRouter 仅使用官方公布的 `minimax/minimax-m3.1-flash:free` 路由。
+- Flash 自适应推理保持开启，直连按量价格按 $0.15 / $0.60 每百万 token 补登记（缓存输入按 0.10 折算）；模型发现只过滤历史 MiniMax 文本别名，不动非文本模型与其它 provider。按 2026-10-23 的实时模型目录核对后，OpenRouter 只公布付费的 `minimax/minimax-m3.1-flash` 路由（无 `:free` 变体），发现列表改为优先该真实路由，并按同一 $0.15 / $0.60 目录价与 0.10 缓存折扣记账。
 
 - 安装器与快速开始文档（`docs/agent-install.md`、`docs/openclaw-quickstart.md`）同步 Flash 默认值与规格，避免文档仍写 M2.7。
 
-- 新增真实 OpenAI SDK + mock HTTP 测试，覆盖默认值、工具调用、推理内容回放、远程／内联图片、发现列表、OpenRouter 免费路由计价以及显式旧模型／自定义模型 ID。
+- 新增真实 OpenAI SDK + mock HTTP 测试，覆盖默认值、工具调用、推理内容回放、远程／内联图片、发现列表、OpenRouter Flash 路由计价以及显式旧模型／自定义模型 ID。
 
 ## 开发中：推荐导演画像与短期上下文（2026-09-30）
 

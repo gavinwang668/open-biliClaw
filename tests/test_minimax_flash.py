@@ -158,13 +158,13 @@ async def test_openrouter_verified_flash_uses_gateway_reasoning_schema(wire):
     make, requests = wire
     provider = make(
         gateway=True,
-        model="minimax/minimax-m3.1-flash:free",
+        model="minimax/minimax-m3.1-flash",
         base_url="https://openrouter.ai/api/v1",
         effort="high",
     )
     await provider.complete([{"role": "user", "content": "hello"}])
     body = json.loads(requests[0].content)
-    assert body["model"] == "minimax/minimax-m3.1-flash:free"
+    assert body["model"] == "minimax/minimax-m3.1-flash"
     assert body["reasoning"] == {"effort": "high"}
     assert "reasoning_effort" not in body
     with pytest.raises(LLMProviderError, match="requires adaptive reasoning"):
@@ -387,10 +387,10 @@ async def test_unrelated_compatible_endpoint_keeps_reasoning_behavior(wire):
                 "minimax/minimax-m2.7",
                 "minimax/minimax-01",
                 "minimax/minimax-m3",
-                "minimax/minimax-m3.1-flash:free",
+                "minimax/minimax-m3.1-flash",
                 "other/model",
             ],
-            ["minimax/minimax-m3.1-flash:free", "minimax/minimax-m3", "other/model"],
+            ["minimax/minimax-m3.1-flash", "minimax/minimax-m3", "other/model"],
         ),
         (
             "https://relay.example/v1",
@@ -417,8 +417,35 @@ def test_flash_cost_uses_direct_list_and_cache_prices(provider):
     assert estimate_cost(provider, FLASH, 1_000_000, 0, 1_000_000) == 0.108
 
 
-def test_openrouter_free_flash_route_reports_zero_cost():
-    # Discovery recommends this route; the generic OpenRouter fallback
-    # would otherwise invent a midrange price for a free route.
-    cost = estimate_cost("openrouter", "minimax/minimax-m3.1-flash:free", 1_000_000, 1_000_000)
-    assert cost == 0.0
+def test_openrouter_flash_route_reports_the_advertised_list_price():
+    # The live OpenRouter catalog (2026-10-23) advertises only the paid
+    # ``minimax/minimax-m3.1-flash`` route at $0.15/$0.60 per M, so the
+    # generic OpenRouter fallback would overstate the real bill.
+    assert estimate_cost("openrouter", "minimax/minimax-m3.1-flash", 1_000_000, 1_000_000) == 5.4
+    assert (
+        estimate_cost("openrouter", "minimax/minimax-m3.1-flash", 1_000_000, 0, 1_000_000) == 0.108
+    )
+
+
+async def test_openrouter_discovery_surfaces_whichever_flash_route_is_advertised(wire):
+    # Regression: the first draft prioritized a ``:free`` route that the live
+    # catalog never listed, then hid the real paid route as a "historical
+    # alias" — users saw only MiniMax-M3 in the picker.
+    make, _requests = wire
+    advertised = [
+        "minimax/minimax-m2.7",
+        "minimax/minimax-m2",
+        "minimax/minimax-01",
+        "minimax/minimax-m3",
+        "minimax/minimax-m3.1-flash",
+        "other/model",
+    ]
+    provider = make(
+        base_url="https://openrouter.ai/api/v1",
+        reply={"object": "list", "data": [{"id": model} for model in advertised]},
+    )
+    assert await provider.list_models() == [
+        "minimax/minimax-m3.1-flash",
+        "minimax/minimax-m3",
+        "other/model",
+    ]

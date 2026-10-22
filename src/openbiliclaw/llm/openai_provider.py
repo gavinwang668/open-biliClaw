@@ -1167,7 +1167,9 @@ class OpenAIProvider(LLMProvider):
             current = ["MiniMax-M3.1-Flash", "MiniMax-M3"]
             text_pattern = r"(?:minimax-(?:m\d|text-\d|vl-\d)|abab\d)"
         elif (urlparse(self.base_url).hostname or "").lower() == "openrouter.ai":
-            current = ["minimax/minimax-m3.1-flash:free", "minimax/minimax-m3"]
+            # Live catalog (2026-10-23) lists the paid route only; a ``:free``
+            # variant is absent. Prioritize whatever the endpoint advertises.
+            current = ["minimax/minimax-m3.1-flash", "minimax/minimax-m3"]
             text_pattern = r"minimax/(?:minimax-(?:m\d|\d|text-\d|vl-\d)|abab\d)"
         if current:
             # Discovery is advisory: saved/custom IDs still pass through requests.
@@ -1238,7 +1240,7 @@ class OpenAIProvider(LLMProvider):
     def _is_minimax_flash(self, model: str) -> bool:
         return (self._is_minimax_endpoint() and model == "MiniMax-M3.1-Flash") or (
             (urlparse(self.base_url).hostname or "").lower() == "openrouter.ai"
-            and model == "minimax/minimax-m3.1-flash:free"
+            and model == "minimax/minimax-m3.1-flash"
         )
 
     def _is_official_openai_endpoint(self) -> bool:

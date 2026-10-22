@@ -22,6 +22,7 @@
 |------|------|------|
 | 本地 Ollama GPU → CPU 自动回退 | ✅ | 正式向量请求与诊断共享 endpoint/model 模式；CPU 实际返回有效向量后才确认恢复。 |
 | 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / OpenAI-compatible，带 retry + 超时 |
+| MiniMax-M3.1-Flash 预设 | ✅ | CLI 与 `--llm-preset minimax` 默认 Flash；直连与 OpenRouter 模型发现优先当前文本模型、隐藏历史别名；Flash 自适应推理校验、`reasoning_content` 回放、$0.15 / $0.60（缓存 0.10）计价 |
 | Responses JSON 输入契约（issue #265） | ✅ | 拆分 system 后检查 `input`，缺少 JSON 标记时追加最小 user 指令，避免偏好分析 HTTP 400。 |
 | v0.3.x OrcaRouter Provider 支持 | ✅ | 新增 `OrcaRouterProvider`（OpenAI 兼容协议）：一个 Key 跑 150+ 模型，默认 `openai/gpt-4o`，默认端点 `https://api.orcarouter.ai/v1`；沿用统一超时 / 重试 / 错误归一化 / JSON mode 与 per-call model 覆盖。网关把 `reasoning_effort` 与嵌套 `reasoning` 对象都原样转发给上游路由，非推理模型会以 HTTP 400 拒绝（已对 `openai/gpt-4o` 实测），因此适配器**不发送任何推理参数**，推理模型使用自身默认档位 |
 | v0.3.x Requesty Provider 支持 | ✅ | 新增 `RequestyProvider`（OpenAI 兼容协议）：一个 Key 跑多家模型，默认 `openai/gpt-4o-mini`，默认端点 `https://router.requesty.ai/v1`（欧盟区可改 `https://router.eu.requesty.ai/v1`）；沿用统一超时 / 重试 / 错误归一化 / JSON mode 与 per-call model 覆盖；适配器不发送任何推理参数；`list_models()` 先列出 `GET /models/managed` 的托管策略（失败时只记 WARNING），再合并 `GET /models` 目录。不参与自动排序，只有用户显式配置实例或调用链时才会使用 |
@@ -120,15 +121,17 @@ The CLI MiniMax preset and `agent_bootstrap.py --llm-preset minimax` default to
 `MiniMax-M3.1-Flash` at `https://api.minimax.io/v1`. The current text suggestions
 are Flash first, then `MiniMax-M3`; saved legacy and custom model IDs remain usable.
 Direct MiniMax model discovery hides historical text suggestions but leaves
-non-text models intact. OpenRouter discovery uses the advertised
-`minimax/minimax-m3.1-flash:free` route and `minimax/minimax-m3`; it does not invent
-an unadvertised paid Flash route.
+non-text models intact. OpenRouter discovery prioritizes the advertised
+`minimax/minimax-m3.1-flash` route and `minimax/minimax-m3`; it does not invent
+an unadvertised free variant. (Live catalog check, 2026-10-23: OpenRouter lists
+the paid Flash route only.)
 
 Flash has a 1,000,000-token context and 524,288-token maximum output. Its direct
 list prices per million tokens are $0.15 input, $0.015 cached input, and $0.60
 output. The cost tracker estimates these in CNY using its existing exchange-rate
-convention; custom gateways may charge differently. The OpenRouter `:free` route
-is estimated at zero rather than the generic OpenRouter fallback. M3 remains
+convention; custom gateways may charge differently. The OpenRouter Flash route
+carries the same $0.15/$0.60 list price and cache-read rate, so it is estimated
+from that route price rather than the generic OpenRouter fallback. M3 remains
 available with standard input/output pricing of $0.30/$1.20 through 512k and
 $0.60/$2.40 above 512k. The existing M3 estimate remains conservative.
 
