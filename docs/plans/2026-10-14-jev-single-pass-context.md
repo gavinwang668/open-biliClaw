@@ -275,3 +275,58 @@ pytest -q tests/test_jev_evaluation_config.py tests/test_jev_settings_api.py
 MyPy（322 源文件）、修改文件的 format check 与 `git diff --check` 通过；未跑全仓
 pytest。无新依赖、配置字段、CLI、安装或对外协议变更；模块文档、changelog 和
 四处架构数据路径已同步。
+
+## 2026-10-22 配置驱动的验收入口与重启验证
+
+独立 `test/jev-configured-acceptance` worktree，基于 `283eb93c`。本机正式配置
+仍未启用 Jev、没有保存 Token，所选环境变量也无 key；**本轮没有官方真实推理请求**。
+真实项目 TOML 的显式 preview 成功，实请求未带额度确认时返回 `not_attempted`，零 HTTP。
+未改正式配置/画像/候选池、main、发布或日常运行服务。
+
+验收入口收口：
+
+- `validate_jev_single_pass.py --config <file>` 只读该文件，读取保存的原生 URL、
+  Token/命名环境凭据、精确模型及上下文容量/评估参数。不把其它 TOML/环境覆盖层并入模型
+  选择；`--model` 若与配置不同直接拒绝，不自动切换模型。未知模型必须显式登记双容量。
+- 默认 preview 不构造客户端或解析 Token 环境值；`--fake` 禁止与配置同用。
+  live 仍要求先自行确认可用促销额度，缺 key/关闭连接/无容量/冲突设置都拒绝发请求。
+- 配置路径经原生产 `build_decision_provider`，保存 Token 优先、空值才用所命名 env。
+  脚本把尝试数收紧为 1，超时不超过保存值和 15 秒；全次最多 6 POST，首次远端失败
+  即不再发请求。不打开配置里的生产 data_dir，也不更改文件或把 env 密钥保存下来。
+- 同一 runner 的两种预算各用独立合成三候选与临时 SQLite，用于验证预算差异；
+  不改变生产每候选单次完整评估的约定。所配服务报告 `backend=configured`、
+  `usage_is_synthetic=null`：成功响应不等于认证某中转/自建服务的模型和用量真实性。
+  完整用法见 [CLI 开发验证](../modules/cli.md#jev-本机开发验证脚本)。
+
+新增覆盖：
+
+- CLI 子进程→保存配置→真实回环 HTTP→原生评估→临时 SQLite：自定义小窗口模型，
+  请求容量按登记值；保存 Token 胜过错误默认 env。单独验证命名 env 的无保存 Token 路径。
+- 缺额度确认、连接关闭、缺 key、模型冲突、未知容量、fake/config 冲突均无请求且不泄密；
+  所配服务 503 时只请求一次、无准入、3 条保持 pending，不使用文件中的 3 次重试。
+- 实际生产 factory 的进程关闭后，用相同临时配置和数据启动**新的进程**；原始保存的
+  自定义模型/URL/Token/双容量仍生效，来源 ingest 触发完整 10 题评估并准入 1 条。
+  推理边界仍为本机合成服务；不是官方模型或精确 tokenizer 验收。
+
+验证命令（共享 `.venv`，`PYTHONPATH=src`）：
+
+```text
+pytest -q tests/test_jev_acceptance_cli.py tests/test_jev_fake_backend.py
+  tests/test_jev_runtime_e2e.py --tb=short
+  31 passed
+ruff check src/ tests/ scripts/validate_jev_single_pass.py scripts/jev_fake_backend.py
+  passed
+MYPYPATH=src:. mypy --explicit-package-bases src/
+  scripts/validate_jev_single_pass.py scripts/jev_fake_backend.py
+  324 source files passed
+```
+
+未新增运行依赖、产品配置字段或安装步骤。文档更新限开发 CLI、发现模块、changelog
+和本记录；生产架构/接口接线未变。
+
+合入预检：对当时 main `8b99ed46` 做 `git merge-tree --write-tree main HEAD`，
+发现 **17 个文件冲突**（没有真正开始 merge，也没有改变任何分支/工作文件）：
+README CN/EN、architecture/changelog/index、API/discovery/extension/runtime 模块文档、
+两份导演设计文档，以及 API app、CLI、config、recommendation engine、desktop index、
+mobile app。整批历史仍包含 16 个未合入 main 的导演/Jev 提交，不只是过滤的一处修复；
+在获得合入范围选择前不把这批变更直接落到 main。不得把旧分支通过视作最新版 main 已验收。

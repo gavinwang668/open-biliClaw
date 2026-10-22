@@ -59,6 +59,10 @@ Web/插件/移动的 Jev 连接区可配置服务开关、原生 URL、Token、�
 独立 semantic filter 仍与完整 Jev 评估互斥。连接配置只表示本机就绪，未自动请求付费探测。
 `scripts/validate_jev_single_pass.py` 默认仅本地预览；真实模式需先确认促销额度并在本机
 设置 key，使用合成画像、候选和临时 SQLite，不修改生产配置或数据。
+`--config /absolute/path/config.toml` 可读取设置页保存的连接、精确模型及容量并先做零 HTTP
+preview；加真实模式及额度确认才会经生产 factory 请求所配服务，详见 [CLI 开发验证](cli.md#jev-本机开发验证脚本)。
+独立进程的保存/重启验收覆盖自定义模型容量，启动新进程后仍使用原 URL、Token 和固定模型；
+推理边界仍为本机合成服务，不代表官方模型已验收。
 加 `--fake` 则自动启动本机 Jev 原生协议假后端，以真实回环 HTTP 跑完两种预算的
 完整评估与入池，不需要 key；输出 `backend=local_fake`、`live=false`、
 `usage_is_synthetic=true`。假后端有独立字节容量校验和故障注入，不能验证官方 token

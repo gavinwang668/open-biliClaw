@@ -43,7 +43,7 @@ def chromium_page() -> Iterator[Page]:
 
 
 @pytest.fixture
-def real_jev_app(tmp_path: Path) -> Iterator[tuple[str, Path]]:
+def real_jev_app(tmp_path: Path) -> Iterator[tuple[str, Path, subprocess.Popen]]:
     """Boot the unmodified production factory with isolated config and no real keys."""
     cfg = Config()
     cfg.data_dir = str(tmp_path / "data")
@@ -103,7 +103,7 @@ def real_jev_app(tmp_path: Path) -> Iterator[tuple[str, Path]]:
                     time.sleep(0.1)
                 else:
                     pytest.fail("isolated API startup timed out")
-            yield url, tmp_path
+            yield url, tmp_path, process
         finally:
             process.terminate()
             try:
@@ -114,10 +114,10 @@ def real_jev_app(tmp_path: Path) -> Iterator[tuple[str, Path]]:
 
 
 def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
-    real_jev_app: tuple[str, Path], chromium_page: Page
+    real_jev_app: tuple[str, Path, subprocess.Popen], chromium_page: Page
 ) -> None:
     """The actual config transaction changes the running evaluator, not just TOML."""
-    url, directory = real_jev_app
+    url, directory, _ = real_jev_app
     page = chromium_page
     with FakeJevBackend(model="jev-1.14.0", max_state_question_bytes=12_000) as backend:
         page.goto(f"{url}/web/")
@@ -252,3 +252,124 @@ def test_browser_save_hot_reload_and_ingest_use_saved_jev_connection(
                 ensure_ascii=False,
             )
         )
+
+
+def test_process_restart_reuses_saved_jev_model_endpoint_and_capacity(
+    real_jev_app: tuple[str, Path, subprocess.Popen],
+) -> None:
+    """A fresh production process can evaluate with the persisted custom model."""
+    url, directory, first_process = real_jev_app
+    model = "synthetic-restart-v1"
+    with FakeJevBackend(
+        model=model, max_request_bytes=30_000, max_state_question_bytes=15_000
+    ) as backend:
+        with httpx.Client(base_url=url, trust_env=False, timeout=5) as client:
+            response = client.put(
+                "/api/config",
+                json={
+                    "decision": {
+                        "providers": {
+                            "jev": {
+                                "enabled": True,
+                                "model": model,
+                                "endpoint_url": backend.url,
+                                "api_key": "synthetic-test-key",
+                                "max_attempts": 1,
+                                "context_limits": {
+                                    model: {
+                                        "max_request_tokens": 40_000,
+                                        "max_state_question_tokens": 20_000,
+                                    }
+                                },
+                            }
+                        }
+                    },
+                    "discovery": {"eval_scorer": "jev"},
+                },
+            )
+            assert response.status_code == 202, response.text
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                status = client.get("/api/config/apply-status").json()
+                assert status["state"] != "failed", status
+                if status["state"] == "applied":
+                    break
+                time.sleep(0.1)
+            else:
+                pytest.fail("config hot reload did not complete before restart")
+
+        # Persist only a synthetic profile through the public memory seam.
+        db = Database(directory / "data/openbiliclaw.db")
+        db.initialize()
+        try:
+            memory = MemoryManager(directory / "data", database=db)
+            memory.initialize()
+            memory.get_layer("soul").data.update(OnionProfile().to_dict())
+            memory.save_all()
+        finally:
+            db.close()
+        first_process.terminate()
+        first_process.wait(timeout=10)
+
+        env = {key: value for key, value in os.environ.items() if key in {"PATH", "LANG", "TMPDIR"}}
+        env.update(PYTHONPATH=str(ROOT / "src"), OPENBILICLAW_PROJECT_ROOT=str(directory))
+        with (directory / "restart.log").open("w") as log:
+            restarted = subprocess.Popen(
+                first_process.args, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT
+            )
+            try:
+                with httpx.Client(base_url=url, trust_env=False, timeout=5) as client:
+                    deadline = time.monotonic() + 40
+                    while time.monotonic() < deadline:
+                        assert restarted.poll() is None, "API exited during restart"
+                        try:
+                            read = client.get("/api/config")
+                            if read.status_code == 200:
+                                break
+                        except httpx.TransportError:
+                            pass
+                        time.sleep(0.1)
+                    else:
+                        pytest.fail("API restart timed out")
+                    assert "synthetic-test-key" not in read.text
+                    status = read.json()["discovery"]["jev_provider"]
+                    assert status["model"] == model
+                    assert status["endpoint_url"] == backend.url
+                    assert status["context_budget"]["max_state_question_bytes"] == 15_000
+                    response = client.post(
+                        "/api/sources/xhs/observed-urls",
+                        json={
+                            "page_type": "search",
+                            "notes": [
+                                {
+                                    "url": "https://www.xiaohongshu.com/explore/jevsyntheticrestart",
+                                    "title": "算法基础教学",
+                                    "description": "算法与数据结构的通用概念。",
+                                }
+                            ],
+                        },
+                    )
+                    assert response.status_code == 200 and response.json()["enqueued"] == 1
+                    db = Database(directory / "data/openbiliclaw.db")
+                    db.initialize()
+                    try:
+                        deadline = time.monotonic() + 30
+                        while time.monotonic() < deadline:
+                            cached = db.get_cached_content()
+                            if cached:
+                                break
+                            time.sleep(0.1)
+                        assert len(cached) == 1, db.count_discovery_candidates_by_status()
+                        assert cached[0]["relevance_score"] == 0.75
+                    finally:
+                        db.close()
+                    assert len(backend.requests) == 1
+                    assert backend.requests[0]["model"] == model
+                    assert len(backend.requests[0]["questions"]) == 10
+            finally:
+                restarted.terminate()
+                try:
+                    restarted.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    restarted.kill()
+                    restarted.wait(timeout=5)

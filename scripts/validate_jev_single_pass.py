@@ -1,7 +1,8 @@
 """Preview, run a local fake Jev, or explicitly call the real service.
 
-Run from the checkout with PYTHONPATH=src. Live mode requires both a local
-TYPESAFE_API_KEY and --confirm-free-credits after checking the account balance.
+Run from the checkout with PYTHONPATH=src. Live mode requires a local Jev
+credential and --confirm-free-credits after checking the account balance.
+--config reads the saved endpoint, pinned model, limits and evaluator settings.
 No account creation, top-up, production config or production database is used.
 Reports contain counts, native usage and sanitized failure codes only.
 --fake needs no key: real loopback HTTP, synthetic answers/usage, temporary DBs.
@@ -16,13 +17,19 @@ import logging
 import os
 import sys
 import tempfile
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from openbiliclaw.config import JevEvaluationConfig
-from openbiliclaw.decision.context_budget import resolve_jev_context
+from openbiliclaw.config import Config, ConfigError, JevEvaluationConfig, load_config
+from openbiliclaw.decision.context_budget import (
+    JevContextBudget,
+    JevContextError,
+    resolve_jev_context,
+)
 from openbiliclaw.decision.jev_provider import JevDecisionProvider
 from openbiliclaw.decision.models import DecisionEvidence, DecisionRequest
+from openbiliclaw.decision.registry import build_decision_provider
 from openbiliclaw.discovery.candidate_pipeline import DiscoveryCandidatePipeline
 from openbiliclaw.discovery.candidate_pool import DiscoveryCandidateWrite
 from openbiliclaw.discovery.engine import ContentDiscoveryEngine
@@ -33,6 +40,8 @@ from openbiliclaw.storage.database import Database
 if TYPE_CHECKING:
     import httpx
 
+    from openbiliclaw.decision.base import DecisionProvider
+
 # Both direct-file and ``python -m scripts...`` invocation use this checkout.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.jev_fake_backend import SYNTHETIC_KEY, FakeJevBackend  # noqa: E402
@@ -41,15 +50,17 @@ from scripts.jev_fake_backend import SYNTHETIC_KEY, FakeJevBackend  # noqa: E402
 class RecordingProvider:
     """Capture the actual typed request and cap the entire run at six POSTs."""
 
-    def __init__(self, model: str, native: JevDecisionProvider | None) -> None:
+    def __init__(
+        self, model: str, native: DecisionProvider | None, budget: JevContextBudget
+    ) -> None:
         self.model = model
         self.native = native
+        self.budget = budget
         self.calls: list[dict[str, Any]] = []
         self.stopped = False
 
     async def evaluate(self, request: DecisionRequest) -> DecisionEvidence:
-        budget = resolve_jev_context(self.model)
-        size = budget.measure(request.state, request.questions)
+        size = self.budget.measure(request.state, request.questions)
         state = request.state
         assert isinstance(state, dict)
         candidates = state["untrusted_candidates"]
@@ -98,22 +109,52 @@ class RecordingProvider:
 
 
 async def run(
-    model: str, live: bool, *, local_client: httpx.AsyncClient | None = None
+    model: str,
+    live: bool,
+    *,
+    local_client: httpx.AsyncClient | None = None,
+    config: Config | None = None,
 ) -> dict[str, Any]:
     if live and local_client is not None:
         raise ValueError("live and local fake modes are mutually exclusive")
-    native = (
-        JevDecisionProvider(
+    if config is not None and (
+        local_client is not None or model != config.decision.providers.jev.model
+    ):
+        raise ConfigError("configured acceptance requires the exact configured model")
+    settings = config.decision.providers.jev if config is not None else None
+    evaluation = config.discovery.jev_evaluation if config is not None else JevEvaluationConfig()
+    budget = resolve_jev_context(model, settings.context_limits if settings else None)
+    effective_budget = budget.with_byte_guards(
+        max_request_bytes=evaluation.max_request_bytes,
+        max_state_question_bytes=evaluation.max_state_question_bytes,
+    )
+    native: DecisionProvider | None = None
+    if live and config is not None:
+        if not config.decision.providers.jev.enabled:
+            raise ConfigError("configured Jev connection is disabled")
+        # Preserve the saved destination/key rules. Bound acceptance spending
+        # without changing the operator's file or increasing their timeout.
+        decision = replace(
+            config.decision,
+            providers=replace(
+                config.decision.providers,
+                jev=replace(
+                    config.decision.providers.jev,
+                    max_attempts=1,
+                    timeout_seconds=min(config.decision.providers.jev.timeout_seconds, 15),
+                ),
+            ),
+        )
+        native = build_decision_provider(decision)
+    elif live or local_client is not None:
+        native = JevDecisionProvider(
             api_key=SYNTHETIC_KEY if local_client is not None else os.environ["TYPESAFE_API_KEY"],
             model=model,
             max_attempts=1,
             timeout_seconds=15,
             client=local_client,
         )
-        if live or local_client is not None
-        else None
-    )
-    provider = RecordingProvider(model, native)
+    provider = RecordingProvider(model, native, budget)
     profile = SoulProfile(
         preferences=PreferenceLayer(
             interests=[InterestTag("算法与数据结构", "编程", 0.9)],
@@ -125,7 +166,10 @@ async def run(
     try:
         # Different budgets intentionally evaluate separate isolated cohorts.
         # Repeated evaluation is a TEST comparison, not production behavior.
-        for name, single_cap in (("standard", 0), ("smaller_budget", 12_000)):
+        for name, single_cap in (
+            ("standard", effective_budget.max_state_question_bytes),
+            ("smaller_budget", min(12_000, effective_budget.max_state_question_bytes)),
+        ):
             with tempfile.TemporaryDirectory(prefix="jev-single-pass-") as directory:
                 db = Database(Path(directory) / "synthetic.db")
                 db.initialize()
@@ -133,10 +177,12 @@ async def run(
                     evaluator = JevContentEvaluator(
                         provider,
                         model=model,
-                        config=JevEvaluationConfig(
+                        context_budget=budget,
+                        config=replace(
+                            evaluation,
                             max_state_question_bytes=single_cap,
-                            max_calls=3,
-                            budget_seconds=60,
+                            max_calls=min(3, evaluation.max_calls),
+                            budget_seconds=min(60, evaluation.budget_seconds),
                         ),
                     )
                     engine = ContentDiscoveryEngine(
@@ -176,6 +222,8 @@ async def run(
                     reports.append(
                         {
                             "case": name,
+                            "max_request_bytes": effective_budget.max_request_bytes,
+                            "max_state_question_bytes": single_cap,
                             "pipeline": receipt,
                             "pending": missing,
                             "original_preserved": preserved,
@@ -213,9 +261,22 @@ async def run(
         if preview_valid
         else "failed",
         "live": live,
-        "backend": "local_fake" if local_client is not None else "official" if live else "preview",
-        "usage_is_synthetic": local_client is not None,
+        "backend": "local_fake"
+        if local_client is not None
+        else "configured"
+        if live and config is not None
+        else "official"
+        if live
+        else "preview",
+        # A configured endpoint may be a relay or a synthetic service. Its
+        # provenance cannot be inferred from successful native HTTP alone.
+        "usage_is_synthetic": True
+        if local_client is not None
+        else None
+        if live and config is not None
+        else False,
         "model": model,
+        "context_budget": asdict(effective_budget),
         "cases": reports,
     }
 
@@ -231,7 +292,8 @@ async def run_fake(model: str) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", choices=("jev-1.13.0", "jev-1.14.0"), default="jev-1.13.0")
+    parser.add_argument("--model", help="Pinned model; must match --config when provided")
+    parser.add_argument("--config", type=Path, help="Read only this saved local TOML connection")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--live", action="store_true")
     mode.add_argument(
@@ -239,7 +301,10 @@ def main() -> int:
     )
     parser.add_argument("--confirm-free-credits", action="store_true")
     args = parser.parse_args()
-    if args.live and (not args.confirm_free_credits or not os.environ.get("TYPESAFE_API_KEY")):
+    if args.live and (
+        not args.confirm_free_credits
+        or (args.config is None and not os.environ.get("TYPESAFE_API_KEY"))
+    ):
         print(
             json.dumps(
                 {
@@ -251,7 +316,18 @@ def main() -> int:
         return 2
     logging.disable(logging.CRITICAL)
     try:
-        report = asyncio.run(run_fake(args.model) if args.fake else run(args.model, args.live))
+        if args.fake and args.config is not None:
+            raise ConfigError("fake mode never reads saved connection settings")
+        config = None
+        if args.config is not None:
+            if not args.config.is_file():
+                raise ConfigError("explicit configuration file must exist")
+            config = load_config(args.config, consult_environment=False)
+        model = args.model or (config.decision.providers.jev.model if config else "jev-1.13.0")
+        report = asyncio.run(run_fake(model) if args.fake else run(model, args.live, config=config))
+    except (ConfigError, JevContextError):
+        print(json.dumps({"status": "not_attempted", "reason": "invalid_jev_configuration"}))
+        return 2
     except Exception:
         print(json.dumps({"status": "failed", "reason": "runner_error"}))
         return 1

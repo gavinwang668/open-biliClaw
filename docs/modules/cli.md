@@ -33,6 +33,23 @@ HTTP 服务，以合成画像/三条候选跑标准和较小预算两个隔离�
 `usage_is_synthetic=true` 明确模型答案及 token 用量为假数据。模型 ID 由 `--model`
 显式选择，不自动切换。省略两种模式仍为无 HTTP 的 preview；真实服务运行仍需
 `--live --confirm-free-credits` 与本机 `TYPESAFE_API_KEY`。
+也可显式读取新设置页保存的连接（不合并其它 TOML/环境配置覆盖；只有选定凭据环境变量会按 factory 规则读取）：
+
+```bash
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --config /absolute/path/config.toml
+# 先自行确认账户已有可用促销额度；该命令会向所配置的服务发送合成测试数据。
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --live --confirm-free-credits --config /absolute/path/config.toml
+```
+
+`--config` 沿用保存的原生 URL、Token（优先于 env）、固定模型、该型号双容量及评估打包参数。
+首条命令只做 preview，不创建 HTTP client 或读取 Token 环境值；未知模型必须登记容量。
+如果同时传 `--model`，必须与配置完全相同，否则零请求退出；不会更改文件、自动换模型或启用被禁用的连接。
+`--fake` 禁止与 `--config` 同用，避免误用真实凭据。配置不存在/不合法、无凭据、无额度确认则拒绝实请求。
+真实模式通过原生产 provider factory 构造连接，但把最大尝试数收紧为 1、超时不高于配置及 15 秒；
+整次最多 6 次 POST，第一次远端失败后停止发送，无摘要/分段评估或隐式聊天 LLM fallback。
+两种预算使用独立临时 SQLite 与合成三候选 cohort；这是验收对比，不是生产中的重复评估。
+显式配置返回 `backend=configured`、`usage_is_synthetic=null`，不认证中转/自建服务的模型及用量真实性，
+更不能凭回环服务成功声称官方 Jev 已验收。脚本从不打开配置的生产数据库或输出 URL/Token/原始响应。
 这不是新增 `openbiliclaw` 产品命令或 UI provider；不改变安装流程和四端设置。
 
 ## 命令一览
