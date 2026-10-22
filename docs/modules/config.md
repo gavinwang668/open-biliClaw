@@ -839,11 +839,11 @@ YouTube discovery 配置。初始化画像由浏览器扩展读取观看历史 /
 
 ### `[sources.tiktok]`
 
-TikTok discovery 配置（实验性，issue #88）。steady-state discovery 由后端 `TiktokDiscoveryProducer` 独立调度 `tiktok_feed` / `tiktok_tag` / `tiktok_user` 三个策略。后端由 `mode` 选择：默认 `auto` 走 **Web API 后端**（访客身份 + 纯 Python 请求签名 + curl_cffi Chrome TLS 指纹，不登录即可读推荐流 / 创作者 / 话题标签列表），失败回退 yt-dlp 后端；`web` 强制 Web API，`ytdlp` 保持旧行为（yt-dlp 列表 extractor 上游失效时无候选产出但不报错）。关键词搜索对访客身份被上游 gate，因此 `tiktok_search` 策略默认不启用——仅在配置登录 Cookie 且 mode 允许 web 时挂载（登录态抓取违反 TikTok ToS，有账号风险）；统一关键词规划器 claim 的词在搜索挂载时原样喂 `tiktok_search`（tag 退回常驻 tags + LLM 自生成），未挂载时压缩成无空格 hashtag 后喂 `tiktok_tag`。TikTok 在海外，`[network].mode = "direct"` 时国内通常直连超时。完整机制见 [TikTok 来源文档](tiktok.md)。
+TikTok discovery 配置（issue #88）。steady-state discovery 由后端 `TiktokDiscoveryProducer` 独立调度 `tiktok_feed` / `tiktok_tag` / `tiktok_user` 三个策略。后端由 `mode` 选择：默认 `auto` 走 **Web API 后端**（访客身份 + 纯 Python 请求签名 + curl_cffi Chrome TLS 指纹，不登录即可读推荐流 / 创作者 / 话题标签列表），失败回退 yt-dlp 后端；`web` 强制 Web API，`ytdlp` 保持旧行为（yt-dlp 列表 extractor 上游失效时无候选产出但不报错）。关键词搜索对访客身份被上游 gate，因此 `tiktok_search` 策略默认不启用——仅在配置登录 Cookie 且 mode 允许 web 时挂载（登录态抓取违反 TikTok ToS，有账号风险）；统一关键词规划器 claim 的词在搜索挂载时原样喂 `tiktok_search`（tag 退回常驻 tags + LLM 自生成），未挂载时压缩成无空格 hashtag 后喂 `tiktok_tag`。TikTok 在海外，`[network].mode = "direct"` 时国内通常直连超时。完整机制见 [TikTok 来源文档](tiktok.md)。
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `enabled` | bool | `false` | 是否让 TikTok 参与候选池配比和后台 discovery；实验性来源，默认关闭，只能显式 opt-in |
+| `enabled` | bool | `false` | 是否让 TikTok 参与候选池配比和后台 discovery；默认关闭，只能显式 opt-in |
 | `mode` | str | `"auto"` | 后端选择：`auto`（Web API 优先、后端级失败回退 yt-dlp）/ `web`（仅 Web API）/ `ytdlp`（仅 yt-dlp）；非法值在 `PUT /api/config` 保存时拒绝 |
 | `cookie_env` | str | `"OPENBILICLAW_TIKTOK_COOKIE"` | 可选登录 Cookie 环境变量（优先于 `data/tiktok_cookie.json`）；不配置时访客身份是完整合法模式，配置后解锁关键词搜索与更高限额，保存前经 passport 会话心跳探针验证 |
 | `region` | str | `"JP"` | Web API 请求的地区参数；应匹配你的网络出口地区，被风控 gate（空响应）时首先检查 |
