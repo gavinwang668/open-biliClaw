@@ -24,6 +24,11 @@ guided init: signals → preferences → full profile commit → discover → ev
              Instagram: read-only liked/saved/following → init-owned topic/creator → small-batch eval/copy
                                                               └→ optional probes after terminal state
 
+optional full Jev evaluation: Web/popup/mobile connection → pinned model/dual limits → on-demand profile + whole-source excerpts
+                                                                                  → complete question groups → validation → admission
+optional Director (off by default): profile + latest 3 experienced screens → Agent horizon / recurrent Jev pairs / Agent+Jev repairs
+                                                                        → atomic screen commit → actual-visible ACK/feedback → future drafts
+
 Agent hosts (OpenClaw / Hermes / WorkBuddy)
         → capabilities(agent-bridge/v2) + JSON CLI / skill descriptors
         → integrations.agent alias / integrations.openclaw compatibility adapter

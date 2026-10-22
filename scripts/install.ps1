@@ -727,6 +727,11 @@ print(f"SERVICE_ERRORS={' | '.join(service_errors)}")
     Write-Host '      2. Start Ollama (the desktop app launches the local service automatically)'
     Write-Host '      3. Set-Location ' "$InstallDir" ' ; uv run openbiliclaw setup-embedding'
     Write-Host ''
+    Write-Host 'Optional recommendation director / Jev filter (disabled by default):'
+    Write-Host '  Configure TOML only after opting in; fully restart the backend.'
+    Write-Host '  Jev routes need the configured key environment variable in the backend.'
+    Write-Host "  See: $InstallDir\docs\modules\config.md#director"
+    Write-Host ''
     Write-Host 'Reference docs:'
     Write-Host "  - $InstallDir\docs\agent-install.md     (install guide)"
     Write-Host "  - $InstallDir\docs\agent-deployment.md  (troubleshooting)"

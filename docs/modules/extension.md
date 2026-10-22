@@ -4,6 +4,19 @@ Popup 的 LLM 实例、默认链与模块选择支持 `api_route`（API Route）
 
 Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheaper Inference），新实例预填 `gpt-5.4-mini` 与 `https://api.cheaperinference.com/v1`；API Key 经后端配置接口保存，模型发现与探测复用既有入口。
 
+## 完整候选评估器选项
+
+高级设置的候选评分下拉新增 canonical `jev`：纯文本完整评估、受控主题 / IP，未知
+不偷偷交给 LLM。插件与桌面显示 provider readiness 和多模态不兼容提示，后端验证
+缺少凭据或冲突配置；不把 Jev 塞进聊天模型列表。移动 Web 设置与 CLI 使用同一配置。
+
+Jev 连接配置区与 Web 共用 `web/shared/jev-settings.js/.css`，构建时按现有机制复制到
+`popup/shared/`：服务开关、完整原生 URL、密码 Token、固定模型、双 token 上限、候选合批数、
+超时/重试。`collectForm()` 合并公共表单的严格部分更新到 `decision.providers.jev`，
+后端原子校验/持久化/排队应用，可同次切换完整评估器。空 Token 保留，清除需明确勾选，
+更换 URL 必须重填，保存后输入框清空，缓存配置只有安全状态不含 Token。没有新 host permission
+或后台直连 Jev：请求仍从后端发出。Chrome API stub 的 Chromium 测试不是实际 MV3 安装验收。
+
 > popup 的 LLM 总并发 placeholder/读取/保存 fallback 同步为 4；候选评估并发可设 `1..3`（默认 3、每批 30 条、最多 90 条 raw 在途），后台容量仍由后端派生。DeepSeek Reasoning 在插件与桌面 Web 都以 `medium` 为默认选项，空值明确显示为「关闭」并原样保存。
 
 ## 模块范围
@@ -14,6 +27,30 @@ Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheap
 - 在 B 站 / 小红书 / 抖音 / YouTube / X / 知乎 / Reddit / V2EX 等支持站点采集行为事件或执行来源任务（平台无关内核 + 平台适配器）
 - 通过 background service worker 缓冲并上报到本地后端
 - 在 side panel 中展示连接状态、推荐结果、画像和聊天入口
+
+### 推荐导演三模式接线
+
+side panel 的推荐页支持后端 `jev_recurrent`、`agent_jev`、`agent_only` 三种
+编排策略；模式配置仍由后端 TOML / CLI 管理，不增加另一套插件侧模式开关。
+`popup-api.js`、`popup-helpers.js` 和 `popup.js` 接入
+`src/openbiliclaw/web/shared/director-client.js`，构建时通过已有 shared 资源
+复制流程分发，与桌面 / 移动 Web 共用协议实现。
+
+普通 GET 只恢复已提交卡片；后端标记需要首屏、面板实际可见且没有旧卡片时才
+显式提交 NEXT。追加推荐为 NEXT，换一批为 STAY；首次没有批次的 STAY 仅在
+收到明确 `stay_without_batch` 后转换一次 NEXT。生成 ID 在本地持久化，失败
+重试复用，不因网络超时额外消费一屏；加载时禁用操作，错误保留已有卡片。
+
+卡片归一化保留 `batch_ref`、`stream_ref`、canonical `item_key` 和精确推荐行
+`id`。只有 IntersectionObserver 确认卡片真实进入视口、面板不在后台时才
+发送可见 ACK；预取、返回数据、屏外和后台卡片不算曝光。ACK 保持稳定 ID，
+最多重试两次，重挂载不重复记账。点赞、点踩、评论和点击都附带原始批次归因。
+旧后端和导演 off 继续使用原协议，不添加空的批次字段。
+
+完整接口与桌面 / 移动验证见
+[推荐导演批次协议](desktop-web.md#推荐导演批次协议桌面--移动-web)。共享行为
+由 `tests/js/director-client.test.mjs` 覆盖；插件还需运行既有 popup API、
+归一化测试、`npm run typecheck` 与 `npm run build:bundle`。
 
 ### 配置页 HTML 结构约束
 

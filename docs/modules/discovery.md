@@ -8,6 +8,75 @@ Instagram discovery 使用 optional-credential：保留匿名 topic/creator 路�
 
 > 从用户画像出发，在 B 站、小红书、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do、V2EX、微博、GitHub、Instagram 和通用 Web 等来源主动寻找潜在会喜欢的内容。
 
+## 纯 Jev 完整评估（可选，2026-10-02）
+
+`discovery.eval_scorer="jev"` 替换完整候选评估，不是额外预过滤，也不是 learned
+只替换相关性。`JevContentEvaluator.evaluate()` 用原生 Score / Choice 生成相关性、
+受控主题 / IP / 风格及完整时效证据组，统一经过现有验证、grounding、配额和准入。
+`ContentDiscoveryEngine` 的单条、批量与 `evaluate_cached_content_batch()` 旧池补评
+均走同一选择；API、CLI、OpenClaw 共用路由。失败返回 missing，留在待评估状态，
+不缓存失败、不伪造零分标签、不隐式调用 LLM。推荐表达、搜索词生成仍是独立 LLM 任务。
+
+主题来自配置中的粗分类，IP 仅从配置词表选择；未识别保留空分类和受控诊断，
+不把所有未知项归为同一个真实主题 / IP，也不让 embedding 偷填 Jev 的未知主题。
+解释是程序模板，不是 Jev 自由生成的文案。时效原文片段与完整日期候选由代码提取，
+证据冲突或无法 grounding 时整条评估失败，不补空冒充成功。
+`jev_context.py` 将原文片段只放入 state 一次，证据 Choice 使用显式片段路径，
+返回后还原原句并对完整原文 grounding。公共规则也只传一次；每道题仍明确候选 ref。
+
+原生仅文本，不支持封面；与 `multimodal_evaluation_enabled=true` 或另一 Jev
+semantic filter 同开会报配置错误。Jev 模式暂不运行旧 embedding prefilter 的
+LLM 对照审计，避免将 Jev 结果记作 LLM 真值。默认仍是 LLM；沿用的产品入池阈值
+不是 Jev 标定结果，中文质量与误拒需要另行真实验证。
+
+Jev 完整评估改用 `build_profile_catalog()` + `select_profile_context()` 命名按需视图：
+全画像只在本地，先保留完整负偏好（Onion 保留原 domain/specific 限定树）、风格和场景，
+再按每条候选文本选择相关兴趣、少量全局偏好与近期事实，不调摘要 LLM、不改源画像。
+完整兴趣目录不再受旧 top-48/256 限制；当前相关性是确定性词法检索，不承诺语义同义召回。
+选中的单条事实不截字；没有加载某兴趣不等于用户不喜欢。请求中 `candidate_profiles.cN`
+只供对应候选使用；`build_shared_evaluation_profiles()` 把相同负偏好、风格和场景
+移到共享 `profile` 一次。正偏好选择独立于批次同行；原有 LLM 评估视图和召回不变。
+
+共享 `decision.context_budget` 按用户选择的精确模型 ID 解析双限制，不自动切模型。
+已登记 `jev-1.13.0` / `jev-1.14.0` 标准窗口，默认为 24,000（state＋最长题）/48,000（完整请求）UTF-8 字节护栏，
+含问题、词表及 JSON 包装；其它模型按自身登记容量计算。无公开 tokenizer，字节护栏只是
+保守工程策略，不是精确 token 数。每条候选的 10 题是不可拆单元，多候选多题共用请求；
+整批装不下先移走完整候选，默认最多 4 条为待校准的工程上限，题数/单题字节护栏可配置。
+单条超限时本地选择完整片段，保留开头/结尾、显式否定/条件/时间线索及邻句；不截字、
+不调用摘要模型。`text_coverage` 标记局部视图、源摘要、原始/已选片段数，片段附源字段
+和字符位置，日志只记源摘要、计数及选中字符范围。这些词法锚点不是语义完整性证明；不能保证任意
+长内容无损压缩。必需画像、负例、单段或完整题义仍放不下则 missing；远端拒绝也按失败
+处理，不缩短后二次发送。
+每次 adapter evaluate 共用 30 秒 / 32 调用预算。源画像在缓存查找前冻结；完整目录摘要、
+问题版本、选择策略、模型容量、词表进入缓存身份，避免并发反馈或预算变化复用旧结果。
+成功且绑定验证通过的响应会记录实际 input/output token 与上述两种字节量，明确标记
+字节并非 token 估计；不记录画像、候选标题或词表。总 usage 不能反推最长单题 token。
+
+配置与能力边界见 [配置模块](config.md#discoveryjevevaluation)；来源核实见
+[Jev 完整评估研究](../plans/2026-10-02-jev-full-evaluator-research.md)。当前实现测试与
+真实模型验收必须分开记录，见[验收记录](../plans/2026-10-02-jev-full-evaluator-validation.md)。
+
+单轮适配与官方多题依据见[实施契约](../plans/2026-10-14-jev-single-pass-context.md)。
+Jev 入口保留完整 `description`（不沿用普通 LLM 批处理的 400 字截断），由
+`jev_context` 统一按预算选择整段原文；缓存也绑定完整描述，尾部条件改变会重新评估。
+本机真实 API 进程的浏览器保存 → 实际热重载 → 来源入队 → HTTP 评估 → SQLite 准入
+回归见 `tests/test_jev_runtime_e2e.py`；只有最外侧 Jev 推理使用合成协议后端，
+不能据此认定官方 token 容量、模型质量或整套推荐文案链路已验收。
+Web/插件/移动的 Jev 连接区可配置服务开关、原生 URL、Token、固定模型、双容量和每批候选数，
+与 `eval_scorer=jev` 可同次保存，由共享后端验证及后台重建生效。不是额外加一层预过滤；
+独立 semantic filter 仍与完整 Jev 评估互斥。连接配置只表示本机就绪，未自动请求付费探测。
+`scripts/validate_jev_single_pass.py` 默认仅本地预览；真实模式需先确认促销额度并在本机
+设置 key，使用合成画像、候选和临时 SQLite，不修改生产配置或数据。
+`--config /absolute/path/config.toml` 可读取设置页保存的连接、精确模型及容量并先做零 HTTP
+preview；加真实模式及额度确认才会经生产 factory 请求所配服务，详见 [CLI 开发验证](cli.md#jev-本机开发验证脚本)。
+独立进程的保存/重启验收覆盖自定义模型容量，启动新进程后仍使用原 URL、Token 和固定模型；
+推理边界仍为本机合成服务，不代表官方模型已验收。
+加 `--fake` 则自动启动本机 Jev 原生协议假后端，以真实回环 HTTP 跑完两种预算的
+完整评估与入池，不需要 key；输出 `backend=local_fake`、`live=false`、
+`usage_is_synthetic=true`。假后端有独立字节容量校验和故障注入，不能验证官方 token
+限制或推荐判断质量；它不加入生产 evaluator 配置，也不代替官方真实服务验收。
+
+
 API daemon 的候选 admission 成功后只同步调用轻量 expression `notify()`，不会 inline 或 await 文案 provider；generation-owned coordinator 按 durable `admitted_pending_copy` 连续补齐文案，因此评估 worker 可立即继续补位。OpenClaw direct one-shot 没有 daemon owner：它在 admission commit 后 await `expression-copy(limit=4, max_extra_requests=0)`，首 batch 的有效 subset 立即进入 canonical pool，剩余 pending-copy 留给下一次 operation；若首 batch 全部无效，本次可服务池仍可能为空，但不会留下 copy/provider task。`drain_pending()` 会随原有 metrics 返回结构化 post-admission copy receipt；refresh 仅在本轮没有 callback owner 时执行 copy 兜底，避免同一 durable admission 被 controller 收尾再次调用。
 
 默认分阶段调度与全并发调度均向声明支持的来源策略转发 `keywords` 和 `keyword_ids`。TikTok 等第二阶段策略必须消费已领取的词并保留候选归因，不能改为重新生成关键词。
@@ -673,12 +742,16 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | 显式初始化小批量评估 | ✅ | `drain_pending(flush=True)` 仅跳过聚合等待，保持批次上限、锁、claim、评分与准入；默认后台路径不变。 |
+
+| Jev 按需画像 | ✅ | 完整目录本地保留，逐候选投影与精确模型双上下文预算；源快照、策略及预算隔离缓存，mandatory 不足明确 missing |
 | 5.1 搜索策略 | ✅ | compact 画像生成搜索词（关闭 thinking / core-memory 注入）+ 6 小时 query 缓存 + B 站搜索 + `bvid` 去重 + `DiscoveredContent` 映射 |
 | B 站近期供给 lane | ✅ | 生产 composition 在既有 SearchStrategy 请求预算内预留 1 个 `pubdate` 请求、最多 5 条；普通/近期结果交错进入评估窗口，并以 `search:recent` + raw provenance 留痕。它不改变 relevance、admission、来源策略或配额。 |
 | 5.2 排行榜策略 | ✅ | 全站榜 + 非 0 分区 rid 本地洗牌轮转覆盖 + LLM 评分筛选 |
 | 5.3 相关推荐链策略 | ✅ | 事件种子 + 偏好/策略兜底种子 + 2 层相关推荐链 + LLM 评分过滤 |
 | 5.4 跨领域探索策略 | ✅ | compact 画像生成短 JSON 探索 domain + 按 covered topic 缓存 + query 搜索 + exploration bonus + prompt 级外推多样性约束 |
 | 5.5 内容评估 | ✅ | `evaluate_content()` 已被四类发现策略复用（含 SearchStrategy） |
+| 纯 Jev 完整评估 | ✅ 实验性，默认不启用 | `eval_scorer="jev"` 替换完整评估；原生 typed questions 组合 13 项 metadata，受控主题 / IP、明确未知、纯文本、无隐式 LLM。双字节预算拆批，超限 / 失败不缓存并保留候选待评估；中文质量与真实服务尚未验收。 |
+| 独立 Jev 语义过滤 | ✅ 默认 off | 注入 `JevSemanticFilter`，使用独立 provider 与导演共享预算；窄范围稳定避雷判断、探索保留、完整校准 cohort、隐私安全审计、失败放行。校准 enforce 只在本 wave 延期，下一 claim 强制完整评估，不永久拉黑，不替代 LLM 元数据。 |
 | evaluator prefilter shadow 证据门 | ✅ | 默认仍为 `shadow`：每个未命中评分缓存的候选先生成不含标题、URL、正文或原始画像的审计决策，LLM 返回后用随机 decision id 回填原始模型分数和统一 admission 阈值结果；provider / parse 失败在产品评分路径可保守结算为 0，但审计行保持 unjoined，绝不把合成 0 伪装成 eventual LLM score。required-interest 集合与实际 embedding 输入使用同一份按权重排序的 top-256；无 embedding service 也使用固定域分隔 digest namespace 落下可连接证据，`profile_interests_missing` 与缺失/异常向量一并作为 degraded fail-open 进入 gate。审计写失败同样 fail-open。即使显式配置 `enforce`，当前批无法完整生成并持久化每条决策证据时也整批保留 LLM 路径；`scripts/evaluate_prefilter_shadow_gate.py` 只读冻结 retained cohort 并计算 §6.4 gate，从不自动切换 `enforce`。 |
 | evaluator learned scorer shadow 证据门 | ✅ | `[discovery].eval_scorer` 默认 `llm`；`shadow` 并跑 learned + 完整 LLM、由 LLM 决定 relevance 并积累完整隐私安全对照；人工通过 gate 后才可显式选 `learned`，且仅在 LLM 元数据完整、本批审计完整落库时由 learned 覆盖 relevance。当前两种校准模式都继续调用 LLM，不承诺降本。学习器不可用、异常、长度 / 数值 / 维度 / digest 非法或审计失败均 fail-open 到 LLM。只读 gate 要求 ≥100 完整对照、telemetry coverage=1、存在 admission、Spearman≥0.5、admission delta≤2%、admitted coverage≥90%，缺失指标一律失败，且从不自动改配置。 |
 | 5.6 发现引擎编排 | ✅ | 并发执行策略 + 高分去重 + 直接 discover 缓存收口；runtime 正常路径通过待评估池 admission 到 SQLite 推荐池 |
@@ -753,6 +826,11 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 推荐预热只在安全成功条件下写完成状态，便于下一轮重试失败的 source / sprite / embedding。
 
 ## 公开 API
+
+`JevContentEvaluator(provider, model=..., config=..., context_budget=...)` 接受模型绑定的共享
+预算；`evaluate(profile_summary=..., content_items=...)` 支持命名 on-demand catalog，
+仅向 provider 发送按需投影，保留旧直接视图调用兼容。返回仍逐项对齐，失败为 `None`，
+不扩大自动重试或隐式 LLM 路由。
 
 ### Learned scorer 校准 API
 
@@ -898,6 +976,60 @@ assert 0.0 <= score <= 1.0
 - `SearchStrategy` / `TrendingStrategy` / `RelatedChainStrategy` / `ExploreStrategy`、YouTube 三策略和 `DouyinDirectStrategy` 在内部临时构造 evaluator 时都会透传 `database`。因此 CLI、daemon runtime、YouTube producer、Douyin producer 和 OpenClaw bootstrap 路径都能读取同一份近期 negative exemplars，避免只有外层 engine 能看到短期负反馈样本。
 - 排序口径优先 `candidate_tier`，再看 `relevance_score`、`last_scored_at`、`view_count`
 - 最终结果会把 `relevance_score`、`relevance_reason`、`candidate_tier` 一并写入 `content_cache`
+
+### 独立 Jev 语义过滤
+
+`[discovery.semantic_filter]` 与 `[director]` 独立；纯 Agent、纯 Jev、混合编排都能
+分别开关它。运行时创建和关闭 provider，`ContentDiscoveryEngine` 只接受已注入的
+`JevSemanticFilter`，不在构造器中读取 Key 或创建 HTTP client。
+该开关当前通过 TOML 配置；修改后完整重启后端，使 discovery 子进程与 API / 推荐
+子进程一并载入新配置。单独重载 API runtime 不会改变另一个已运行的发现进程。
+
+处理顺序是确定性硬规则 → 冻结校准 cohort → 模型过滤证据 → 当前 LLM 评估 / 分类
+→ 现有入池门。单条 `evaluate_content()` 在启用语义过滤时也转入同一个 batch 路径；
+注册到引擎的策略继承它，默认关闭和独立策略未注入时保留历史行为。
+
+| Interface | 合同 |
+|---|---|
+| `JevSemanticFilter(config, provider, *, model, database)` | 接受依赖，不拥有 provider 生命周期；enforce 要求固定模型与校准标识匹配 |
+| `evaluate(contents, profile, *, source_context="", calibration=False)` | 返回 `SemanticFilterBatch`；`suppressed_indices` 只在完整审计成功且可 enforce 时非空 |
+| `complete(batch, *, llm_scores, admission_thresholds)` | 只把真实有限 LLM 分数与准入结果接回审计；缺失标签保留 NULL，不用合成 0 补齐 |
+| `ContentDiscoveryEngine(..., semantic_filter=...)` | 单条 / 批量的共同注入点；不允许 embedding 和 Jev 同时 enforce |
+| `build_cli_semantic_filter(config, database)` | CLI 构造 helper；off 不查凭据，on 先验凭据但不创建 HTTP client，再注入逐请求 transport / 每 event loop 共享 gate |
+| `Database.defer_claimed_semantic_filter_candidates(ids, *, claim_token)` | CAS 检查当前评估租约，把本轮延期行退回 pending，零失败惩罚 |
+
+每个候选的问题在 `instructions` 中明确写入 request-local `candidate_ref`，不能依赖
+服务端不保证可见的 question key；候选标题、摘要和 tags 都是 untrusted data。
+模型只回答是否明确违反稳定避雷，不因陌生领域或近期兴趣不匹配就拒绝。探索来源 / 上下文
+保留。画像通过命名 compact profile view 序列化，不发送 portrait；负偏好不被裁剪。
+
+每 wave 默认最多 30 个非探索候选、1 个请求、2 秒总 deadline；配置可扩到 90 个候选、
+3 个请求，每请求最多 30 个问题。另有 24,000 UTF-8 字节工程上限，不宣称等于 tokenizer
+预算；超限、provider 故障、部分 / 错配 / 非有限结果、超时与审计失败均保留候选。
+所有调用与编排共享 `BoundedDecisionProvider` 的并发 / 排队 / 熔断限制。
+standalone CLI 的 `discover*` 同样注入该过滤器；CLI 可能多次 `asyncio.run()`，所以
+`LoopLocalDecisionProvider` 每次请求在当前 loop 中创建并关闭 transport，同一个 loop
+共享有界 gate，不把连接池带到下一个 loop。API runtime 接管时替换为其单一长期 client；
+两条路径都不回借聊天 / embedding 凭据。构建过滤器只校验启用路由所需的环境变量，
+不会探测远端或自动发送请求。
+
+Jev 启用时绕过普通评分缓存，避免缓存命中把难例从对照中消掉。任一模型 shadow、
+learned scorer 校准或延期复核 wave 都绕过 embedding 与 Jev 的模型拒绝，当前 LLM 继续
+补齐 temporal/topic/style/franchise 元数据。先前确定性已看 / 日期 / 可用性规则不被绕过。
+阈值只接受配置值；默认 1.0 没有真实领域校准背书。`calibration_tag` 是人工校准记录
+引用而非代码替用户完成了质量验收；更换模型必须重新校准，不自动提高上线等级。
+
+`discovery_semantic_filter_audit` 保留完整 cohort，包括探索豁免、预算未覆盖与失败成员。
+字段包含随机 decision/cohort id、候选 hash、输入 digest、requested/actual model、schema、
+rollout mode、calibration tag、阈值和拒绝证据、would-filter、suppressed、原因和真实 LLM
+标签。审计不保存候选标题、URL、正文或原始画像；保留上限 30 天 / 20,000 行。
+失败 / 未评估成员的 `llm_score` 保留 NULL，不能把“没评估”算作模型正确拒绝。
+
+enforce 只延期当前 wave，不写永久低分、不删除候选、不改变长期画像。延期保留
+`semantic_filter_deferred` 标记且不增加 eval/batch 失败次数；下一次 claim 读取它，
+强制完整评估，之后依旧由真实 LLM 分数与现有 admission 规则决定入池。
+`complete_claim()` 单独返回 `deferred` 数量，不误记为 rejected / stale / evaluated。
+此安全版本不承诺消除后续 LLM 成本，也没有 pre-serve 会话过滤路由。
 
 ### DiscoveryCandidatePipeline
 

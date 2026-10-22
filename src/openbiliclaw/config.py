@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import math
 import os
 import re
 import shutil
 import tomllib
 from copy import deepcopy
-from dataclasses import MISSING, dataclass, field, fields
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -186,7 +187,7 @@ _DEFAULT_CANDIDATE_EVAL_CONCURRENCY = 3
 _MIN_ADMISSION_MIN_SCORE = 0.50
 _DEFAULT_EVAL_PREFILTER_MODE = "shadow"
 _SUPPORTED_EVAL_PREFILTER_MODES = {"off", "shadow", "enforce"}
-_SUPPORTED_EVAL_SCORER_MODES = {"llm", "shadow", "learned"}
+_SUPPORTED_EVAL_SCORER_MODES = {"llm", "shadow", "learned", "jev"}
 _DEFAULT_MULTIMODAL_BATCH_SIZE = 8
 _DEFAULT_MULTIMODAL_IMAGE_MAX_PX = 384
 _DEFAULT_MULTIMODAL_IMAGE_QUALITY = 72
@@ -448,6 +449,125 @@ class LLMInstanceConfig(LLMProviderConfig):
     name: str = ""
     provider_type: str = ""
     enabled: bool = True
+
+
+@dataclass(frozen=True)
+class JevContextLimits:
+    """Operator-confirmed dual token limits bound to one exact model ID."""
+
+    max_request_tokens: int
+    max_state_question_tokens: int
+
+
+@dataclass
+class JevDecisionConfig:
+    """Independent Jev settings; a local saved token takes precedence over env.
+
+    Enabling the client does not enable a recommendation or filtering route.
+    ``max_attempts`` includes the initial request. Timeout and attempt defaults
+    are conservative initial transport budgets, not a measured latency SLA.
+    """
+
+    enabled: bool = False
+    model: str = "jev-1.13.0"
+    api_key_env: str = "TYPESAFE_API_KEY"
+    api_key: str = field(default="", repr=False)
+    endpoint_url: str = "https://api.typesafe.ai/v1/systemone"
+    timeout_seconds: float = 2.0
+    max_attempts: int = 2
+    context_limits: dict[str, JevContextLimits] = field(default_factory=dict)
+
+
+@dataclass
+class DecisionProvidersConfig:
+    """Provider settings independent of chat and embedding configuration."""
+
+    jev: JevDecisionConfig = field(default_factory=JevDecisionConfig)
+
+
+@dataclass
+class DecisionConfig:
+    """Typed decision-provider configuration, without business routing."""
+
+    providers: DecisionProvidersConfig = field(default_factory=DecisionProvidersConfig)
+
+
+@dataclass
+class DirectorConfig:
+    """Recommendation rollout and orchestration policy, independent of filtering."""
+
+    mode: str = "off"
+    strategy: str = "agent_jev"
+    decision_provider: str = "jev"
+    planning_horizon_screens: int = 3
+    plan_ttl_seconds: int = 300
+    planning_budget_seconds: float = 20.0
+    decision_budget_seconds: float = 8.0
+    max_decision_calls: int = 10
+    max_candidates: int = 40
+
+
+@dataclass
+class SemanticFilterConfig:
+    """Opt-in discovery rejection evidence; enforcement needs versioned calibration.
+
+    The threshold is a conservative shadow starting point, NOT a calibrated
+    quality claim. Enforce requires an operator's calibration tag bound to the
+    exact pinned provider model; provider swaps must reopen calibration.
+    """
+
+    mode: str = "off"
+    provider: str = "jev"
+    refusal_threshold: float = 1.0
+    calibration_tag: str = ""
+    calibration_model: str = ""
+    max_candidates_per_cycle: int = 30
+    max_calls_per_cycle: int = 1
+    decision_budget_seconds: float = 2.0
+
+
+@dataclass
+class JevEvaluationConfig:
+    """Pure typed evaluator vocabulary and conservative UTF-8 wire budgets.
+
+    These byte guards are engineering headroom, not tokenizer measurements or
+    quality calibration. Unknown is adapter-owned and never a configurable label.
+    """
+
+    topic_labels: list[str] = field(
+        default_factory=lambda: [
+            "科技",
+            "编程",
+            "科学",
+            "游戏",
+            "影视",
+            "音乐",
+            "动漫",
+            "生活",
+            "美食",
+            "旅行",
+            "运动",
+            "财经",
+            "教育",
+            "历史",
+            "社会",
+            "艺术",
+            "其他",
+        ]
+    )
+    franchise_labels: list[str] = field(default_factory=list)
+    # Zero adapts to the selected model. Existing explicit values remain
+    # operator-owned stricter guards; they never redefine model capacity.
+    max_state_question_bytes: int = 0
+    max_request_bytes: int = 0
+    # Initial engineering exposure bound, not a calibrated accuracy claim.
+    # Native Jev has no independent question-count cap; zero leaves that guard
+    # to the dual context budgets. A complete candidate currently needs 10 questions.
+    max_candidates_per_request: int = 4
+    max_questions_per_request: int = 0
+    max_question_bytes: int = 0
+    max_calls: int = 32
+    budget_seconds: float = 30.0
 
 
 @dataclass
@@ -1162,8 +1282,11 @@ class DiscoveryConfig:
     # would-be filtered candidates without suppressing LLM evaluation.
     eval_prefilter_mode: str = _DEFAULT_EVAL_PREFILTER_MODE
     # Evaluator relevance backend: "llm" (default), "shadow" (LLM authoritative
-    # with learned-vs-LLM audit), or "learned" (learned relevance with LLM metadata).
+    # with learned-vs-LLM audit), "learned" (learned relevance with LLM metadata),
+    # or "jev" (pure text-only typed full evaluation with controlled metadata).
     eval_scorer: str = "llm"
+    semantic_filter: SemanticFilterConfig = field(default_factory=SemanticFilterConfig)
+    jev_evaluation: JevEvaluationConfig = field(default_factory=JevEvaluationConfig)
     # Optional cover-image evaluation. Kept off by default because it changes
     # LLM cost/latency and requires a vision-capable evaluation model.
     multimodal_evaluation_enabled: bool = False
@@ -1868,6 +1991,8 @@ class Config:
     data_dir: str = "data"
     api: ApiConfig = field(default_factory=ApiConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    decision: DecisionConfig = field(default_factory=DecisionConfig)
+    director: DirectorConfig = field(default_factory=DirectorConfig)
     bilibili: BilibiliConfig = field(default_factory=BilibiliConfig)
     # Overseas-outbound proxy (LLM SDKs / YouTube / Bangumi / updater).
     # CN-direct clients never use it — see NetworkConfig docstring.
@@ -2850,7 +2975,7 @@ def _build_config(
 
     api_auth = _build_api_auth(api_raw, consult_environment=consult_environment)
 
-    return Config(
+    config = Config(
         language=general.get("language", "zh"),
         data_dir=general.get("data_dir", "data"),
         api=ApiConfig(
@@ -2859,6 +2984,8 @@ def _build_config(
             auth=api_auth,
         ),
         llm=llm,
+        decision=_build_decision_config(raw.get("decision", {})),
+        director=_build_director_config(raw.get("director", {})),
         bilibili=bilibili,
         network=_build_network_config(raw),
         sources=sources,
@@ -3110,6 +3237,367 @@ def _build_config(
         tls_proxy=_build_tls_proxy(raw, consult_environment=consult_environment),
         tailnet=_build_tailnet(raw, consult_environment=consult_environment),
     )
+    validate_director_routes(config)
+    return config
+
+
+def _jev_decision_config_issues(config: JevDecisionConfig) -> list[ConfigIssue]:
+    """Check typed Jev settings without reading or revealing credentials."""
+    from openbiliclaw.decision.context_budget import (
+        JevContextError,
+        parse_jev_context_limits,
+        resolve_jev_context,
+        validate_jev_model_id,
+    )
+
+    issues: list[ConfigIssue] = []
+
+    def add(name: str, message: str) -> None:
+        issues.append(
+            ConfigIssue(
+                field=f"decision.providers.jev.{name}", message=message, severity="blocking"
+            )
+        )
+
+    if not isinstance(config.enabled, bool):
+        add("enabled", "必须为 TOML 布尔值 true 或 false。")
+    from openbiliclaw.decision.jev_provider import validate_jev_endpoint_url
+
+    try:
+        validate_jev_endpoint_url(config.endpoint_url)
+    except ValueError as exc:
+        add("endpoint_url", str(exc))
+    if not isinstance(config.api_key, str) or (
+        config.api_key
+        and (
+            not config.api_key.isascii()
+            or any(ord(char) < 33 or ord(char) == 127 for char in config.api_key)
+        )
+    ):
+        add("api_key", "Token 必须是有效 Bearer 凭据，不能含空白或控制字符。")
+    if (
+        not isinstance(config.model, str)
+        or not config.model.strip()
+        or config.model != config.model.strip()
+    ):
+        add("model", "必须为非空模型名称，且不能含首尾空白。")
+    if (
+        not isinstance(config.api_key_env, str)
+        or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", config.api_key_env) is None
+    ):
+        add("api_key_env", "必须为合法环境变量名；请勿填写实际 API Key。")
+    timeout = config.timeout_seconds
+    try:
+        valid_timeout = (
+            isinstance(timeout, (int, float))
+            and not isinstance(timeout, bool)
+            and math.isfinite(timeout)
+            and timeout > 0
+        )
+    except OverflowError:
+        valid_timeout = False
+    if not valid_timeout:
+        add("timeout_seconds", "必须为大于 0 的有限秒数。")
+    if (
+        not isinstance(config.max_attempts, int)
+        or isinstance(config.max_attempts, bool)
+        or config.max_attempts < 1
+    ):
+        add("max_attempts", "必须为大于等于 1 的整数（包含首次请求）。")
+    if not isinstance(config.context_limits, dict):
+        add("context_limits", "必须为按精确模型 ID 索引的上下文容量表。")
+    else:
+        for model, limits in config.context_limits.items():
+            try:
+                validate_jev_model_id(model)
+                resolve_jev_context(model, {model: parse_jev_context_limits(limits)})
+            except JevContextError as exc:
+                add("context_limits", str(exc))
+    return issues
+
+
+def validate_jev_decision_config(config: JevDecisionConfig) -> None:
+    """Reject invalid Jev client settings; credential resolution is separate."""
+    issues = _jev_decision_config_issues(config)
+    if issues:
+        issue = issues[0]
+        raise ConfigError(f"{issue.field}: {issue.message}")
+
+
+def _build_decision_config(raw: object) -> DecisionConfig:
+    """Parse the isolated decision namespace without credential lookup."""
+    from openbiliclaw.decision.context_budget import JevContextError, parse_jev_context_limits
+
+    def table(value: object, section: str, allowed: set[str]) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ConfigError(f"`[{section}]` 必须是 TOML table。")
+        unknown = set(value) - allowed
+        if unknown:
+            # Do not echo values: a mistaken api_key entry can be a secret.
+            raise ConfigError(f"{section}: 不支持的配置字段 {', '.join(sorted(unknown))}。")
+        return value
+
+    decision_raw = table(raw, "decision", {"providers"})
+    providers_raw = table(decision_raw.get("providers", {}), "decision.providers", {"jev"})
+    jev_raw = table(
+        providers_raw.get("jev", {}),
+        "decision.providers.jev",
+        {item.name for item in fields(JevDecisionConfig)},
+    )
+    context_raw = jev_raw.get("context_limits", {})
+    if not isinstance(context_raw, dict):
+        raise ConfigError("decision.providers.jev.context_limits 必须为 TOML table。")
+    try:
+        context_limits = {
+            model: parse_jev_context_limits(limits) for model, limits in context_raw.items()
+        }
+    except JevContextError as exc:
+        raise ConfigError(f"decision.providers.jev.context_limits: {exc}") from None
+    jev = JevDecisionConfig(**{**jev_raw, "context_limits": context_limits})
+    validate_jev_decision_config(jev)
+    return DecisionConfig(providers=DecisionProvidersConfig(jev=jev))
+
+
+def update_decision_config(current: DecisionConfig, update: object) -> DecisionConfig:
+    """Apply a strict partial Jev update, preserving omitted/blank secrets.
+
+    Clear is explicit. Changing the destination requires a fresh token to avoid
+    forwarding a previously saved or environment credential to another service.
+    No credential is resolved and no network probe happens here.
+    """
+    if not isinstance(update, dict) or set(update) - {"providers"}:
+        raise ConfigError("decision 仅支持 providers 配置。")
+    providers = update.get("providers", {})
+    if not isinstance(providers, dict) or set(providers) - {"jev"}:
+        raise ConfigError("decision.providers 仅支持 jev。")
+    values = providers.get("jev", {})
+    if not isinstance(values, dict):
+        raise ConfigError("decision.providers.jev 必须是对象。")
+    values = dict(values)
+    clear = values.pop("clear_api_key", False)
+    if type(clear) is not bool:
+        raise ConfigError("clear_api_key 必须是布尔值。")
+    token = values.get("api_key", "")
+    if not isinstance(token, str) or "****" in token:
+        raise ConfigError("请填写有效 Token，不接受掩码或非文本值。")
+    if clear and token:
+        raise ConfigError("不能同时替换和清除 Jev Token。")
+    if (
+        values.get("endpoint_url", current.providers.jev.endpoint_url)
+        != current.providers.jev.endpoint_url
+        and not token
+    ):
+        raise ConfigError("修改 Jev URL 时请重新填写 Token，避免误发旧凭据。")
+    merged = asdict(current.providers.jev)
+    if not token:
+        values.pop("api_key", None)
+    merged.update(values)
+    if clear:
+        merged["api_key"] = ""
+    return _build_decision_config({"providers": {"jev": merged}})
+
+
+def _strict_route_table(raw: object, cls: type[Any], section: str) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ConfigError(f"[{section}] 必须是 TOML table。")
+    unknown = set(raw) - {item.name for item in fields(cls)}
+    if unknown:
+        raise ConfigError(f"{section}: 不支持的配置字段 {', '.join(sorted(unknown))}。")
+    return raw
+
+
+def _build_director_config(raw: object) -> DirectorConfig:
+    return DirectorConfig(**_strict_route_table(raw, DirectorConfig, "director"))
+
+
+def _build_semantic_filter_config(raw: object) -> SemanticFilterConfig:
+    return SemanticFilterConfig(
+        **_strict_route_table(raw, SemanticFilterConfig, "discovery.semantic_filter")
+    )
+
+
+def build_jev_evaluation_config(raw: object) -> JevEvaluationConfig:
+    """Parse evaluator settings strictly; do not silently trim or discard context."""
+    config = JevEvaluationConfig(
+        **_strict_route_table(raw, JevEvaluationConfig, "discovery.jev_evaluation")
+    )
+    validate_jev_evaluation_config(config)
+    return config
+
+
+def _jev_evaluation_config_issues(evaluation: JevEvaluationConfig) -> list[ConfigIssue]:
+    issues: list[ConfigIssue] = []
+    prefix = "discovery.jev_evaluation"
+
+    def add(name: str, message: str) -> None:
+        issues.append(ConfigIssue(field=f"{prefix}.{name}", message=message, severity="blocking"))
+
+    def valid_label(label: object) -> bool:
+        if not isinstance(label, str) or not label.strip() or label != label.strip():
+            return False
+        if label.casefold() == "unknown" or any(ord(char) < 32 for char in label):
+            return False
+        try:
+            return len(label.encode("utf-8")) <= 80
+        except UnicodeEncodeError:
+            return False
+
+    for name in ("topic_labels", "franchise_labels"):
+        labels = getattr(evaluation, name)
+        if (
+            not isinstance(labels, list)
+            or len(labels) > 254
+            or not all(valid_label(label) for label in labels)
+        ):
+            add(name, "必须为至多 254 个非空标签，每项最多 80 UTF-8 字节；unknown 为保留结果。")
+        elif len(set(labels)) != len(labels):
+            add(name, "标签不能重复；不会自动截断或合并。")
+    for name in ("max_state_question_bytes", "max_request_bytes", "max_question_bytes"):
+        value = getattr(evaluation, name)
+        if type(value) is not int or (value != 0 and not 256 <= value <= 75_000_000):
+            add(name, "必须为 0（按模型自适应）或 256..75000000 的更严字节护栏。")
+    for name, low, high in (("max_calls", 1, 64), ("max_candidates_per_request", 1, 64)):
+        value = getattr(evaluation, name)
+        if type(value) is not int or not low <= value <= high:
+            add(name, f"必须为 {low}..{high} 的整数。")
+    questions = evaluation.max_questions_per_request
+    if type(questions) is not int or (questions != 0 and not 10 <= questions <= 640):
+        add("max_questions_per_request", "必须为 0（仅受容量限制）或 10..640；完整候选不可拆题。")
+    if (
+        type(evaluation.max_request_bytes) is int
+        and type(evaluation.max_state_question_bytes) is int
+        and evaluation.max_request_bytes > 0
+        and evaluation.max_state_question_bytes > 0
+        and evaluation.max_request_bytes < evaluation.max_state_question_bytes
+    ):
+        add("max_request_bytes", "不能小于 max_state_question_bytes。")
+    budget = evaluation.budget_seconds
+    if type(budget) not in (int, float) or not 0.01 <= budget <= 120:
+        add("budget_seconds", "必须为 0.01..120 的有限数值。")
+    return issues
+
+
+def validate_jev_evaluation_config(config: JevEvaluationConfig) -> None:
+    """Validate direct adapter injection as strictly as persisted configuration."""
+    issues = _jev_evaluation_config_issues(config)
+    if issues:
+        issue = issues[0]
+        raise ConfigError(f"{issue.field}: {issue.message}")
+
+
+def decision_routes_enabled(config: Config) -> bool:
+    """Whether runtime must construct the independent decision provider."""
+    return (
+        config.discovery.eval_scorer == "jev"
+        or config.discovery.semantic_filter.mode != "off"
+        or (config.director.mode != "off" and config.director.strategy != "agent_only")
+    )
+
+
+def _director_route_issues(config: Config) -> list[ConfigIssue]:
+    from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
+
+    issues: list[ConfigIssue] = []
+
+    def add(path: str, message: str) -> None:
+        issues.append(ConfigIssue(field=path, message=message, severity="blocking"))
+
+    def enum(path: str, value: object, allowed: set[str]) -> None:
+        if not isinstance(value, str) or value not in allowed:
+            add(path, f"必须为 {' / '.join(sorted(allowed))}。")
+
+    def integer(path: str, value: object, low: int, high: int) -> None:
+        if type(value) is not int or not low <= value <= high:
+            add(path, f"必须为 {low}..{high} 的整数。")
+
+    def number(path: str, value: object, low: float, high: float) -> None:
+        if (
+            type(value) not in (int, float)
+            or not low <= value <= high  # type: ignore[operator]
+            or not math.isfinite(value)  # type: ignore[arg-type]
+        ):
+            add(path, f"必须为 {low:g}..{high:g} 的有限数值。")
+
+    director = config.director
+    filtering = config.discovery.semantic_filter
+    enum("director.mode", director.mode, {"off", "shadow", "enforce"})
+    enum("director.strategy", director.strategy, {"jev_recurrent", "agent_jev", "agent_only"})
+    enum("director.decision_provider", director.decision_provider, {"jev"})
+    integer("director.planning_horizon_screens", director.planning_horizon_screens, 1, 3)
+    integer("director.plan_ttl_seconds", director.plan_ttl_seconds, 1, 3600)
+    number("director.planning_budget_seconds", director.planning_budget_seconds, 0.01, 60)
+    number("director.decision_budget_seconds", director.decision_budget_seconds, 0.01, 60)
+    integer("director.max_decision_calls", director.max_decision_calls, 1, 10)
+    integer("director.max_candidates", director.max_candidates, 2, 40)
+    prefix = "discovery.semantic_filter"
+    enum(f"{prefix}.mode", filtering.mode, {"off", "shadow", "enforce"})
+    enum(f"{prefix}.provider", filtering.provider, {"jev"})
+    number(f"{prefix}.refusal_threshold", filtering.refusal_threshold, 0.5, 1.0)
+    integer(f"{prefix}.max_candidates_per_cycle", filtering.max_candidates_per_cycle, 1, 90)
+    integer(f"{prefix}.max_calls_per_cycle", filtering.max_calls_per_cycle, 1, 3)
+    number(f"{prefix}.decision_budget_seconds", filtering.decision_budget_seconds, 0.01, 30)
+    for name in ("calibration_tag", "calibration_model"):
+        value = getattr(filtering, name)
+        if not isinstance(value, str) or len(value) > 200 or value != value.strip():
+            add(f"{prefix}.{name}", "必须为至多 200 字符的文本，且不能含首尾空白。")
+    if filtering.mode == "enforce":
+        if not filtering.calibration_tag:
+            add(f"{prefix}.calibration_tag", "enforce 需要显式领域校准记录标识；标识不是质量证明。")
+        model = config.decision.providers.jev.model
+        if (
+            filtering.calibration_model != model
+            or not isinstance(model, str)
+            or model in {"jev-latest", "jev-preview"}
+        ):
+            add(f"{prefix}.calibration_model", "enforce 校准模型必须与当前固定 Jev 模型完全一致。")
+        if config.discovery.eval_prefilter_mode == "enforce":
+            add(f"{prefix}.mode", "Jev 与 embedding 预过滤不能同时 enforce。")
+    if decision_routes_enabled(config) and not config.decision.providers.jev.enabled:
+        add(
+            "decision.providers.jev.enabled",
+            "启用 Jev 评估、编排或过滤路由时必须显式启用 provider。",
+        )
+    issues.extend(_jev_evaluation_config_issues(config.discovery.jev_evaluation))
+    # Inactive routes may retain an unknown model for later setup, but must
+    # not silently borrow another model's capacity when the route is enabled.
+    try:
+        context = resolve_jev_context(
+            config.decision.providers.jev.model, config.decision.providers.jev.context_limits
+        )
+    except JevContextError as exc:
+        if decision_routes_enabled(config):
+            add("decision.providers.jev.context_limits", str(exc))
+    else:
+        evaluation = config.discovery.jev_evaluation
+        for name in ("max_request_bytes", "max_state_question_bytes"):
+            value = getattr(evaluation, name)
+            if type(value) is int and value > getattr(context, name):
+                add(f"discovery.jev_evaluation.{name}", "只能收紧所选模型字节预算，不能放宽。")
+    if config.discovery.eval_scorer == "jev":
+        if config.decision.providers.jev.model in {"jev-latest", "jev-preview"}:
+            add(
+                "decision.providers.jev.model",
+                "完整 Jev 评估必须使用固定模型版本；latest/preview 会使缓存与质量校准身份漂移。",
+            )
+        if config.discovery.multimodal_evaluation_enabled:
+            add(
+                "discovery.multimodal_evaluation_enabled",
+                "纯 Jev 评估仅支持文本；请关闭候选封面 LLM 评估。",
+            )
+        if filtering.mode != "off":
+            add(
+                "discovery.semantic_filter.mode",
+                "完整 Jev 评估与 Jev 预过滤不能同时启用；请设为 off。",
+            )
+    return issues
+
+
+def validate_director_routes(config: Config) -> None:
+    """Validate routes without resolving environment credentials or making I/O."""
+    issues = _director_route_issues(config)
+    if issues:
+        issue = issues[0]
+        raise ConfigError(f"{issue.field}: {issue.message}")
 
 
 def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
@@ -3122,6 +3610,8 @@ def _build_discovery(discovery_raw: dict[str, Any]) -> DiscoveryConfig:
     (``OPENBILICLAW_DISCOVERY_*``) normalize identically to TOML values.
     """
     return DiscoveryConfig(
+        semantic_filter=_build_semantic_filter_config(discovery_raw.get("semantic_filter", {})),
+        jev_evaluation=build_jev_evaluation_config(discovery_raw.get("jev_evaluation", {})),
         unified_keyword_planner_enabled=_coerce_bool(
             discovery_raw.get("unified_keyword_planner_enabled"),
             default=_DEFAULT_UNIFIED_KEYWORD_PLANNER_ENABLED,
@@ -4549,7 +5039,8 @@ def _source_date_preference_issues(config: Config) -> list[ConfigIssue]:
 
 def _collect_config_issues(config: Config) -> list[ConfigIssue]:
     """Collect non-fatal config issues to display as guidance."""
-    issues: list[ConfigIssue] = []
+    issues: list[ConfigIssue] = _jev_decision_config_issues(config.decision.providers.jev)
+    issues.extend(_director_route_issues(config))
 
     try:
         normalize_tailnet_hostname(config.tailnet.hostname)
@@ -5142,7 +5633,7 @@ def _collect_config_issues(config: Config) -> list[ConfigIssue]:
         issues.append(
             ConfigIssue(
                 field="discovery.eval_scorer",
-                message='`discovery.eval_scorer` 仅支持: "llm", "shadow", "learned"。',
+                message='`discovery.eval_scorer` 仅支持: "llm", "shadow", "learned", "jev"。',
                 severity="blocking",
             )
         )
@@ -5800,6 +6291,8 @@ def save_config(
         validate_bangumi_username,
     )
 
+    validate_jev_decision_config(config.decision.providers.jev)
+    validate_director_routes(config)
     date_preference_issues = _source_date_preference_issues(config)
     if date_preference_issues:
         first_issue = date_preference_issues[0]
@@ -5882,6 +6375,9 @@ def save_config(
     )
     if config.llm.instance_routing and path.exists():
         _create_llm_migration_backup(path)
+    if config.decision.providers.jev.api_key:
+        path.touch(mode=0o600, exist_ok=True)
+        path.chmod(0o600)
     path.write_text(rendered, encoding="utf-8")
     return path
 
@@ -5920,6 +6416,11 @@ def _render_config_toml(
     include_api_auth: bool = True,
 ) -> str:
     """Render a Config dataclass into TOML."""
+    from openbiliclaw.decision.context_budget import parse_jev_context_limits
+
+    jev = config.decision.providers.jev
+    validate_jev_decision_config(jev)
+    validate_director_routes(config)
     api_auth_lines = (
         _api_auth_lines(
             config,
@@ -5931,6 +6432,63 @@ def _render_config_toml(
         else []
     )
     lines = [
+        "[director]",
+        f"mode = {_toml_string(config.director.mode)}",
+        f"strategy = {_toml_string(config.director.strategy)}",
+        f"decision_provider = {_toml_string(config.director.decision_provider)}",
+        f"planning_horizon_screens = {config.director.planning_horizon_screens}",
+        f"plan_ttl_seconds = {config.director.plan_ttl_seconds}",
+        f"planning_budget_seconds = {config.director.planning_budget_seconds}",
+        f"decision_budget_seconds = {config.director.decision_budget_seconds}",
+        f"max_decision_calls = {config.director.max_decision_calls}",
+        f"max_candidates = {config.director.max_candidates}",
+        "",
+        "[discovery.semantic_filter]",
+        f"mode = {_toml_string(config.discovery.semantic_filter.mode)}",
+        f"provider = {_toml_string(config.discovery.semantic_filter.provider)}",
+        f"refusal_threshold = {config.discovery.semantic_filter.refusal_threshold}",
+        f"calibration_tag = {_toml_string(config.discovery.semantic_filter.calibration_tag)}",
+        f"calibration_model = {_toml_string(config.discovery.semantic_filter.calibration_model)}",
+        f"max_candidates_per_cycle = {config.discovery.semantic_filter.max_candidates_per_cycle}",
+        f"max_calls_per_cycle = {config.discovery.semantic_filter.max_calls_per_cycle}",
+        f"decision_budget_seconds = {config.discovery.semantic_filter.decision_budget_seconds}",
+        "",
+        "[discovery.jev_evaluation]",
+        f"topic_labels = {_toml_str_list(config.discovery.jev_evaluation.topic_labels)}",
+        f"franchise_labels = {_toml_str_list(config.discovery.jev_evaluation.franchise_labels)}",
+        f"max_state_question_bytes = {config.discovery.jev_evaluation.max_state_question_bytes}",
+        f"max_request_bytes = {config.discovery.jev_evaluation.max_request_bytes}",
+        "max_candidates_per_request = "
+        f"{config.discovery.jev_evaluation.max_candidates_per_request}",
+        f"max_questions_per_request = {config.discovery.jev_evaluation.max_questions_per_request}",
+        f"max_question_bytes = {config.discovery.jev_evaluation.max_question_bytes}",
+        f"max_calls = {config.discovery.jev_evaluation.max_calls}",
+        f"budget_seconds = {config.discovery.jev_evaluation.budget_seconds}",
+        "",
+        "[decision.providers.jev]",
+        f"enabled = {_toml_bool(jev.enabled)}",
+        f"model = {_toml_string(jev.model)}",
+        f"api_key_env = {_toml_string(jev.api_key_env)}",
+        *([f"api_key = {_toml_string(jev.api_key)}"] if jev.api_key else []),
+        *(
+            [f"endpoint_url = {_toml_string(jev.endpoint_url)}"]
+            if jev.endpoint_url != "https://api.typesafe.ai/v1/systemone"
+            else []
+        ),
+        f"timeout_seconds = {jev.timeout_seconds}",
+        f"max_attempts = {jev.max_attempts}",
+        "",
+        *[
+            line
+            for model, raw_limits in sorted(jev.context_limits.items())
+            for limits in (parse_jev_context_limits(raw_limits),)
+            for line in (
+                f"[decision.providers.jev.context_limits.{_toml_string(model)}]",
+                f"max_request_tokens = {limits.max_request_tokens}",
+                f"max_state_question_tokens = {limits.max_state_question_tokens}",
+                "",
+            )
+        ],
         "[general]",
         f"language = {_toml_string(config.language)}",
         f"data_dir = {_toml_string(config.data_dir)}",

@@ -89,6 +89,10 @@
     // 「聊一聊」agent loop（M8）纯逻辑层：SSE 解析、过程模型与卡片 markup。
     // 旧后端没有这个文件时保持 null，全部走 legacy 路径。
     const chatAgentCore = globalThis.OpenBiliClawChatAgentCore || null;
+    const recommendationDirector = globalThis.OpenBiliClawDirectorClient?.createClient({
+      request: (path, options) => requestJsonStrict(path, options),
+      namespace: "desktop-director",
+    }) || null;
     let dialogueContextSelection = readContextSelection(
       (() => {
         try { return window.localStorage; } catch { return null; }
@@ -549,7 +553,10 @@
     }
 
     async function readRecommendationSnapshot() {
-      const payload = await requestJsonStrict(ENDPOINTS.recommendations, { timeoutMs: 15000 });
+      let payload = await requestJsonStrict(ENDPOINTS.recommendations, { timeoutMs: 15000 });
+      if (recommendationDirector) {
+        payload = await recommendationDirector.ensureInitial(payload, { allowGenerate: state.videos.length === 0 });
+      }
       return Array.isArray(payload) ? payload : asArray(payload?.items);
     }
 
@@ -1437,6 +1444,8 @@
         id: Number(item?.id ?? Date.now()),
         bvid: String(item?.bvid ?? contentId),
         item_key: canonical.item_key,
+        batch_ref: String(item?.batch_ref || ""),
+        stream_ref: String(item?.stream_ref || ""),
         content_id: contentId,
         title: displayRecommendationTitle(decodeHtmlEntities(item?.title ?? ""), bodyText, contentType) || "未命名内容",
         up: decodeHtmlEntities(item?.up_name ?? item?.up ?? (canonical.source_platform === "bangumi" ? "" : "未知创作者")),
@@ -5126,6 +5135,7 @@ ${cardFeedbackBarHtml()}`;
         ? "video-card is-text-only"
         : "video-card";
       card.dataset.bvid = item.bvid || item.id;
+      recommendationDirector?.bindCard(card, item);
       card.innerHTML = html;
       const reason = card.querySelector(".reason");
       const toggleReason = () => {
@@ -5276,6 +5286,7 @@ ${cardFeedbackBarHtml()}`;
           source_platform: item.platform || item.source_platform,
           title: item.title,
           recommendation_id: item.id,
+          ...(item.batch_ref ? { batch_ref: item.batch_ref } : {}),
           topic_label: item.topic,
           up_name: item.up || item.up_name
       };
@@ -5310,7 +5321,10 @@ ${cardFeedbackBarHtml()}`;
     }
 
     function submitFeedback(item, feedback_type, note = "", { keepalive = false } = {}) {
-      const payload = { recommendation_id: item.id, feedback_type, note };
+      const payload = {
+        recommendation_id: item.id, feedback_type, note,
+        ...(item.batch_ref ? { batch_ref: item.batch_ref } : {}),
+      };
       return requestJsonWithPendingId(
         ENDPOINTS.feedback,
         "feedback",
@@ -9084,7 +9098,7 @@ ${cardFeedbackBarHtml()}`;
         const requestBody = { excluded_bvids: excludedBvids };
         // "全部" 不带 source_platform：旧客户端 / 兼容路径的请求形状保持不变。
         if (requestPlatform) requestBody.source_platform = requestPlatform;
-        const payload = await requestJson(ENDPOINTS.reshuffle, {
+        const payload = recommendationDirector ? await recommendationDirector.generate(ENDPOINTS.reshuffle, requestBody) : await requestJson(ENDPOINTS.reshuffle, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(requestBody)
@@ -9102,6 +9116,8 @@ ${cardFeedbackBarHtml()}`;
         } else {
           showToast("暂时没有更多新推荐了");
         }
+      } catch {
+        showToast("这次换一批没有完成，当前卡片已保留；重试会恢复同一次请求。");
       } finally {
         schedulePlatformAvailabilityRefresh();
         if (reshuffleButton) reshuffleButton.disabled = false;
@@ -9128,7 +9144,7 @@ ${cardFeedbackBarHtml()}`;
       try {
         const requestBody = { excluded_bvids: state.videos.map((v) => v.bvid) };
         if (requestPlatform) requestBody.source_platform = requestPlatform;
-        const payload = await requestJson(ENDPOINTS.append, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(requestBody) });
+        const payload = recommendationDirector ? await recommendationDirector.generate(ENDPOINTS.append, requestBody) : await requestJson(ENDPOINTS.append, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(requestBody) });
         if (!payload) {
           showToast("加载更多失败，请稍后重试");
           return;
@@ -9166,6 +9182,8 @@ ${cardFeedbackBarHtml()}`;
           rememberEmptyAppend(requestPlatform);
           showToast(`候选池暂时没有新内容，已请求后台补货，${retryHint}`);
         }
+      } catch {
+        showToast("加载更多没有完成，当前卡片已保留；重试会恢复同一次请求。");
       } finally {
         removeAppendSkeletons();
         // showAppendSkeletons may have cleared an empty-state placeholder; if
@@ -10908,6 +10926,13 @@ ${cardFeedbackBarHtml()}`;
 
       const discovery = config.discovery || {};
       setSelect("evalScorer", discovery.eval_scorer || "llm");
+      const jevProvider = discovery.jev_provider || {};
+      window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer"))
+        .load(jevProvider, discovery.jev_evaluation || {});
+      const jevStatus = $("#jevEvaluatorStatus");
+      if (jevStatus) {
+        jevStatus.textContent = `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "请在下方配置连接。"} 后端凭据变量：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}。`;
+      }
       setSelect("keywordGenerationMode", discovery.keyword_generation_mode || "hybrid");
       const multimodalEvaluation = $("#multimodalEvaluationEnabled");
       if (multimodalEvaluation) multimodalEvaluation.checked = discovery.multimodal_evaluation_enabled === true;
@@ -12311,6 +12336,7 @@ ${cardFeedbackBarHtml()}`;
     });
 
     function buildConfigUpdate() {
+      const jevUpdate = window.OpenBiliClawJevSettings.mount($("#jevConnectionSettings"), $("#evalScorer")).collect();
       const logPath = splitLogPath(getInput("logPath"), state.config?.logging);
       const embeddingFallbackProvider = getInput("embeddingFallbackProvider");
       const embedding = {
@@ -12616,6 +12642,7 @@ ${cardFeedbackBarHtml()}`;
         },
         discovery: {
           ...(state.config?.discovery || {}),
+          jev_evaluation: {...(state.config?.discovery?.jev_evaluation || {}), ...(jevUpdate.discovery?.jev_evaluation || {})},
           eval_scorer: $("#evalScorer")?.value || "llm",
           keyword_generation_mode: $("#keywordGenerationMode").value,
           candidate_eval_concurrency: getIntInput("candidateEvalConcurrency", 3),
@@ -12633,6 +12660,7 @@ ${cardFeedbackBarHtml()}`;
           danmaku_max_chars: getIntInput("danmakuMaxChars", 500)
         },
         saved_sync: { auto_sync_enabled: Boolean($("#savedAutoSync")?.checked) },
+        ...(jevUpdate.decision ? {decision: jevUpdate.decision} : {}),
         tailnet: {
           enabled: Boolean($("#tailnetEnabled")?.checked),
           hostname: getInput("tailnetHostname"),

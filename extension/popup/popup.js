@@ -123,6 +123,7 @@ import {
   fetchProfileSummary,
   fetchProjectStats,
   fetchRecommendations,
+  observeRecommendationPresentation,
   fetchContentHistory,
   fetchDiagnosticsAlerts,
   fetchRuntimeStatus,
@@ -8221,6 +8222,7 @@ function renderRecommendations(items, { append = false } = {}) {
 
     card.append(preview, actions, composer.wrapper, feedbackStatus);
     elements.list.append(card);
+    observeRecommendationPresentation(card, item);
   }
 }
 
@@ -11230,6 +11232,13 @@ function bindSettings() {
     setVal("cfgExploreRefreshMinutes", cfg.scheduler?.explore_refresh_minutes);
     setVal("cfgDiscoveryLimit", cfg.scheduler?.discovery_limit);
     setVal("cfgEvalScorer", cfg.discovery?.eval_scorer || "llm");
+    const jevProvider = cfg.discovery?.jev_provider || {};
+    window.OpenBiliClawJevSettings.mount(document.getElementById("cfgJevConnectionSettings"), document.getElementById("cfgEvalScorer"))
+      .load(jevProvider, cfg.discovery?.jev_evaluation || {});
+    const jevStatus = document.getElementById("cfgJevEvaluatorStatus");
+    if (jevStatus) {
+      jevStatus.textContent = `Jev ${jevProvider.model || ""} · ${jevProvider.reason || "请在下方配置连接。"} 后端凭据变量：${jevProvider.api_key_env || "TYPESAFE_API_KEY"}。`;
+    }
     setVal("cfgKeywordGenerationMode", cfg.discovery?.keyword_generation_mode || "hybrid");
     const visualProfile = document.getElementById("cfgVisualProfileEnabled");
     if (visualProfile) visualProfile.checked = cfg.discovery?.visual_profile_enabled === true;
@@ -11305,6 +11314,7 @@ function bindSettings() {
   }
 
   function collectForm() {
+    const jevUpdate = window.OpenBiliClawJevSettings.mount(document.getElementById("cfgJevConnectionSettings"), document.getElementById("cfgEvalScorer")).collect();
     const logPath = splitLogPath(getVal("cfgLogPath"), state.runtimeConfig?.logging);
     const embeddingFallbackProvider = getVal("cfgEmbeddingFallbackProvider");
     const llmDraft = state.llmDraft || normalizeLlmDraft(state.runtimeConfig?.llm || {});
@@ -11557,8 +11567,10 @@ function bindSettings() {
           ...popupSourceDateFieldsForUpdate("instagram")
         },
       },
+      ...(jevUpdate.decision ? {decision: jevUpdate.decision} : {}),
       discovery: {
         ...(state.runtimeConfig?.discovery || {}),
+        jev_evaluation: {...(state.runtimeConfig?.discovery?.jev_evaluation || {}), ...(jevUpdate.discovery?.jev_evaluation || {})},
         eval_scorer: getVal("cfgEvalScorer") || "llm",
         keyword_generation_mode: getVal("cfgKeywordGenerationMode"),
         candidate_eval_concurrency: getInt("cfgCandidateEvalConcurrency", 3),

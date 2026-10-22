@@ -4,6 +4,10 @@ Instagram 普通“换一批”现在通过 `force_refresh()` 执行一个有界
 
 Instagram 显式初始化的第 4 阶段通过 `run_init_backfill(sources=..., register_instagram_task=...)` 调用正式 producer、候选评估和同步推荐文案，共享 refresh 锁。API 在 kick 前把新建及恢复的发现任务登记到当前 InitCoordinator；初始化期间其它 pending task 仍不能领取。`build_instagram_discovery_producer(manual=True)` 允许来源已启用、scheduler 关闭时的显式 init；后台 tick 仍受原 scheduler/init/presence 门控。仅选 Instagram 不运行 B 站固定策略，旧的非 Instagram init 路径本次未重构。
 
+## 可选导演运行时
+
+`RuntimeContext.configure_director()` 按配置创建 `DirectorRuntime`，把同一独立 decision provider 借给屏编排和 discovery 过滤；全部关闭时不创建 provider、读取 key 或建立导演表。配置重载先构造组件，切换所有者时激活新 epoch，再取消／关闭旧 runtime；旧提案不能提交，已提交屏保留。前台 `recommendation.director.plan` 走交互车道，后台 `recommendation.director.preplan` 有截止时间、最多八个流计划任务。decision 闸门与聊天 LLM 闸门分离，含排队预算、熔断和受控关闭。公开生成／恢复合同见 [导演](director.md)。
+
 每个 **API daemon** runtime generation 只拥有一个 expression copy coordinator：8 条立即、尾批固定 3 秒、单轮最多 60，零进展退避 15 秒，60 秒仅作 safety wake。停止 generation 会取消 collector、gate waiter 与运行中的 provider callback；状态接口暴露 pending/state/deadline/last completed/error。OpenClaw direct composition 不启动 daemon loop，故不创建该 coordinator；它在 inline admission 后同步 drain 最多 4 条 durable copy，且不在同一交互请求内做 split retry：有效 subset 立即入 canonical pool，剩余行保持 pending 供下次请求处理，返回前没有遗留 provider/copy task。参数来自 2026-07-12 生产日志校准。
 
 > API runtime 启动时创建一套共享 LLM gate 并注入主服务、Soul 与 refresh；在任何 provider 工作可启动前用 canonical database available 初始化 `healthy/refill/empty`，后续 controller readiness、原子维护、推荐池状态与候选 snapshot 持续同步。runtime status 暴露 total/background 以及 refill/maintenance active、waiting 和 inventory state。

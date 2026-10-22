@@ -494,13 +494,14 @@ def test_current_background_callers_are_classified(caller: str) -> None:
         "api.sentiment",
         "agent.chat",
         "agent.task",
+        "recommendation.director.plan",
     ],
 )
 def test_confirmed_interactive_callers(caller: str) -> None:
     assert LLMConcurrencyGate(4).classify(caller) is LLMTrafficClass.INTERACTIVE
 
 
-@pytest.mark.parametrize("caller", ["agent.chat", "agent.task"])
+@pytest.mark.parametrize("caller", ["agent.chat", "agent.task", "recommendation.director.plan"])
 async def test_agent_loop_callers_are_not_parked_by_empty_inventory(caller: str) -> None:
     """M10: user-initiated agent lanes must not park behind an empty pool."""
     gate = LLMConcurrencyGate(1)
@@ -510,6 +511,11 @@ async def test_agent_loop_callers_are_not_parked_by_empty_inventory(caller: str)
         await _acquire_once(gate, caller)
 
     assert gate.status_payload()["llm_background_active"] == 0
+
+
+def test_director_speculative_planning_remains_maintenance() -> None:
+    gate = LLMConcurrencyGate(4)
+    assert gate.classify("recommendation.director.preplan") is LLMTrafficClass.MAINTENANCE
 
 
 @pytest.mark.parametrize(

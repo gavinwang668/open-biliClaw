@@ -19,6 +19,30 @@ main API ← validated response inventory / 2s active-client inventory watcher
          → runtime-stream pool_updated → client total + source badges
 legacy outbox → immutable claimed batches → DB commit → acknowledge only that batch
 
+optional Director (default off; separate decision credentials):
+  local profile catalog → on-demand projection (intent / shortlist / byte budget)
+  profile view + latest 3 experienced screens + bounded shortlist
+    → shared screen policy (brief / evidence / soft roles)
+      ├→ recurrent Jev pairs
+      ├→ Agent horizon + Jev local repairs
+      └→ Agent-only horizon (no Jev orchestration)
+         Agent plan → local short refs / canonical restore → strict validation
+                    → at most one correction within original deadline
+    → tentative screen → fresh eligibility + state/fence/plan CAS → atomic commit
+    → immutable batch → visible ACK / exact click & feedback → future drafts
+  independent discovery semantic filter → shared bounded decision provider → Jev
+    → evidence audit → soft defer / full LLM review; never a chat-LLM fallback
+
+candidate full evaluator (settings switch; LLM default):
+  Web / popup / mobile shared Jev connection form → config API → validated local settings
+    → native endpoint + secret (never in read responses) + selected-model limits → runtime rebuild
+  Jev: local profile catalog → per-candidate projection + selected-model context budget
+    + full candidate descriptions (no legacy 400-character trim; full-source cache identity)
+    → jev_context whole source spans / coverage → complete-question-group batch packing
+  named profile + negative evidence + candidate text → LLM OR pure Jev typed evaluation
+    Jev: controlled taxonomy / IP + exact temporal excerpts + model-bound dual byte guards
+  → shared metadata validation / separate cache → admission / legacy pool recovery
+
 LAN clients ─ HTTP（默认）────────────→ IPv4 0.0.0.0 + IPv6 [::] listeners → one uvicorn / FastAPI app
 public clients ─ HTTPS（可选）→ Caddy :443 ─ shared-loopback HTTP ─────────────────────────────┤
 trusted LAN ─ HTTPS（可选）──→ TLS Proxy :8443 ─ loopback/Compose HTTP ───────────────────────┘
@@ -403,6 +427,7 @@ Instagram 不注册任意关键词内容搜索，topic seed 只打开直接公�
 
 ### Recommendation Engine (`recommendation/`)
 - 推荐排序与朋友式推荐表达生成；统一从候选池读取
+- `recommendation/director/` 默认关闭；启用后提供 Jev 二卡递推、Agent 多屏草稿 + Jev 局部修补、纯 Agent 预排。`policy.py` 将画像、最近三屏真实经历与 ≤40 张个性化候选转为共用的屏目标／证据／软角色上下文：Jev 一次选择 pair + role，Agent 先判断有用供给，再规划最多三屏 brief 和具体配对。`planner_refs.py` 仅在 Agent seam 使用 `c0..` 短引用，还原所选／遗漏而不改 evidence refs；`horizon_coverage.py` 统一目标覆盖与合法提前结束，保留初始 completion。首次非法 JSON／结构／引用／覆盖可在原总 deadline 内纠正一次（总调用 ≤2，已知用量累计），网络／超时不因此重试；修补保留原职责及语义短尾，不机械补满。校验并原子提交 ≤20 张的不可变屏，真实可见 ACK 和精确反馈影响后续草稿。服务失败明确回退，配置／策略换代使旧计划失效；没有固定探索配额，局部硬可行性与标题重复诊断不代表语义质量或全局最优认证。隔离验收脚本通过只读生产数据快照与真实 loopback HTTP／Luna 调用检查该链路，不启动发现／长期学习／恢复／Jev，不向源数据写入。详见[运行时合同](modules/director.md)。
 - 文案生成与 admitted backlog 解耦：canonical `copy_ready` 使用全部 serve gate 但不套 topic 展示窗口。正数水位生成量为 `max(copy_ready_target-copy_ready, min(pool_target-available, admitted_pending_available))`，再受全部 pending 与单批上限钳制；锁内先领取能净增 topic 展示窗口的行，公开目标达到后只维持 copy-ready 水位。serve/feedback/delight/maintenance 只发非阻塞 refill 通知，provider 工作由 coordinator 承担并在 expression lock 内复核缺口。`0` 是 legacy drain-all 回滚，任何模式都不放松非空文案硬门。
 - 惊喜队列 `GET /api/delight/pending-batch` 的完整阈值和候选读取在 FastAPI 线程池执行，避免手机刷新时占住主 API 事件循环、拖住独立推荐进程的转发响应；队列筛选和返回结构不变。
 - 惊喜推荐复用普通推荐的 copy-ready 与 canonical `seen_items` 状态门：`pool_expression / pool_topic_label` 未同时生成，或身份已经看过时，候选不进入惊喜打分、动态阈值样本、计数或 pending 出口。正式文案就绪后才复用 Evo 的 `relevance_score` 打分，并由条件写入原子同步 `delight_reason / delight_hook`；pending API、CLI 与 runtime stream 继续校验精确快照。evaluator 的内部 `relevance_reason` 永不作为惊喜状态或 UI 推荐理由；旧版错写快照在正式文案就绪后由后台 backfill 修复。普通推荐只在高分行已被 profile-aware 惊喜打分并同步快照后让出该行。移动 Web、桌面 Web 与插件的“×”统一调用 `dismiss`：它不是临时隐藏，而是把 canonical identity 写入 `seen_items` 后永久消费该惊喜。
@@ -570,6 +595,28 @@ flowchart LR
 按渲染文本查表，`/i18n/ui` 由 FastAPI 静态挂载，插件构建时复制到 `popup/locales/`。
 `i18n/output_language.py` 把 locale 作为 `<output_language>` 指令附加到 user prompt 末尾，
 保持 system prompt 字节静态。详细契约见 [多语言模块](modules/i18n.md)。
+
+### Decision Providers (`decision/`，独立基础模块)
+
+独立 typed decision 合同及 Jev HTTP adapter，接受显式调用者提供的状态和具名问题，
+返回经过严格校验的 Choice / Score / Noul 证据与模型 / 输入归因。它不实现聊天
+`LLMProvider.complete()`，不加入 `[llm]` fallback 链，也没有候选池、推荐历史或画像
+写权限。配置为默认关闭的 `[decision.providers.jev]`，本机保存 Token 优先，空值沿用环境变量；
+自建 HTTP client 遵循现有海外网络策略。
+
+`decision/context_budget.py` 集中解析精确所选模型的双上下文容量与 UTF-8 工程护栏，
+不路由/切换模型；未知容量必须显式登记。`soul/profile_views.py` 管理本地全目录与
+按需投影，完整评估按每条候选选事实，导演按意图与 shortlist 选事实；必需负偏好原树
+不裁，原始画像不写。源摘要、选择策略、实际视图与容量分层绑定缓存/计划/请求身份。
+
+`RuntimeContext` 显式配置 `DirectorRuntime`，在同一实例内共享有界队列／并发／熔断的 decision provider，
+供编排、独立发现过滤或纯 Jev 完整评估借用；重载切换 epoch，关闭旧任务和 provider。模型只返回证据，
+没有提交权限。三端增加屏身份和真实可见确认，不新增模式设置控件；TOML 为配置入口。
+`agent_only` + 过滤 off + 非 Jev 完整评估不创建 Jev client、不读取其凭据。
+完整评估设置页可同时保存 URL/Token/模型/容量并切换模式；Token 仅本机 TOML 保存，读取响应不回显，
+也兼容原有 env。三端共用 `shared/jev-settings.js`，后端严格校验、后台重建；Jev 原生仅文本，不补生成式元数据，
+未知明确保留，错误不会回退 LLM。API、CLI、OpenClaw 与旧池补评共用此选择。
+详见[模块文档](modules/decision.md)和[评估合同](modules/discovery.md)。
 
 ### LLM Providers (`llm/`)
 - 统一的多模型接口（OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference）

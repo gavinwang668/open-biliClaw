@@ -1,5 +1,12 @@
 # 推荐引擎
 
+## 可切换完整评估器的旧池补评
+
+`RecommendationEngine.bind_content_evaluator()` 可注入共享发现评估器；纯 Jev 模式下
+旧池 `_classify_batch()` 通过 `evaluate_cached_content_batch()` 更新完整元数据，不再
+直调 LLM。失败项不覆盖既有缓存、不计为完成。单纯切换设置不会重算全部历史推荐。
+Jev 的受控分类与模板理由不替代推荐表达，表达生成仍使用独立 LLM 路由。
+
 > 从 discovery 缓存中挑出最值得推的内容，并逐步生成像朋友一样的推荐表达。
 
 runtime 使用公开 `drain_pending_expression_copy(profile, limit<=60, max_extra_requests=6)` 作为 copy-only 入口：pending 达 8 条立即执行，1–7 条从首次通知起固定等待最多 3 秒；provider 每批最多 30 条、fan-out 2，malformed/partial batch 默认最多额外拆分请求 6 次。分类完成只通过 `set_copy_pending_callback()` 通知，不 inline 等待 copy。OpenClaw direct one-shot 是受限例外，调用 `limit=4, max_extra_requests=0`，持久化首 batch 的有效 subset 并将剩余行留作下一请求。参数来自 2026-07-12 生产日志校准。
@@ -19,11 +26,17 @@ HTTPS URL。
 - **RecommendationEngine** — 推荐排序、朋友式表达和推荐历史更新入口
 - **Recommendation** — 单条推荐结果
 - **PersonalTopic** — 后续个性化主题分组的占位结构
+- **推荐导演** — [三策略与屏级运行时](director.md)；默认关闭，显式启用后使用独立原子屏提交，含二卡递推、Agent 多屏规划、Jev 局部修补与真实曝光反馈
 
 ## 已实现功能
 
+导演画像已从静态 top-N 切为本地目录按意图／候选加载，三策略共用命名视图；Jev 逐对和
+修补按用户选择模型的双上下文护栏运行，不自动换模型。完整源画像与视图身份分开，
+候选变化不导致无意义重排，真实偏好变化仍使未来计划失效。详见[导演上下文](director.md)。
+
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 推荐导演三策略 | ✅ 默认关闭 | `DirectorRuntime` 接通逐对 Jev、Agent+Jev 局部修补和纯 Agent 多屏计划；屏原子提交、真实曝光反馈及配置换代 fencing，详见[模块合同](director.md) |
 | v0.3.191 视觉 embedding pipeline 完整契约 | ✅ | P1/P3 共享质心但与 P1 cover bonus 分开开关；质心、关键帧、弹幕状态绑定 embedding fingerprint / 维度，关键帧再绑定采样签名；瞬时失败保持可重试，成功空结果才推进完成状态。预热使用配置 limit 和当前 servable pool，跨平台 bonus 以 0 为固定点分段归一化，离线 A/B 脚本复用生产公式 |
 | 6.1 推荐排序 | ✅ | 从 `content_cache` 选未推荐内容、按分数排序、以 canonical `item_key` 写入推荐历史 |
 | 6.2 朋友式推荐表达 | ✅ | 用 LLM 生成朋友式推荐理由和个性化 topic，并在 CLI 中真实展示；`recommendation.*` 的分类和短文案调用在未显式指定时统一用 `reasoning_effort=""`，避免 DeepSeek thinking 拉长文案回填 |
@@ -124,6 +137,13 @@ HTTPS URL。
 cover bonus 仍由前者单独控制。
 
 ## 公开 API
+
+`DirectorRuntime` 为 controller/composer/repair 注入 `JevContextBudget`；
+`CompositionSession.profile_source_digest` 用于计划新鲜度，实际视图仍绑定 `input_digest`。
+
+`RecommendationEngine.load_director_candidates()` 只读准备 topic 分层 shortlist；
+`DirectorRuntime` 统一驱动三种模式，由 `DirectorStore` 原子提交，而非借用旧接口的部分入库逻辑。
+纯 `PairComposer` 仍返回 tentative 提案；[完整合同](director.md#公共-api)包含持久化与反馈边界。
 
 2026-09-08：公开方法签名、候选窗口和返回协议不变；批次选择内部仅复用同一候选对的精确余弦值，下一批重新计算，完整多样性规则与补满流程保持不变。
 

@@ -221,6 +221,190 @@ auto_sync_enabled = false
 
 如果当前进程依赖 `OPENBILICLAW_*`、`GOOGLE_API_KEY` / `GEMINI_API_KEY`、或配置的抖音 Cookie 环境变量，自启动开启会被拒绝：登录会话通常拿不到交互式 shell 环境变量，应先把这些值写进 `config.toml`。
 
+### `[decision.providers.jev]`
+
+独立 typed decision provider 的开发者配置，类型为
+`Config.decision → DecisionConfig.providers → DecisionProvidersConfig.jev → JevDecisionConfig`。
+不加入聊天 `[llm]` 调用链，不复用聊天或 embedding 凭据。`enabled=true` 只允许
+构建 client；是否调用由 `[director]`、`[discovery.semantic_filter]` 和
+`discovery.eval_scorer="jev"` 三条业务路由独立决定。
+所有业务路由都不需要 Jev 时，不创建 client、不读取凭据、不产生后台 Jev 调用。
+
+```toml
+[decision.providers.jev]
+enabled = false
+model = "jev-1.13.0"
+api_key_env = "TYPESAFE_API_KEY"
+timeout_seconds = 2.0
+max_attempts = 2
+```
+
+| 键 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `enabled` | bool | `false` | 允许显式构建 provider；只接受真实布尔值，不把字符串或数字当作开关 |
+| `model` | string | `"jev-1.13.0"` | 非空且无首尾空白的模型 ID；固定版本方便归因，换模型须重新校准 |
+| `api_key_env` | string | `"TYPESAFE_API_KEY"` | 合法环境变量名称，不是 key 本身；实际秘密由显式调用进程提供 |
+| `api_key` | string | `""` | 本机 Token，非空优先于环境变量；API/CLI/对象 repr 不回显。含 Token 保存时 POSIX 文件权限收紧为 0600 |
+| `endpoint_url` | string | `"https://api.typesafe.ai/v1/systemone"` | 完整原生接口 URL，HTTPS；仅回环地址允许测试 HTTP。禁止账号密码、查询、片段、空白及重定向 |
+| `timeout_seconds` | float | `2.0` | 有限且大于 0 的总请求预算，覆盖所有尝试及重试等待，不是每次尝试各有一份预算 |
+| `max_attempts` | int | `2` | 大于等于 1 的整数，包含第一次请求；不接受布尔或小数 |
+| `context_limits` | model ID → table | `{}` | 精确模型 ID 对应 `max_request_tokens` 和 `max_state_question_tokens`；两项均必填且为整数，后者不能大于前者 |
+
+模型始终由用户选择，程序只适应它的容量。内置登记含 `jev-1.13.0` / `jev-1.14.0` 的官方
+64k / 32k token 双限制（按十进制处理）；未知模型须按服务商规格在设置页或 TOML 登记，
+不能把 `G5` 猜成 GPT-5 或套用 Jev 1.13 容量。示例表名为
+`[decision.providers.jev.context_limits."实际选中的完整模型ID"]`，两个 token 数须自行核实，
+不提供猜测值。关闭所有 Jev 路由可保留未知模型；启用路由但缺容量则报错且 readiness=false。
+设置页/API 保存沿既有后台应用 revision 流程，新任务使用新配置；直接改 TOML 仍需完整重启。
+`config-show` 和配置 API 显示容量来源、token 限制与工程字节护栏，
+不请求 `/models` 或付费接口，不下载 tokenizer，不自动升级模型。
+
+共享预算采用 token 限制 × 3/4 的 UTF-8 字节工程护栏，逐请求计算 native JSON 包装、state
+及全部问题和最长单题；这不是字符/token 比率估计或保证，服务端仍可能拒绝。
+不将所有 422/429 都误认作上下文溢出。官方依据：[模型文档](https://docs.typesafe.ai/models)、
+[OpenAPI](https://api.typesafe.ai/openapi.json)（2026-10-04 核实）。
+
+旧配置缺段时使用默认关闭值；加载 / 保存通过
+`validate_jev_decision_config()` 严格校验，非法字段抛 `ConfigError`，不静默回落默认值。
+`decision` 命名空间拒绝未知字段（如拼错的 `api_keey`），报错不回显其值。
+CLI `config-show` 展示开关、URL、模型、变量名、是否保存 Token 与超时/尝试次数，不执行远端探测。
+旧 env-only 配置不改变，不把环境变量值写回 TOML；本机保存的 Token 则随配置进入备份/迁移包，
+文件未加密。清除只移除当前配置，不擦除历史备份或环境变量。启用 Jev 路由却未启用 provider
+或没有有效凭据时，保存/构建明确失败。
+
+`update_decision_config(current, update)` 是 API 共用的严格部分更新入口：
+`decision.providers.jev` 接受上表字段；Token 省略/空串保留，`clear_api_key=true`
+明确清除，不能同时替换；URL 变化必须重新填写 Token，避免旧凭据误发。
+`context_limits` 是完整替换表，空对象恢复自动容量；三端共享表单保留其它模型条目，
+切换模型 ID 不继承上一模型的手动容量。配置校验不做付费探测，启用路由后的正常评估可能计费。
+
+一个 runtime 的完整评估、发现过滤与逐对编排共享有界 client：默认最多 2 个 adapter 调用并发、
+32 个已接纳请求（包含运行和等待），排队计入请求的绝对 deadline；连续 5 次真实
+adapter 失败打开 30 秒熔断。排队超时与调用方取消不计入 provider 失败。参数是
+保守工程预算，不是 Jev 实测吞吐或质量承诺。关闭或重建 runtime 时停止接纳、取消
+旧任务并关闭 client；详见[独立决策模块](decision.md)。standalone CLI 的过滤与完整评估调用
+采用每请求创建 / 关闭 transport、同一 event loop 共享 gate 的方式，兼容命令内部多次
+`asyncio.run()`，不跨 loop 复用 HTTP 连接池。不新增 SDK 或安装依赖。
+
+### `[discovery.jev_evaluation]`
+
+`discovery.eval_scorer="jev"` 是与 `llm` 完整评估互斥的纯 Jev 实验选项；现有
+`shadow / learned` 的含义不变。桌面高级设置、插件高级设置、移动设置可选择它，
+`GET/PUT /api/config` 读写模式与下列预算 / 词表；API 的 `jev_provider` 只提供
+readiness 信息，不返回 key。`config-show` 展示模式及非 token 的字节护栏。
+
+| 字段 | 默认 | 含义 |
+|---|---|---|
+| `topic_labels` | 内置粗分类 | 受控主题列表；未知明确保留，不动态创造新标签 |
+| `franchise_labels` | `[]` | 受控 IP / 系列 / 品牌名称；未配词表时无法识别新 IP |
+| `max_state_question_bytes` | `0` | 0=按选定模型自动；非零是 state 加最长题的额外 UTF-8 护栏，不得超过该模型工程预算 |
+| `max_request_bytes` | `0` | 0=按选定模型自动；非零是完整原生请求的额外 UTF-8 护栏，不得超过该模型工程预算 |
+| `max_candidates_per_request` | `4` | 每批完整候选上限，1–64；初始工程上限，需中文实测校准 |
+| `max_questions_per_request` | `0` | 0=仅受容量限制；非零为 10–640。原生无独立题数上限，不能把候选的 10 题拆开 |
+| `max_question_bytes` | `0` | 0=仅受组合窗口限制；非零为单题 canonical JSON 字节护栏，至少 256 |
+| `max_calls` | `32` | 一次 evaluator 调用的子批调用数上限 |
+| `budget_seconds` | `30.0` | 一次 evaluator 共用的总预算，不是每个子批各一份 |
+
+预算与词表严格验证；词表预留 unknown 选项，不能静默截断。固定模型版本进入缓存
+身份；旧配置显式 24000/48000 会保留为更严的人工护栏，想随更大模型扩大需改为 0。
+按需画像保留必需约束，再加载相关事实；批次超限先减少候选数。单条仍超限时使用带
+源位置/摘要/覆盖标记的完整原文摘录；不能放下必需内容则待评估，不切模型或隐式调 LLM。
+三个新增打包字段可由 TOML 或配置 API 更新，API 重建 evaluator 后的新任务生效，
+在飞任务使用旧快照。官方标准容量只可收紧，不能通过配置扩大；实验扩窗 header 默认不发送。
+模型容量、选择策略也进入缓存
+命名空间；完整评估拒绝 `jev-latest / jev-preview` 浮动别名。可在设置页 Jev 连接区启用
+`decision.providers.jev`、填写 URL/Token/模型/容量，与评估模式在同一次保存中生效，也可沿用 TOML/env；
+保存时缺少凭据会失败，不显示虚假的切换成功。Jev 与封面多模态评估、Jev 预过滤
+同时开启会报错。它原生仅文本，未识别类别如实保留；不会隐式改成混合 LLM 模式。
+沿用的入池阈值尚未做 Jev 中文标定。该切换影响后续评估，不批量迁移历史结果。
+
+### `[director]`
+
+推荐导演的业务路由，类型为 `Config.director → DirectorConfig`。`mode` 是灰度开关，
+`strategy` 才是用户选择的三种编排方式，两者不能混用。默认关闭，保留既有推荐路径。
+
+`[director]`、`[discovery.semantic_filter]` 和 `[decision.providers.jev]` 当前是
+TOML-only 配置，不在设置页 / `/api/config` 暴露切换入口。修改后必须完整停止并
+重新启动后端，使 API、推荐与发现子进程一起读取新配置；仅刷新页面或重建 API
+进程内 runtime 不会同步其他子进程。桌面安装需退出后重新启动整个应用。
+内核重建时的 epoch / 取消机制保证旧请求不跨配置提交，但不是跨进程配置分发。
+
+| 键 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `mode` | string | `"off"` | `off / shadow / enforce`；shadow 记录导演提案，返回同一 safety shortlist 的确定性 pair baseline，仍消耗模型预算；不是旧 MMR 严格不干预，恢复旧路径用 off |
+| `strategy` | string | `"agent_jev"` | `jev_recurrent` 逐次选两张拼屏；`agent_jev` 先排未来草稿再局部修补；`agent_only` 只由 Agent 提前编排 |
+| `decision_provider` | string | `"jev"` | 当前只支持独立 Jev provider；Agent-only 编排不会隐式调用它 |
+| `planning_horizon_screens` | int | `3` | Agent 最多提前规划的屏数，`1..3`；不等于一次提交这些屏，库存不足可缩短 |
+| `plan_ttl_seconds` | int | `300` | 提前草稿有效期，`1..3600` 秒；过期不能冒充有效计划 |
+| `planning_budget_seconds` | float | `20.0` | 一次 Agent 规划总预算，`0.01..60` 秒 |
+| `decision_budget_seconds` | float | `8.0` | 一次屏内决策总预算，`0.01..60` 秒；共享 client 的排队也计入 |
+| `max_decision_calls` | int | `10` | 一次屏内最多决策调用数，`1..10` |
+| `max_candidates` | int | `40` | 本地 shortlist 上限，`2..40`；全库候选不进入 prompt |
+
+屏大小来自本次推荐请求，而不是隐藏的固定 6 张。每步追加两张；剩一个位置时允许
+确定性合法尾卡。任何逐对结果都只是 tentative，最终整屏校验后一次提交。
+已提交屏即使尚无曝光确认也不可原位换卡。完整执行与反馈合同见[推荐导演](director.md)。
+
+最小安全试用配置（真实环境先用 shadow）：
+
+```toml
+[decision.providers.jev]
+enabled = true
+model = "jev-1.13.0"
+api_key_env = "TYPESAFE_API_KEY"
+
+[director]
+mode = "shadow"
+strategy = "agent_jev"
+
+[discovery.semantic_filter]
+mode = "off"
+```
+
+只试纯 Agent 时把 `strategy` 改为 `agent_only`，并保持过滤关闭，即可不启用 Jev 或配置
+其 Key。只开启过滤也不要求启用导演。TOML 的未知字段、错误枚举、bool 冒充数值、
+非有限数值均在加载 / 渲染 / 保存时拒绝；运行诊断同样报告具体字段。
+
+这些配置在源码、Docker、桌面安装中使用同一 TOML 合同；无新增模型下载或依赖安装。
+环境变量必须由**实际启动后端的进程**继承：在另一个终端临时设置变量不会改变已经
+运行的桌面进程，Docker 容器也不会自动继承任意宿主机变量。迁移配置后应在目标运行
+环境重新提供 Key；不要把 Key 填入 `api_key_env` 或提交到仓库。
+Docker 必须在 backend 服务中显式映射该变量；变更环境后重新创建容器，普通
+`restart` 不会更新容器环境，步骤见[Docker 部署](../docker-deployment.md#可选jev-决策与推荐导演)。
+
+### `[discovery.semantic_filter]`
+
+独立发现阶段语义过滤，类型为 `DiscoveryConfig.semantic_filter → SemanticFilterConfig`。
+当前只询问候选是否明确违反**稳定避雷偏好**，不把陌生、兴趣相关性弱或“今天不想看”
+自动当作长期拒绝。探索候选始终保留，原有 LLM 仍提供 temporal/topic/style/franchise
+元数据。Jev 的 Noul 数值是模型证据，不是点击率或用户满意度。
+
+| 键 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `mode` | string | `"off"` | `off / shadow / enforce`，与导演模式完全独立 |
+| `provider` | string | `"jev"` | 当前唯一支持的独立 decision provider |
+| `refusal_threshold` | float | `1.0` | `0.5..1.0`；默认只是保守 shadow 起点，不是经验证的分类阈值 |
+| `calibration_tag` | string | `""` | 至多 200 字符的领域校准记录标识；enforce 必填；填写标识本身不是质量证明 |
+| `calibration_model` | string | `""` | enforce 必须等于当前固定 Jev 模型；禁止用 `jev-latest / jev-preview` 校准别名 |
+| `max_candidates_per_cycle` | int | `30` | 每个 evaluator wave 最多送入 Jev 的非探索候选，`1..90` |
+| `max_calls_per_cycle` | int | `1` | 每 wave 最大请求次数，`1..3`；单次最多 30 个候选 |
+| `decision_budget_seconds` | float | `2.0` | 整个 wave 的请求与排队总预算，`0.01..30` 秒 |
+
+这里的 cycle 是一次 `evaluate_content_batch()` wave，不是无限持续的 daemon 周期。
+另有 24,000 UTF-8 字节的工程输入上限；超限不截断完整避雷项，而是保留候选交给原流程。
+模型失败、拒答、结果绑定错误、超时、超预算、审计未落库都 fail-open，不伪造成功。
+
+`eval_prefilter_mode="enforce"` 与 Jev filter enforce 在加载 / 保存时互斥。
+校准 cohort 在两种模型过滤之前冻结：embedding shadow、learned/shadow scorer、
+Jev shadow 的样本都绕过双方模型拒绝，保留完整 LLM 对照，确定性硬规则仍生效。
+因此要让 Jev enforce 实际延期候选，应关闭 embedding prefilter，并使用普通 `llm`
+scorer；若保留任一校准路由，就只观察 would-filter。
+
+有效且校准匹配的拒绝只是**本 wave 延期**：持有当前 claim token 的行回到
+`pending_eval`，不写低分、不增加失败重试、不改画像或删除内容。下一次 claim 自动绕过
+模型拒绝取得完整 LLM 评估，避免反复拒绝造成永久饥饿。当前实现不承诺永久省掉这次
+LLM 评估，也不会从“本轮不合适”推导长期不喜欢。审计与接口见[发现模块](discovery.md#独立-jev-语义过滤)。
+
 ### `[llm]`
 
 | 键 | 类型 | 默认值 | 说明 |
@@ -1191,8 +1375,8 @@ TOML 与显式环境变量覆盖在构造 `SchedulerConfig` 前统一归一为�
 | `inspiration_replace_merged_keywords` | bool | `false` | 实验性替换模式。仅在 `inspiration_search_enabled=true` 且 inspiration provider 可用时生效：due 平台跳过旧 `discovery.keyword_planner` merged call，只通过 search-backed inspiration flow 产词；当 B 站 explore 到期且有补货空间时，也会用同一轮共享 brainstorm / grounding stage 写入 `keyword_kind="explore"` 的探索词池。开 replace 前应先用 `keyword-inspiration-report` 跑 cohort 门禁，避免无质量数据直接替换 |
 | `inspiration_breadth` | str | `"high"` | 探索广度档位（Phase 2 config 收敛，13→4）：`low` / `medium` / `high`。旧的 10 个 `inspiration_*` 细粒度旋钮已删除，其派生成内部常量的有效值由本档位决定（见下表）。**默认 `high`（更宽的素材/轴/关键词产量）**；`medium` 逐项等于旧的 `_DEFAULT_INSPIRATION_*` 默认值，需与收敛前行为逐项对齐时显式设 `medium`。注意 `high` 会把每轮真实 probe 搜索与 LLM 用量放大（daemon 常驻），成本敏感可设 `medium`/`low`。非法档位（非 `low`/`medium`/`high`）→ 配置错误（`ConfigError`），未设置回退 `high` |
 | `eval_prefilter_mode` | string | `"shadow"` | discovery evaluator 的 embedding 预过滤模式：`"off"` 不计算相似度；`"shadow"` 只记录 `prefilter-shadow` would-filter 日志但仍送 LLM；`"enforce"` 将低于相似度阈值的非 explore 候选以低分缓存并跳过 LLM。非法值会被运行时配置校验拦截。上线时先用 shadow 观察 would-filter 中是否仍有高于 `admission_min_score` 的候选，再切 enforce |
-| `eval_scorer` | string | `"llm"` | 候选相关性校准模式。`"llm"`（默认）保持既有批量评估与缓存，在桌面 Web / 扩展高级设置中显示为 `Agent（默认）`；`"shadow"` 显示为 `Shadow（校准观察）`，并跑 learned + 完整 LLM、仍由 LLM 决定 relevance，并写入完整 privacy-safe 对照；`"learned"` 显示为 `Learned（仅相关性，实验性）`，供人工运行只读 gate 并确认通过后显式启用，仅在完整 LLM 元数据与本批审计成功时由 learned 覆盖 relevance。UI option value 仍严格使用 canonical enum，不新增 `agent` wire 值。两种校准模式当前都继续调用 LLM、绕过 normal eval cache，并把同时配置的 prefilter `enforce` 当成 `shadow`，不是降本开关。scorer 不可用、异常、长度 / 数值 / 维度 / digest 非法或审计失败均回退 LLM。OpenClaw、GET/PUT 配置接口与 daemon 热重载均透传该字段；顶层 engine 的注册策略与回填策略继承同一 evaluator，单条评估在校准模式下走 batch 校准路径。切换只影响后续候选，不会重算已有推荐。非法值由运行时配置校验拒绝，旧文件加载则规范化为 `"llm"` |
-| `multimodal_evaluation_enabled` | bool | `false` | 是否在 discovery batch evaluator 中加入候选封面图。默认关闭；开启后仅当当前 evaluation 路由支持图像输入且候选有 `cover_url` 时使用，否则自动退回纯文本评估 |
+| `eval_scorer` | string | `"llm"` | 完整候选评估器与校准模式。`"llm"` 默认显示 `Agent（默认）`，保持完整 LLM 与缓存；`"jev"` 显示 `Jev（完整评估，纯文本）`，用原生受控判断替代完整评估，失败不转 LLM，配置见上方 `[discovery.jev_evaluation]`。`"shadow"` 并跑 learned + LLM、仍由 LLM 决定 relevance；`"learned"` 须人工通过 gate 后启用，仅在 LLM 元数据与本批审计完整时覆盖 relevance。后两种校准模式继续调用 LLM、绕过缓存，scorer / 审计失败回退 LLM，不能作为降本开关。三端 UI 保存 canonical enum，不新增 `agent` wire 值；API / CLI / OpenClaw 及 daemon 重建共用配置。切换只影响后续评估，不重算已有推荐。非法值由运行时配置校验拒绝，旧文件加载则规范化为 `"llm"` |
+| `multimodal_evaluation_enabled` | bool | `false` | 是否在 discovery batch evaluator 中加入候选封面图。默认关闭；LLM 路径仅当 evaluation 路由支持图像输入且候选有 `cover_url` 时使用，否则退回纯文本。完整 Jev 模式不支持图像，与此开关同开直接报配置错误，不静默忽略 |
 | `danmaku_enabled` | bool | `false` | 是否启用**弹幕文本**加成（P2）：B 站候选喂给推荐的语义只有 `title` + `description`，而 description 常是"求三连"之类的无信息文本、`body_text` 在 B 站路径恒为空；弹幕是 B 站独有信号，反映观众实际在讨论什么。抓取走 `comment.bilibili.com/{cid}.xml`（**无需鉴权**，`cid` 直接从已有的 `/x/web-interface/view` 响应读，零额外请求），清洗后嵌入为独立排序信号。**纯文本信号，无需多模态嵌入模型**（与 P1/P3 不同）；仅对 B 站视频有效。默认关闭时加成恒 0，排序逐字节一致 |
 | `danmaku_fetch_limit` | int | `50` | 每轮预热处理的视频数上限。合法范围 `1..200` |
 | `danmaku_max_chars` | int | `500` | 弹幕摘要字数上限。合法范围 `100..2000`；摘要以完整配置长度走稳定 document-embedding/cache 路径，不会静默截成固定 200 字前缀 |

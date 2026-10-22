@@ -29,7 +29,7 @@ import unicodedata
 import uuid
 from collections.abc import Mapping
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -129,6 +129,8 @@ from openbiliclaw.api.models import (
     InstagramLoginStateIn,
     InstagramLoginStateResponse,
     InstagramSourceConfigOut,
+    JevEvaluationConfigOut,
+    JevProviderReadinessOut,
     LinuxdoLoginStateIn,
     LinuxdoLoginStateResponse,
     LinuxdoSourceConfigOut,
@@ -2442,6 +2444,11 @@ def create_app(
 
         ctx.llm_concurrency_gate = LLMConcurrencyGate(llm_concurrency_from_config(config))
 
+    ctx.configure_director(config)
+    from openbiliclaw.api.director import register_director_routes
+
+    register_director_routes(app, ctx)
+
     # Fan freshly recorded LLM/embedding anomaly alerts out to the live
     # runtime stream so the 异常报警 feed updates without a poll round-trip.
     with suppress(Exception):
@@ -3252,15 +3259,24 @@ def create_app(
                     value = f"http://{same_origin_host}"
                 headers[key] = value
             body = await request.body()
+            director_config = getattr(getattr(ctx, "config", None) or config, "director", None)
+            proxy_timeout = 30.0
+            if director_config is not None and getattr(director_config, "mode", "off") != "off":
+                proxy_timeout = max(
+                    proxy_timeout,
+                    float(director_config.planning_budget_seconds)
+                    + float(director_config.decision_budget_seconds)
+                    + 30.0,
+                )
             recommendation_port = os.environ.get(RECOMMENDATION_PORT_ENV, "").strip()
             if recommendation_port:
                 target_url = f"http://127.0.0.1:{recommendation_port}{request.url.path}"
-                client_kwargs: dict[str, Any] = {"timeout": 30.0, "trust_env": False}
+                client_kwargs: dict[str, Any] = {"timeout": proxy_timeout, "trust_env": False}
             else:
                 target_url = f"http://localhost{request.url.path}"
                 client_kwargs = {
                     "transport": _httpx.AsyncHTTPTransport(uds=os.environ[RECOMMENDATION_SOCK_ENV]),
-                    "timeout": 30.0,
+                    "timeout": proxy_timeout,
                     "trust_env": False,
                 }
             if request.url.query:
@@ -9526,6 +9542,8 @@ def create_app(
             task.cancel()
         if stream_tasks:
             await asyncio.gather(*stream_tasks, return_exceptions=True)
+        if ctx.director_runtime is not None:
+            await ctx.director_runtime.aclose()
         inventory_watch = getattr(app.state, "pool_inventory_watch_task", None)
         if inventory_watch is not None:
             inventory_watch.cancel()
@@ -10241,7 +10259,9 @@ def create_app(
         ), snapshot_expires_at
 
     @app.get("/api/recommendations", response_model=RecommendationListResponse)
-    async def recommendations() -> RecommendationListResponse:
+    async def recommendations(
+        stream_ref: str = Query("default", min_length=1, max_length=128),
+    ) -> RecommendationListResponse:
         """Return one coalesced recommendation snapshot.
 
         Restored browser sessions can contain dozens of stale dashboard tabs.
@@ -10253,6 +10273,11 @@ def create_app(
         nonlocal recommendation_snapshot_cache, recommendation_snapshot_cached_at
         nonlocal recommendation_snapshot_expires_at
         nonlocal recommendation_snapshot_dislike_digest
+
+        if ctx.director_runtime is not None and ctx.director_runtime.enabled:
+            from openbiliclaw.api.director import restore_screen
+
+            return await restore_screen(ctx, stream_ref)
 
         now = time.monotonic()
         disliked_topics, dislike_digest = _effective_recommendation_dislikes()
@@ -11216,6 +11241,8 @@ def create_app(
         _fire_and_forget_tasks.add(task)
         task.add_done_callback(_fire_and_forget_tasks.discard)
 
+    ctx.director_replenish_callback = _trigger_replenishment_if_needed
+
     def _platform_scope_kwargs(source_platform: str) -> dict[str, str]:
         """Forward the platform scope only when the client actually sent one.
 
@@ -11281,6 +11308,14 @@ def create_app(
     async def reshuffle_recommendations(
         payload: Annotated[RecommendationReshuffleIn | None, Body()] = None,
     ) -> RecommendationReshuffleResponse:
+        if ctx.director_runtime is not None and ctx.director_runtime.enabled:
+            from openbiliclaw.api.director import generate_screen
+            from openbiliclaw.api.models import DirectorGenerateIn
+
+            source = payload or RecommendationReshuffleIn()
+            values = source.model_dump()
+            values["request_id"] = source.request_id or uuid.uuid4().hex
+            return await generate_screen(ctx, DirectorGenerateIn(**values, intent="STAY"))
         _invalidate_recommendation_snapshot()
         request_started = time.perf_counter()
         precheck_ms = 0.0
@@ -11390,6 +11425,13 @@ def create_app(
     async def append_recommendations(
         payload: RecommendationAppendIn,
     ) -> RecommendationReshuffleResponse:
+        if ctx.director_runtime is not None and ctx.director_runtime.enabled:
+            from openbiliclaw.api.director import generate_screen
+            from openbiliclaw.api.models import DirectorGenerateIn
+
+            values = payload.model_dump()
+            values["request_id"] = payload.request_id or uuid.uuid4().hex
+            return await generate_screen(ctx, DirectorGenerateIn(**values, intent="NEXT"))
         _invalidate_recommendation_snapshot()
         request_started = time.perf_counter()
         precheck_ms = 0.0
@@ -15625,7 +15667,11 @@ def create_app(
             raise HTTPException(status_code=422, detail="Comment feedback requires note.")
 
         recommendation = ctx.database.get_recommendation_by_id(payload.recommendation_id)
-        if recommendation is None and (payload.bvid.strip() or payload.item_key.strip()):
+        if (
+            recommendation is None
+            and not payload.batch_ref
+            and (payload.bvid.strip() or payload.item_key.strip())
+        ):
             # Mobile can hold a stale history row id after backend restarts /
             # migrations; fall back to the stable content identity so feedback
             # on a currently listed card still lands on the newest row.
@@ -15642,6 +15688,20 @@ def create_app(
             )
             raise HTTPException(status_code=404, detail="Recommendation not found.")
         resolved_recommendation_id = int(recommendation.get("id") or 0)
+
+        if payload.batch_ref:
+            from openbiliclaw.api.director import validate_feedback_binding
+            from openbiliclaw.recommendation.director.store import StoreConflict
+
+            try:
+                await asyncio.to_thread(
+                    validate_feedback_binding,
+                    ctx.database,
+                    resolved_recommendation_id,
+                    payload.batch_ref,
+                )
+            except StoreConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.reason_code) from None
 
         from openbiliclaw.sources.event_format import (
             SOURCE_BILIBILI,
@@ -15710,6 +15770,22 @@ def create_app(
             feedback_type=stored_feedback_type,
             feedback_note=stored_note,
         )
+        from openbiliclaw.api.director import project_feedback
+        from openbiliclaw.recommendation.director.store import StoreConflict
+
+        try:
+            await asyncio.to_thread(
+                project_feedback,
+                ctx.database,
+                stored_recommendation_id,
+                payload.request_id,
+                stored_feedback_type,
+                stored_note,
+                batch_ref=payload.batch_ref,
+                existing_event_id=item_receipt.event_id,
+            )
+        except StoreConflict as exc:
+            raise HTTPException(status_code=409, detail=exc.reason_code) from None
         _invalidate_recommendation_snapshot()
         buffer_domain, buffer_specifics = _recommendation_buffer_domain(recommendation)
         if item_receipt.inserted and feedback_type == "like":
@@ -15767,6 +15843,17 @@ def create_app(
             recommendation = ctx.database.get_recommendation_by_id(
                 payload.recommendation_id,
             )
+
+        if payload.batch_ref:
+            from openbiliclaw.api.director import validate_feedback_binding
+            from openbiliclaw.recommendation.director.store import StoreConflict
+
+            try:
+                validate_feedback_binding(
+                    ctx.database, payload.recommendation_id or 0, payload.batch_ref
+                )
+            except StoreConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.reason_code) from None
 
         bvid = (payload.bvid or "").strip()
         content_id = (payload.content_id or "").strip()
@@ -15898,6 +15985,22 @@ def create_app(
                 detail="request_id was already used for a different recommendation click",
             )
         stored_bvid = str(stored_metadata.get("bvid") or stored_content_id).strip()
+        if stored_recommendation_id is not None:
+            from openbiliclaw.api.director import project_feedback
+            from openbiliclaw.recommendation.director.store import StoreConflict
+
+            try:
+                await asyncio.to_thread(
+                    project_feedback,
+                    ctx.database,
+                    stored_recommendation_id,
+                    payload.request_id,
+                    "click",
+                    batch_ref=payload.batch_ref,
+                    existing_event_id=item_receipt.event_id,
+                )
+            except StoreConflict as exc:
+                raise HTTPException(status_code=409, detail=exc.reason_code) from None
         if item_receipt.inserted:
             buffer_domain, buffer_specifics = _recommendation_buffer_domain(
                 {
@@ -21173,6 +21276,42 @@ def create_app(
         else:
             tailnet_state = str(tailnet_status.get("event") or "pending_restart")
 
+        from openbiliclaw.config import ConfigError
+        from openbiliclaw.decision.context_budget import JevContextError, resolve_jev_context
+        from openbiliclaw.decision.registry import validate_decision_provider_credentials
+
+        jev_settings = cfg.decision.providers.jev
+        jev_ready = False
+        jev_reason = "请在 Jev 连接配置区启用服务并填写 Token。"
+        if jev_settings.enabled:
+            try:
+                validate_decision_provider_credentials(cfg.decision)
+            except ConfigError:
+                jev_reason = "请填写有效 Token，或在后端设置 api_key_env 指向的环境变量。"
+            else:
+                jev_ready = True
+                jev_reason = (
+                    "本机配置就绪（未联网验证）；纯文本、受控分类，评分尚未按当前模型校准。"
+                )
+        if cfg.discovery.semantic_filter.mode != "off":
+            jev_ready = False
+            jev_reason = (
+                "请先在 TOML 将 discovery.semantic_filter.mode 设为 off 并重启，避免重复评估。"
+            )
+        if jev_settings.model in {"jev-latest", "jev-preview"}:
+            jev_ready = False
+            jev_reason = "完整评估需要固定模型版本，请填写精确模型 ID。"
+        jev_context_budget: dict[str, str | int] | None = None
+        try:
+            jev_context = resolve_jev_context(jev_settings.model, jev_settings.context_limits)
+        except JevContextError:
+            jev_ready = False
+            jev_reason = (
+                "所选模型上下文容量未知；请按精确模型 ID 在 Jev 配置区填写已确认的双 token 上限。"
+            )
+        else:
+            jev_context_budget = {**asdict(jev_context), "fingerprint": jev_context.fingerprint}
+
         return ConfigResponse(
             # Canonical locale id: clients switch i18n on this value, while
             # config.toml may still hold a legacy alias such as ``zh``.
@@ -21509,6 +21648,30 @@ def create_app(
                 admission_min_score=cfg.discovery.admission_min_score,
                 eval_prefilter_mode=cfg.discovery.eval_prefilter_mode,
                 eval_scorer=cfg.discovery.eval_scorer,
+                jev_evaluation=JevEvaluationConfigOut(**asdict(cfg.discovery.jev_evaluation)),
+                jev_provider=JevProviderReadinessOut(
+                    enabled=jev_settings.enabled,
+                    model=jev_settings.model,
+                    api_key_env=jev_settings.api_key_env,
+                    endpoint_url=jev_settings.endpoint_url,
+                    api_key_configured=bool(jev_settings.api_key),
+                    credential_source=(
+                        "config"
+                        if jev_settings.api_key
+                        else "environment"
+                        if os.environ.get(jev_settings.api_key_env, "").strip()
+                        else "missing"
+                    ),
+                    timeout_seconds=jev_settings.timeout_seconds,
+                    max_attempts=jev_settings.max_attempts,
+                    ready=jev_ready,
+                    reason=jev_reason,
+                    context_limits={
+                        model: asdict(limits)
+                        for model, limits in jev_settings.context_limits.items()
+                    },
+                    context_budget=jev_context_budget,
+                ),
                 candidate_eval_concurrency=cfg.discovery.candidate_eval_concurrency,
                 multimodal_evaluation_enabled=cfg.discovery.multimodal_evaluation_enabled,
                 visual_profile_enabled=cfg.discovery.visual_profile_enabled,
@@ -22980,6 +23143,8 @@ def create_app(
             _MIN_COPY_READY_TARGET_COUNT,
             _MIN_EVAL_MAX_WAIT_SECONDS,
             _MIN_EVAL_MIN_BATCH_SIZE,
+            ConfigError,
+            ConfigIssue,
             _collect_config_issues,
             _default_config_path,
             _normalize_extension_disconnect_grace,
@@ -22989,6 +23154,8 @@ def create_app(
             _normalize_scheduler_int,
             _normalize_source_incremental_hours,
             _validate_auto_update_check_interval,
+            build_jev_evaluation_config,
+            decision_routes_enabled,
             load_config,
             normalize_outbound_proxy,
             normalize_outbound_proxy_mode,
@@ -23025,6 +23192,13 @@ def create_app(
             cfg.language = _validated_config_language(update["language"])
         if "data_dir" in update:
             cfg.data_dir = str(update["data_dir"])
+        if "decision" in update:
+            from openbiliclaw.config import update_decision_config
+
+            try:
+                cfg.decision = update_decision_config(cfg.decision, update["decision"])
+            except ConfigError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from None
 
         tailnet_restart_required = False
         tailnet_bootstrap_credential = ""
@@ -24635,12 +24809,24 @@ def create_app(
                     cfg.discovery.eval_prefilter_mode = eval_prefilter_mode
                 if "eval_scorer" in ddata:
                     eval_scorer = str(ddata["eval_scorer"] or "").strip().lower()
-                    if eval_scorer not in {"llm", "shadow", "learned"}:
+                    if eval_scorer not in {"llm", "shadow", "learned", "jev"}:
                         raise HTTPException(
                             status_code=422,
-                            detail="discovery.eval_scorer must be llm, shadow, or learned",
+                            detail="discovery.eval_scorer must be llm, shadow, learned, or jev",
                         )
                     cfg.discovery.eval_scorer = eval_scorer
+                if "jev_evaluation" in ddata:
+                    raw_jev_evaluation = ddata["jev_evaluation"]
+                    if not isinstance(raw_jev_evaluation, dict):
+                        raise HTTPException(
+                            status_code=422, detail="discovery.jev_evaluation must be an object"
+                        )
+                    try:
+                        cfg.discovery.jev_evaluation = build_jev_evaluation_config(
+                            {**asdict(cfg.discovery.jev_evaluation), **raw_jev_evaluation}
+                        )
+                    except ConfigError as exc:
+                        raise HTTPException(status_code=422, detail=str(exc)) from exc
                 for key, (default, min_value, max_value) in discovery_int_limits.items():
                     if key in ddata:
                         setattr(
@@ -24794,6 +24980,21 @@ def create_app(
             setattr(subsection, target[2], "")
 
         issues = _validate_llm_buildable(cfg, _collect_config_issues(cfg))
+        if decision_routes_enabled(cfg):
+            from openbiliclaw.decision.registry import validate_decision_provider_credentials
+
+            try:
+                validate_decision_provider_credentials(cfg.decision)
+            except ConfigError:
+                issues.append(
+                    ConfigIssue(
+                        field="decision.providers.jev.api_key_env",
+                        message=(
+                            "Jev 路由需要有效 Token；请在连接配置区填写，或配置后端环境变量。"
+                        ),
+                        severity="blocking",
+                    )
+                )
         posture_issue = _posture_gate_enforce_issue(cfg, getattr(ctx, "database", None))
         if posture_issue is not None:
             issues.append(posture_issue)
@@ -25085,6 +25286,7 @@ def create_app(
                 ("i18n.js", _shared_web_dir),
                 ("dialogue-confirmation.js", _shared_web_dir),
                 ("source-status.js", _shared_web_dir),
+                ("director-client.js", _shared_web_dir),
             ):
                 path = root / relative
                 if not path.is_file():
@@ -25135,6 +25337,10 @@ def create_app(
             html = html.replace(
                 'src="/shared/source-status.js"',
                 f'src="/shared/source-status.js?v={version}"',
+            )
+            html = html.replace(
+                'src="/shared/director-client.js"',
+                f'src="/shared/director-client.js?v={version}"',
             )
             return Response(
                 html,

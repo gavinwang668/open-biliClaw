@@ -19,6 +19,44 @@ CLI `chat` 仍使用 legacy 单轮对话；网页搜索、链接阅读与聊天�
 openbiliclaw [--log-level DEBUG|INFO|WARNING|ERROR] <命令>
 ```
 
+## Jev 本机开发验证脚本
+
+`config-show` 还显示 Jev 原生 API URL 和本机是否保存 Token，但不回显 Token，不读取
+环境变量秘密或联网探测。完整连接配置可在 Web/插件/移动设置页填写；直接编辑 TOML
+仍需重启，页面/API 保存走既有后台应用流程。开发 fake runner 不读取生产连接配置。
+
+在包含脚本的源码 worktree 根目录运行：
+
+```bash
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --fake
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --fake --model jev-1.14.0
+```
+
+`--fake` 与 `--live` 互斥，不读取真实 key，不用生产配置/数据库；自动启动临时回环
+HTTP 服务，以合成画像/三条候选跑标准和较小预算两个隔离场景，结束即关闭服务。
+报告的 `passed` 仅表示协议/完整评估/入池通过，`backend=local_fake` 和
+`usage_is_synthetic=true` 明确模型答案及 token 用量为假数据。模型 ID 由 `--model`
+显式选择，不自动切换。省略两种模式仍为无 HTTP 的 preview；真实服务运行仍需
+`--live --confirm-free-credits` 与本机 `TYPESAFE_API_KEY`。
+也可显式读取新设置页保存的连接（不合并其它 TOML/环境配置覆盖；只有选定凭据环境变量会按 factory 规则读取）：
+
+```bash
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --config /absolute/path/config.toml
+# 先自行确认账户已有可用促销额度；该命令会向所配置的服务发送合成测试数据。
+PYTHONPATH=src python scripts/validate_jev_single_pass.py --live --confirm-free-credits --config /absolute/path/config.toml
+```
+
+`--config` 沿用保存的原生 URL、Token（优先于 env）、固定模型、该型号双容量及评估打包参数。
+首条命令只做 preview，不创建 HTTP client 或读取 Token 环境值；未知模型必须登记容量。
+如果同时传 `--model`，必须与配置完全相同，否则零请求退出；不会更改文件、自动换模型或启用被禁用的连接。
+`--fake` 禁止与 `--config` 同用，避免误用真实凭据。配置不存在/不合法、无凭据、无额度确认则拒绝实请求。
+真实模式通过原生产 provider factory 构造连接，但把最大尝试数收紧为 1、超时不高于配置及 15 秒；
+整次最多 6 次 POST，第一次远端失败后停止发送，无摘要/分段评估或隐式聊天 LLM fallback。
+两种预算使用独立临时 SQLite 与合成三候选 cohort；这是验收对比，不是生产中的重复评估。
+显式配置返回 `backend=configured`、`usage_is_synthetic=null`，不认证中转/自建服务的模型及用量真实性，
+更不能凭回环服务成功声称官方 Jev 已验收。脚本从不打开配置的生产数据库或输出 URL/Token/原始响应。
+这不是新增 `openbiliclaw` 产品命令或 UI provider；不改变安装流程和四端设置。
+
 ## 命令一览
 
 | 命令 | 说明 | 状态 |
@@ -135,6 +173,19 @@ OPENBILICLAW_LANG=en openbiliclaw recommend   # 单次覆盖，不写配置
 ### `openbiliclaw config-show`
 
 显示当前加载的配置、已注册的 LLM 端点实例、全局调用链和最终生效的默认实例。旧格式仍显示等价结果；v2 会额外区分实例 ID 与 Provider 类型，因此两个同类型渠道不会被合并。
+
+独立 Jev 决策配置也展示开关、模型、API key 环境变量名、总超时和最大尝试次数。
+同时显示导演 mode / strategy、提前编排屏数与独立过滤 mode。
+另显示候选完整评估器、Jev 纯文本 / 受控分类的实验状态及两个 UTF-8 字节护栏（非 token 数）。
+`config-show` 也显示每批候选数、题数和单题字节护栏；后两项 0 表示仅受双容量限制。
+`config-show` 还显示精确模型的已登记 token 容量、容量来源与自动工程字节护栏；评估字段
+为 0 表示 auto，旧显式数值表示额外收紧，未知容量明确显示不可用，不自动挑选替代模型。
+`eval_scorer="jev"` 时 CLI discovery 与旧池补评共用纯 Jev 评估合同；每次请求关闭 transport，
+不跨 asyncio loop 复用连接、不隐式回退 LLM；配置失败在构建时直接报告。
+这里不读取或打印实际 key，不创建 provider 或探测。配置见[决策配置](config.md#decisionprovidersjev)。
+
+导演启用时，`recommend` 支持 `--request-id`（128 字符内，重试复用）、`--stream-ref`（默认 cli）、`--intent NEXT|STAY`、`--restore`、`--limit 1..20`、`--direction`（500 字符内）。恢复仅打印同一批次；成功打印后确认 presentation，provider 在同一事件循环内关闭。CLI feedback 投影原 ingress event，不重复写学习事件。独立 `discover*` 也注入语义过滤，按 loop 管理并发、每请求关闭 transport，不跨 `asyncio.run()` 复用连接。导演 off 保持旧路径。见[导演合同](director.md)。
+
 配置概览会直接显示「停止后台 LLM 请求」是否启用、「浏览器断开后暂停」是否启用和当前宽限秒数、「开机自启动」配置 / 系统注册状态、海外网络模式与自定义代理地址，以及默认关闭的「收藏自动同步」解析状态，方便确认实际网络路由和 `[saved_sync].auto_sync_enabled` 是否已经写入后端配置。
 推荐引擎构造同样读取 `[discovery]` 的 `keyframe_max_frames`、`keyframe_fetch_limit`、
 `danmaku_fetch_limit` 和 `danmaku_max_chars`；手动 `recommend` 的预热范围与 daemon/API 使用同一配置。

@@ -4,6 +4,33 @@
 
 `POST /api/init` 选择 Instagram 时，第 4 阶段复用正式 topic/creator producer，任务在通知扩展前登记到该 init run（含恢复采用的任务），因此 `next-task` 的 init-only ID 过滤继续生效。未选择 B 站的 Instagram 初始化不再调用旧的 B 站四策略；关闭后台 scheduler 仍可显式执行。小批候选即时评估并同步生成文案，不改评分阈值；其它旧来源的第 4 阶段路由本次保持兼容。
 
+## Jev 完整候选评估配置
+
+`GET/PUT /api/config` 支持 `discovery.eval_scorer="jev"` 及
+`discovery.jev_evaluation` 的预算 / 受控词表。只读 `discovery.jev_provider` 报告
+provider 准备情况，不返回凭据。保存前校验启用状态、固定版本、凭据和多模态 / 预过滤
+冲突，失败不得写配置或留下表面成功的旧路由。运行时的完整评估器由共享独立 decision
+provider 提供；单条 / 批量 / 旧池恢复均使用它，聊天、搜索与推荐表达保持原有 LLM 路由。
+
+`discovery.jev_provider.context_limits` / `context_budget` 分别只读暴露容量登记表与当前精确模型的
+生效 token 限制、字节护栏、来源与策略指纹；未知容量使 readiness=false，并拒绝启用 Jev
+完整评估。容量表支持下述 API 或 TOML 配置，不提供模型自动切换。评估两个旧字节字段默认
+改为 0（自动），非零只可收紧，不可绕开所选模型限制；错误保存不得持久化。
+
+`PUT /api/config` 新增严格部分更新 `decision.providers.jev`：`enabled`、`endpoint_url`
+（完整 Jev 原生接口，不是 Chat Completions）、`api_key`、`api_key_env`、固定 `model`、
+`timeout_seconds`、`max_attempts`、`context_limits`。可与 `discovery.eval_scorer="jev"`
+原子保存；无效更新不写配置。`api_key` 省略/空串保留，`clear_api_key=true` 明确清除，
+不能同时替换和清除。URL 变化必须重新填写 Token；外部仅 HTTPS，回环测试可 HTTP，
+禁止 URL 账号密码/query/fragment 及重定向。容量表是完整替换，`{}` 恢复自动。
+共享表单提交其它模型条目的副本，避免编辑一个模型丢掉别的登记。
+
+只读 `discovery.jev_provider` 新增 `endpoint_url`、`api_key_configured`、
+`credential_source=config|environment|missing`、超时和重试次数。任何响应（包括旧
+`reveal_keys=true`）、校验失败和 CLI 都不回显 Token。保存值优先于环境变量；仅本机
+TOML 持久化，POSIX 权限 0600，非加密密钥库。后台按既有 apply revision 热重建，
+202 只表示已保存/排队；readiness 表示本机配置校验，不是模型联网或质量验证。
+
 ## 概述
 
 `src/openbiliclaw/api/` 暴露本地 FastAPI 契约，并把 UI 请求编排到 durable storage、Soul、Dialogue 与 runtime。本文记录配置、迁移、推荐和对话等公开端点；通用鉴权见 [api-auth.md](api-auth.md)，初始化端点见 [init.md](init.md)。
@@ -20,6 +47,23 @@
 | 初始化 / embedding 诊断 | ✅ | 正式请求与诊断共享 CPU 选择，CPU 也失败时保留具体故障；不把 `/api/version` 成功当作模型可用。 |
 
 ## 推荐通知测试生命周期
+
+### 默认关闭的导演屏协议
+
+启用 `[director]` 后，`GET /api/recommendations?stream_ref=default` 仅恢复精确屏，不 top-up、不请求模型；空屏返回 `director.requires_generation=true`。关闭时不增加空 director/batch 字段，保持旧响应形状。
+
+| 端点 | 合同 |
+|---|---|
+| `GET /api/recommendations/director/status` | enabled / mode / strategy，无模型请求 |
+| `POST /api/recommendations/director/generate` | request_id、stream_ref、intent=NEXT/STAY、limit=1..20、source_platform、explicit_intent、excluded_bvids；稳定 ID 幂等，返回精确屏及 post-commit 库存 |
+| `GET /api/recommendations/director/restore` | stream_ref 对应最新屏，纯恢复 |
+| `POST /api/recommendations/director/present` | batch_ref、ack_id、item_keys，只 ACK 实际可见子集；重试去重，错批次／卡片 409 |
+| 既有 `append` / `reshuffle` | 启用时 NEXT / STAY，接受稳定 request_id / stream_ref / explicit_intent；首次无根 STAY 返回 409，由客户端显式 NEXT |
+| 既有 `feedback` / `recommendation-click` | 可选 batch_ref；先核对 exact recommendation ID，canonical ingress 后投影同一事件，不重复写学习事件 |
+
+状态改变、候选失效、计划 CAS 或配置换代冲突返回 409，不能部分提交。三端共用 `shared/director-client.js`，区分恢复、生成、可见 ACK；隐藏页和预加载不是曝光。新前缀仍走既有推荐进程代理和鉴权。配置使用 TOML，未增加图形设置／付费探测。详见 [导演](director.md)。
+
+### 通知回归约定
 
 `POST /api/recommendations/append` 会在响应关键路径外安排推荐池状态通知。验证该通知的测试使用 `httpx.AsyncClient` + `ASGITransport`，让请求和有界异步等待共享 pytest 的事件循环；不得在请求级同步 `TestClient` portal 已关闭后用阻塞等待验证后台任务。追加推荐回归覆盖无延迟及 50ms 状态读取延迟，并保持完整响应与通知内容断言。生产接口、通知调度及应用启动流程不变。
 

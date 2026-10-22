@@ -1,5 +1,7 @@
 # 📖 OpenBiliClaw 文档导航
 
+- [纯 Jev 完整评估](modules/discovery.md) / [官方能力核实](plans/2026-10-02-jev-full-evaluator-research.md) / [验收记录](plans/2026-10-02-jev-full-evaluator-validation.md)：三端可切换的文本、受控分类模式；不隐式回退 LLM，真实中文质量未认证。
+
 > 本页面是项目文档的一站式入口。用户看第一区块就够了；第二区块起面向开发者和贡献者。
 
 ## 👤 我是用户
@@ -25,7 +27,7 @@
 - [项目规格说明书 (SPEC)](spec.md) — 完整的项目设计与规划
 - [架构设计](architecture.md) — 系统架构与模块关系
 - [多语言（i18n）](modules/i18n.md) — 简体 / 繁體 / English 的 locale 契约、UI 目录、模型输出语言与新增语言清单
-- [推荐导演三模式设计](plans/2026-09-26-director-jev-modes.md) / [Jev 官方研究](plans/2026-09-26-jev-provider-research.md) / [基础规格](plans/2026-08-31-recommendation-director-spec.md) — 逐对编排、Agent+Jev 局部修正、纯 Agent 与独立过滤 provider；设计阶段，尚未实现
+- [推荐导演三模式设计](plans/2026-09-26-director-jev-modes.md) / [实施进度](plans/2026-09-26-director-implementation-progress.md) / [Jev 官方研究](plans/2026-09-26-jev-provider-research.md) / [基础规格](plans/2026-08-31-recommendation-director-spec.md) — [独立决策 Provider](modules/decision.md)与[三策略运行时](modules/director.md)已接线，包含 Agent 草稿 / 局部修补、独立过滤、原子屏提交与实际曝光反馈；默认关闭，质量待实测
 - [架构总览图](architecture-overview.md) / [English](architecture-overview.en.md) — 从 README 拆出的 ASCII 架构总览：runtime 并发闸门、Agent 编排层、多源适配与发现/推荐/保存链路
 - [记忆系统设计](memory-design.md) — 多层网状记忆架构详解
 - [v0.1 开发任务清单](v0.1-todolist.md) — 当前版本的开发主线
@@ -81,7 +83,9 @@
 | 聊天 Agent Loop | [modules/agent.md](modules/agent.md) | `src/openbiliclaw/agent/` | 🧪 M1–M7 后端完成（工具注册表 / 原生 FC / 多跳 loop / SSE 真流式 / v1 工具集 / skill / 会话 / 任务中心 / 审批门）；M8/M9 三端前端已交付 |
 | 桌面 Web | [modules/desktop-web.md](modules/desktop-web.md) | `src/openbiliclaw/web/desktop/` | 🧪 M8 聊一聊 agent loop 前端：流式过程折叠展示、会话侧栏、skill 切换、审批卡、任务中心 |
 | 内容发现引擎 | [modules/discovery.md](modules/discovery.md) | `src/openbiliclaw/discovery/` | ✅ v0.3.x 多源 + 统一待评估池 + 跨源跨轮 topic 配额 |
+| 独立决策 Provider | [modules/decision.md](modules/decision.md) | `src/openbiliclaw/decision/` | ✅ Jev typed 判断、独立配置、并发／熔断治理；默认关闭，供导演与独立过滤调用 |
 | 推荐引擎 | [modules/recommendation.md](modules/recommendation.md) | `src/openbiliclaw/recommendation/` | ✅ v0.3.x 双轴 fatigue + per-group 候选窗口 + reshuffle 0.6s |
+| 推荐导演 | [modules/director.md](modules/director.md) | `src/openbiliclaw/recommendation/director/` | ✅ 默认关闭：三策略、滚动草稿、局部修补、原子屏提交与实际反馈；效果待实测 |
 | 存储层 | [modules/storage.md](modules/storage.md) | `src/openbiliclaw/storage/` | ✅ SQLite schema + discovery candidates / pool readiness + 去除 API auth 的 `.obcbackup` 快照、暂存 / 取消、重启应用与回滚 |
 | 原生保存同步 | [modules/saved-sync.md](modules/saved-sync.md) | `src/openbiliclaw/saved_sync/` | ✅ canonical API + runtime + B 站 direct adapter + 六平台 extension adapter/executor + 三端后端状态驱动保存界面；GitHub repository 与微博保持 typed identity 的 local-only 保存 |
 | 灵魂管线架构 | [modules/soul-pipeline-architecture.md](modules/soul-pipeline-architecture.md) | `src/openbiliclaw/soul/` | ✅ 完成 |

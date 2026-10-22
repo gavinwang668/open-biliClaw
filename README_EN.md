@@ -665,6 +665,20 @@ Configuration: `save / approve → shared apply queue → replace only the loop 
 
 Background configuration: `successful full apply → queue settles → parent confirms old children exited → workers / recommendation / images read new settings`. The active data directory and durable candidates survive; model repairs can resume pool filling.
 
+Full candidate evaluation: `named profile + negative evidence + candidate text → LLM (default) OR pure Jev → metadata validation / isolated cache → admission`.
+Jev connection: `shared Web / popup / mobile form → config API validation → local URL/token/pinned-model/limits → runtime rebuild`; read responses never return the token.
+Jev text path: `full descriptions (no early 400-character trim) → budgeted whole-source excerpts → full-source cache identity`; originals stay unchanged.
+Jev evaluation and Director share `local full profile → candidate/intent-specific facts → selected-model budget check`.
+No automatic model switching, source-profile rewriting or removal of explicit exclusions; unknown model capacities require registration in settings or TOML.
+Local whole-source excerpts carry coverage and provenance. Each candidate's complete question group stays
+in one batch; overflow reduces batch size first, and oversized mandatory inputs remain pending.
+Shared rules and identical mandatory profile facts are sent once, without additional evaluation rounds.
+The three Web settings surfaces can select experimental, text-only Jev evaluation with controlled topic/IP vocabularies,
+explicit unknowns and dual input guards. Failures never silently invoke an LLM. Settings can save a local token, with existing environment credentials still supported;
+live Chinese-content quality remains unverified. See [evaluation details](docs/modules/discovery.md).
+
+Optional Director, disabled by default: `recommendation profile + latest 3 experienced screens + shortlist → shared screen objective / evidence / soft roles → recurrent Jev pairs / Agent + Jev repair / Agent-only preplanning (at most one Agent validation correction) → fresh eligibility check → atomic screen commit → actual-visibility ACK → future drafts`. Agent planning identifies useful supply first, then uses request-local short refs restored before strict validation. Horizon coverage, legal short tails and early-stop reasons remain validated; one correction shares the original planning deadline, and repair does not mechanically fill semantic shortfalls. All three modes use the same policy to organize focused, complementary, independently useful choices, without a fixed exploration ratio. Jev is an independent decision provider, also available for discovery filtering, not a chat-LLM fallback. Web surfaces and CLI preserve screen identity and exact feedback; configure through TOML. Live model quality remains unverified. See the [decision module](docs/modules/decision.md) and [Director runtime](docs/modules/director.md).
+
 The full architecture overview ASCII diagrams (runtime concurrency gates, agent orchestration, source adapters, discovery / recommendation / saved-sync pipelines) have been moved to a separate document to keep the README compact:
 
 Publication date preference: `[sources.<name>].recommendation_date_*` per source → out-of-window candidates are filtered before LLM evaluation → effective inventory → PoolCurator soft/strict serving semantics.

@@ -5,18 +5,20 @@ from __future__ import annotations
 import ipaddress
 import re
 import unicodedata
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    SerializerFunctionWrapHandler,
     StrictBool,
     StrictStr,
     StringConstraints,
     ValidationInfo,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -241,12 +243,29 @@ class InitStatusOut(BaseModel):
     progress_sequence: int = 0
 
 
-class RecommendationOut(BaseModel):
+class _DirectorOptionalResponse(BaseModel):
+    """Keep the disabled route's wire shape unchanged for older clients."""
+
+    @model_serializer(mode="wrap")
+    def _without_inactive_director_fields(
+        self,
+        handler: SerializerFunctionWrapHandler,
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = handler(self)
+        for key in ("director", "batch_ref", "stream_ref"):
+            if not result.get(key):
+                result.pop(key, None)
+        return result
+
+
+class RecommendationOut(_DirectorOptionalResponse):
     """Recommendation payload exposed to the popup."""
 
     id: int
     bvid: str
     item_key: str = ""
+    batch_ref: str = ""
+    stream_ref: str = ""
     title: str = ""
     up_name: str = ""
     cover_url: str = ""
@@ -285,10 +304,21 @@ class RecommendationOut(BaseModel):
     up_mid: int = 0
 
 
-class RecommendationListResponse(BaseModel):
+class DirectorScreenInfo(BaseModel):
+    """Screen identity and opt-in route metadata, never an exposure acknowledgement."""
+
+    mode: str
+    strategy: str
+    stream_ref: str
+    batch_ref: str = ""
+    requires_generation: bool = False
+
+
+class RecommendationListResponse(_DirectorOptionalResponse):
     """Wrapper response for recommendation lists."""
 
     items: list[RecommendationOut]
+    director: DirectorScreenInfo | None = None
 
 
 ContentHistoryCategory = Literal["clicked", "shown", "removed"]
@@ -341,11 +371,12 @@ class RecommendationPoolStatus(BaseModel):
     pool_status_version: int = Field(ge=0)
 
 
-class RecommendationReshuffleResponse(BaseModel):
+class RecommendationReshuffleResponse(_DirectorOptionalResponse):
     """Immediate recommendation reshuffle result."""
 
     items: list[RecommendationOut]
     pool_status: RecommendationPoolStatus | None = None
+    director: DirectorScreenInfo | None = None
 
 
 class RecommendationAppendResponse(RecommendationReshuffleResponse):
@@ -368,6 +399,9 @@ class _PlatformScopedRecommendationIn(BaseModel):
 
     excluded_bvids: list[str] = Field(default_factory=list)
     source_platform: str = ""
+    request_id: str = Field(default="", max_length=128)
+    stream_ref: str = Field(default="default", min_length=1, max_length=128, pattern=r"\S")
+    explicit_intent: str = Field(default="", max_length=500)
 
     @field_validator("source_platform", mode="before")
     @classmethod
@@ -388,6 +422,20 @@ class RecommendationReshuffleIn(_PlatformScopedRecommendationIn):
 
 class RecommendationAppendIn(_PlatformScopedRecommendationIn):
     """Request payload for appending another recommendation page."""
+
+
+class DirectorGenerateIn(_PlatformScopedRecommendationIn):
+    """Explicit generation, separate from restore and actual presentation."""
+
+    request_id: str = Field(min_length=1, max_length=128, pattern=r"\S")
+    intent: Literal["NEXT", "STAY"] = "NEXT"
+    limit: int = Field(default=10, ge=1, le=20)
+
+
+class DirectorPresentIn(BaseModel):
+    batch_ref: str = Field(min_length=1, max_length=256)
+    ack_id: str = Field(min_length=1, max_length=128)
+    item_keys: list[str] = Field(min_length=1, max_length=20)
 
 
 class PlatformAvailabilityResponse(BaseModel):
@@ -1580,6 +1628,7 @@ class FeedbackIn(BaseModel):
     request_id: IdempotencyKey
     bvid: str = ""
     item_key: str = ""
+    batch_ref: str = ""
 
 
 class FeedbackResponse(BaseModel):
@@ -1989,6 +2038,7 @@ class RecommendationClickIn(BaseModel):
     """Payload for a recommendation click-through from the extension popup."""
 
     recommendation_id: int | None = None
+    batch_ref: str = Field(default="", max_length=256)
     bvid: str = ""
     content_id: str = ""
     content_url: str = ""
@@ -2657,6 +2707,37 @@ class SoulConfigOut(BaseModel):
     dialogue_tone_prompt: str = ""
 
 
+class JevEvaluationConfigOut(BaseModel):
+    """Pure Jev evaluator controls; byte guards are not exact token counts."""
+
+    topic_labels: list[str] = Field(default_factory=list)
+    franchise_labels: list[str] = Field(default_factory=list)
+    max_state_question_bytes: int = 0
+    max_request_bytes: int = 0
+    max_candidates_per_request: int = 4
+    max_questions_per_request: int = 0
+    max_question_bytes: int = 0
+    max_calls: int = 32
+    budget_seconds: float = 30.0
+
+
+class JevProviderReadinessOut(BaseModel):
+    """Safe read-only status; credential values are never returned."""
+
+    enabled: bool = False
+    model: str = "jev-1.13.0"
+    api_key_env: str = "TYPESAFE_API_KEY"
+    endpoint_url: str = "https://api.typesafe.ai/v1/systemone"
+    api_key_configured: bool = False
+    credential_source: str = "missing"
+    timeout_seconds: float = 2.0
+    max_attempts: int = 2
+    ready: bool = False
+    reason: str = "请在 Jev 连接配置区启用服务并填写 Token，或沿用后端环境变量。"
+    context_limits: dict[str, dict[str, int]] = Field(default_factory=dict)
+    context_budget: dict[str, str | int] | None = None
+
+
 class DiscoveryConfigOut(BaseModel):
     unified_keyword_planner_enabled: bool = True
     kw_cache_high: int = 30
@@ -2671,7 +2752,9 @@ class DiscoveryConfigOut(BaseModel):
     keyword_digest_grace_hours: int = Field(default=24, ge=0, le=168)
     admission_min_score: float = 0.60
     eval_prefilter_mode: Literal["off", "shadow", "enforce"] = "shadow"
-    eval_scorer: Literal["llm", "shadow", "learned"] = "llm"
+    eval_scorer: Literal["llm", "shadow", "learned", "jev"] = "llm"
+    jev_evaluation: JevEvaluationConfigOut = Field(default_factory=JevEvaluationConfigOut)
+    jev_provider: JevProviderReadinessOut = Field(default_factory=JevProviderReadinessOut)
     candidate_eval_concurrency: int = Field(default=3, ge=1, le=3)
     multimodal_evaluation_enabled: bool = False
     visual_profile_enabled: bool = False
@@ -2841,6 +2924,7 @@ class ConfigUpdateIn(BaseModel):
     sources: dict[str, object] | None = None
     scheduler: dict[str, object] | None = None
     discovery: dict[str, object] | None = None
+    decision: dict[str, object] | None = None
     saved_sync: SavedSyncConfigUpdateIn | None = None
     tailnet: TailnetConfigUpdateIn | None = None
     storage: dict[str, object] | None = None

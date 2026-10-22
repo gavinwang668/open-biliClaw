@@ -24,6 +24,11 @@ background ─ background admission (default 3) ──────┘
              Instagram：只读 liked/saved/following → 本次 init 的 topic/creator → 小批量评估/文案
                                                      └→ 终态后再调度可选探针
 
+可选 Jev 完整评估：Web/插件/移动连接配置 → 固定模型/双容量 → 按需画像 + 完整原文摘录
+                                                  → 完整题组合批 → 严格验证 → canonical 准入
+可选推荐导演（默认关闭）：画像 + 最近三屏真实行为 → Agent 多屏预排 / Jev 二卡递推 / Agent+Jev 局部修补
+                                                  → 原子屏提交 → 实际可见 ACK/反馈 → 后续草稿
+
 Agent 宿主（OpenClaw / Hermes / WorkBuddy）
          → capabilities(agent-bridge/v2) + JSON CLI / skill descriptors
          → integrations.agent 别名 / integrations.openclaw 兼容适配器
