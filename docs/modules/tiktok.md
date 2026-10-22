@@ -1,6 +1,6 @@
-# TikTok 模块（实验性）
+# TikTok 模块
 
-交付状态：已随 v0.3.229 发布，仍为实验性、默认关闭。插件默认声明 TikTok 站点访问权限，保存来源设置无需另行授权。公开发现与登录后关键词搜索已有实测；非空真实账号画像、周期增量和 Firefox 登录态仍待验，站内收藏暂缓。发布状态与能力验收分开记录，最新证据见 [验收台账](../platform-source-acceptance.tiktok.md)。
+交付状态：已随 v0.3.229 发布，v0.3.231 起正式可用、默认关闭。插件默认声明 TikTok 站点访问权限，保存来源设置无需另行授权。公开发现与登录后关键词搜索已有实测；非空真实账号画像、周期增量和 Firefox 登录态仍待验，站内收藏暂缓。发布状态与能力验收分开记录，最新证据见 [验收台账](../platform-source-acceptance.tiktok.md)。
 
 ## 概述
 
@@ -183,7 +183,7 @@ result = await producer.produce_if_due(limit=20)
 
 | 配置 | 默认值 | 说明 |
 |------|------:|------|
-| `sources.tiktok.enabled` | `false` | 是否启用 TikTok steady-state discovery 和候选池配额；实验性，默认关闭 |
+| `sources.tiktok.enabled` | `false` | 是否启用 TikTok steady-state discovery 和候选池配额；默认关闭 |
 | `sources.tiktok.incremental_enabled` | `false` | 扩展在线周期账号回拉的逐源开关；需同时开启 `scheduler.source_incremental_enabled` |
 | `sources.tiktok.mode` | `"auto"` | 后端选择：`auto`（web 优先 + yt-dlp 回退）/ `web` / `ytdlp`；非法值保存时拒绝 |
 | `sources.tiktok.cookie_env` | `"OPENBILICLAW_TIKTOK_COOKIE"` | 可选登录 Cookie 环境变量；兜底 `data/tiktok_cookie.json`；不配置时访客身份运行 |

@@ -24,9 +24,9 @@ def test_docs_homepage_mentions_current_platform_sources() -> None:
     assert "sourceLinuxdoText" in html
     assert "sourceWeiboTitle" in html
     assert "sourceWeiboText" in html
-    assert "十四类平台来源（含实验性 Instagram 与 TikTok）与开放 Web" in html
+    assert "十四类平台来源（含正式可用的 Instagram 与 TikTok）与开放 Web" in html
     assert (
-        "Fourteen platform sources (including experimental Instagram and TikTok) and the open web"
+        "Fourteen platform sources (including official Instagram and TikTok) and the open web"
         in html
     )
     source_cards = re.findall(r'data-source="([a-z0-9_-]+)"', html)
@@ -57,8 +57,8 @@ def test_docs_homepage_mentions_current_platform_sources() -> None:
     assert "sourceGithubText" in html
     assert "sourceInstagramTitle" in html
     assert "sourceInstagramText" in html
-    assert "实验性、默认关闭" in html
-    assert "experimental and disabled by default" in html
+    assert "正式可用、默认关闭" in html
+    assert "disabled by default" in html
     assert "docs/platform-source-acceptance.instagram.md" in html
     assert "Linux.do、V2EX、微博等十一类来源" not in html
     assert "Weibo, and eight other platform sources" not in html

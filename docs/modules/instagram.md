@@ -1,6 +1,6 @@
 # Instagram 来源
 
-交付状态：已随 v0.3.227 发布，仍为实验性、默认关闭。插件默认声明 Instagram 站点访问权限，个人信号导入需要在同一浏览器登录，当前只承诺有界只读快照；推荐卡收藏仅保存在 OpenBiliClaw 本地。完整 Likes 历史、双账号、Firefox 登录态和手机真机尚未完成验收，最新证据见 [验收台账](../platform-source-acceptance.instagram.md)。
+交付状态：已随 v0.3.227 发布，v0.3.231 起正式可用、默认关闭。插件默认声明 Instagram 站点访问权限，个人信号导入需要在同一浏览器登录，当前只承诺有界只读快照；推荐卡收藏仅保存在 OpenBiliClaw 本地。完整 Likes 历史、双账号、Firefox 登录态和手机真机尚未完成验收，最新证据见 [验收台账](../platform-source-acceptance.instagram.md)。
 
 2026-10-03 增量：普通“换一批”已接入 Instagram producer、显式小批评估与推荐文案，不必为恢复 discovery 重做画像；网络/限流/离线等失败给出安全提示。封面共享代理新增逐 hop 公网 IP 检查与地址固定。真实验证结果及仍需账号/许可的门禁以[最新台账](../platform-source-acceptance.instagram.md)为准，不以代码通过替代 full 验收。
 
@@ -141,7 +141,7 @@ Likes tap 只接受当前 Likes 任务页上 `liked_media_screen / liked_refresh
 
 两类日预算均以最终保留的候选条数为单位，配置加载时的低预算警告不应解释成任务次数。`min_interval_minutes` 使用持久尝试时间控制跨进程冷却；正常 `throttled` 跳过不会推进该时间或消耗候选预算。初始化后的个人事件刷新仍是 `init-only`，通用增量调度不会自动为 Instagram 入队。
 
-浏览器会在安装或更新扩展时处理默认站点权限；设置保存流程不再等待 Instagram 授权弹窗。来源仍为实验性、默认关闭，权限声明不代表自动启用 discovery 或个人初始化。
+浏览器会在安装或更新扩展时处理默认站点权限；设置保存流程不再等待 Instagram 授权弹窗。来源为正式可用、默认关闭，权限声明不代表自动启用 discovery 或个人初始化。
 
 `discover --source instagram` 的 CLI 失败现在返回 exit 1，不再把 `response_envelope_unobserved`、HTML、登录、验证或限流等失败以 exit 0 交给自动化。成功、明确空结果与节流/池满/预算等正常跳过仍返回 0；无新增不等于失败，也不等于供给成功，需结合计数判断。回归从真实 CLI 经 producer 和持久队列注入脱敏浏览器终态，覆盖失败与明确空结果，不替代真站验收。
 

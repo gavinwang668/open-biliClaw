@@ -5,7 +5,7 @@
 
 OpenBiliClaw 是一个本地优先的跨平台内容发现 AI Agent。浏览器插件的单一用途是：在用户访问已启用浏览器接入的受支持内容平台时，采集用户授权范围内的浏览、互动和内容信号，发送到用户自己配置的 OpenBiliClaw 后端，用于构建个人兴趣画像、改进内容推荐、同步收藏 / 稍后再看状态和展示本地通知。GitHub v1 来源只由后端通过 GitHub 官方 REST API 读取公开仓库，不在 GitHub 页面运行内容脚本，也不申请 GitHub 主机权限或下发浏览器任务。
 
-Instagram 是默认关闭的实验来源：普通 Instagram 页面不做被动行为采集；只有用户启用公开发现或显式选择初始化时，插件才在隔离任务 tab 中执行有界同源只读任务。安全隔离不代表 Meta 授权，部署者仍需自行确认自动采集权限。
+Instagram 是默认关闭的正式来源：普通 Instagram 页面不做被动行为采集；只有用户启用公开发现或显式选择初始化时，插件才在隔离任务 tab 中执行有界同源只读任务。安全隔离不代表 Meta 授权，部署者仍需自行确认自动采集权限。
 
 直接 topic 页可以复用浏览器现有登录会话，被动解析页面自然返回的公开媒体；登录响应要求作者明确非私密，只上报规范化字段及 `authenticated_topic_observed` 布尔证据，不上传原始追踪字段。匿名路径保留；这不代表匿名路径始终可用，也不代表已审计页面自身的 Recent Searches 前后状态。
 
@@ -114,7 +114,7 @@ Instagram 执行中的任务会在扩展 `storage.local` 临时保存有界 task
 | `storage` | 保存插件设置、本地 UI 状态和后端连接信息 |
 | 主机权限 | 限定在 Bilibili、小红书、抖音、TikTok、YouTube、X、知乎、Reddit、Linux.do、V2EX、微博、Bangumi、Instagram 以及本机 OpenBiliClaw 后端之间处理必要数据；GitHub 不在扩展主机权限中 |
 
-TikTok 的 `*://*.tiktok.com/*` 与 Instagram 的 `https://*.instagram.com/*` 在 Chrome、Firefox、Safari 清单中均作为默认主机权限声明，由浏览器在安装或更新时处理。Instagram 设置保存不再单独请求或撤销站点权限。两个来源仍为实验性、默认关闭；用户或管理员可以在浏览器中限制站点访问，运行时仍检查实际权限。声明权限不自动启用来源或周期同步，也不改变现有数据用途。
+TikTok 的 `*://*.tiktok.com/*` 与 Instagram 的 `https://*.instagram.com/*` 在 Chrome、Firefox、Safari 清单中均作为默认主机权限声明，由浏览器在安装或更新时处理。Instagram 设置保存不再单独请求或撤销站点权限。两个来源为正式可用、默认关闭；用户或管理员可以在浏览器中限制站点访问，运行时仍检查实际权限。声明权限不自动启用来源或周期同步，也不改变现有数据用途。
 
 `https://*.instagram.com/*` 主机权限只用于带任务标记的隔离 tab。公开任务读取有界 topic/hashtag 或明确 creator 页面；初始化先匹配同源账户表单用户名与新鲜 `PolarisViewer` 的用户名和双 ID，再以 GET 读取 saved/following，被动观察原生 Likes 页只读 Bloks 响应。扩展不重放 Bloks POST、不执行其表达式或 Select/Unlike 动作。插件只上报 `sessionid` 存在性；Cookie value、Authorization/CSRF、请求头、原始 JSON/HTML/Bloks、挑战正文和完整历史不会上传。MAIN 桥只发送有界白名单 rows、cursor 与终态证据。扩展不提交 Instagram Search，不执行 like/save/follow/comment/message，不自动处理安全验证；页面自身的上游状态变化仍需独立审计。普通 Instagram 页面不启动 behavior collector。
 
