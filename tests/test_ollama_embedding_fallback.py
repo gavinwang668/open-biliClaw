@@ -271,3 +271,22 @@ async def test_invalid_automatic_vector_retries_on_cpu(monkeypatch, bad_vector):
     install_transport(monkeypatch, handler)
     assert await OllamaProvider(model="bge-m3", base_url=BASE).embed("hello") == [0.5]
     assert [b.get("options") for b in bodies] == [None, {"num_gpu": 0}]
+
+
+async def test_embedding_only_provider_uses_native_endpoint(monkeypatch):
+    """Issue #318: the embedding-only provider talks raw httpx to Ollama's
+    native route — no OpenAI SDK client is constructed on the way."""
+    from openbiliclaw.llm.ollama_provider import OllamaEmbeddingProvider
+
+    urls: list[str] = []
+
+    def handler(request):
+        urls.append(str(request.url))
+        return httpx.Response(200, json={"embedding": [0.1, 0.2, 0.3]})
+
+    install_transport(monkeypatch, handler)
+    provider = OllamaEmbeddingProvider(base_url="http://127.0.0.1:11435/v1", model="bge-m3")
+
+    assert await provider.embed("hello") == [0.1, 0.2, 0.3]
+    assert urls == ["http://127.0.0.1:11435/api/embeddings"]
+    assert not hasattr(provider, "_client")
