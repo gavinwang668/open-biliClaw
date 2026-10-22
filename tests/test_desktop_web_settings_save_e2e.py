@@ -67,6 +67,7 @@ class SettingsSaveStub:
         self.lock = threading.Lock()
         self.revision = 6
         self.apply_state = "idle"
+        self.apply_message = "配置已保存，正在后台应用。"
         self.applied_revision = 6
         self.complete_before_response = False
         self.config = _initial_config()
@@ -126,7 +127,7 @@ def settings_save_server() -> Iterator[tuple[str, SettingsSaveStub]]:
                         "state": state.apply_state,
                         "requested_revision": state.revision,
                         "applied_revision": state.applied_revision,
-                        "message": "配置已保存，正在后台应用。",
+                        "message": state.apply_message,
                         "error": "",
                         "updated_at": "2026-08-06T12:00:00+08:00",
                     }
@@ -928,3 +929,30 @@ def test_pending_chat_count_badge_defaults_off_and_quick_switch_shows_it(
     page.locator("#chatBtn").click()
     expect(page.locator("#chatPendingBadgeToggle")).not_to_be_checked()
     expect(page.locator("#chatPendingCountBadge")).to_be_hidden()
+
+
+@pytest.mark.parametrize("terminal_state", ["applied", "failed"])
+def test_settings_save_recovers_when_completion_event_is_missing(
+    settings_save_server: tuple[str, SettingsSaveStub],
+    chromium_page: Page,
+    terminal_state: str,
+) -> None:
+    base_url, stub = settings_save_server
+    page = chromium_page
+    page.goto(f"{base_url}/web/")
+    page.get_by_role("button", name="设置", exact=True).click()
+    page.get_by_role("tab", name="平台源").click()
+    page.get_by_label("Bilibili 候选池占比").fill("2")
+    page.get_by_role("button", name="保存配置").click()
+    expect(page.locator("#settingsSaveMsg")).to_have_text("配置已保存，正在后台应用…")
+    # Let the one-off post-save status request finish before the backend does.
+    page.wait_for_timeout(500)
+    with stub.lock:
+        stub.apply_message = "正在等待当前对话结束，再应用配置。"
+    expect(page.locator("#configStatus")).to_have_value(stub.apply_message, timeout=8000)
+    with stub.lock:
+        stub.apply_state = terminal_state
+        stub.applied_revision = stub.revision if terminal_state == "applied" else 6
+    # No terminal WebSocket event: the status endpoint is authoritative.
+    expected = "配置已应用" if terminal_state == "applied" else "配置应用失败，已恢复上一次生效配置"
+    expect(page.locator("#settingsSaveMsg")).to_have_text(expected, timeout=8000)

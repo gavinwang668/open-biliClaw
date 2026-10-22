@@ -62,6 +62,7 @@ LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference），新实�
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 配置应用状态恢复 | ✅ | 保存进入队列后每 2 秒查询应用状态，实时通知漏收或单次查询失败后继续恢复；终态停止查询，配置状态显示后台等待步骤/错误，保留新草稿 |
 | M8 流式过程展示 | ✅ | `POST /api/chat/agent/stream` 真流式：thinking 过程文本 + 每步一行折叠工具摘要（可展开参数/结果）+ 审批卡内嵌；完成后整体折叠为「过程（N 步）」；`final` 落成答复气泡；历史回放从 `payload.agent_events` 重建同一视图 |
 | M8 会话列表 | ✅ | 侧栏（新建/切换/内联改名/归档/显示已归档），默认会话徽标，`active_turns>0` 活跃圆点，标题与预览轮询刷新（复用 2.5s 共享聊天轮询），当前会话持久化到 localStorage |
 | M8 skill 切换 | ✅ | 会话条 skill chip（图标+名称）弹出角色选择浮层（`GET /api/chat/skills`），按会话记忆选择、下一回合生效；`suggest_skill` 工具调用渲染为切换卡（一键切换/忽略） |
@@ -75,6 +76,8 @@ LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference），新实�
 | 蓝鱼实验室设置 | 🧪 | 设置页新增「养蓝色大肥鱼」Tab（`assets/js/fish-settings.js`，按 Tab 懒加载）：总开关 / 只预览 / 独立小号 Cookie 保存与校验 / 可编辑人设、说话规矩与可选受众（只回哪类人） / 配额 / 预览一轮 / 发一轮 / 最近账本。全部走 `/api/fish/*`，不进全局 `PUT /api/config` 保存流程，鱼的 Cookie 与实验室字段也不混进主配置表单 |
 | 审批拒绝草稿 | ✅ | 与移动 Web / popup 共用 `agent-chat.js` 的拒绝编辑保留助手，轮询和过程重绘保留原因输入与焦点；终态更新不会复活旧操作按钮 |
 | 聊天提示条避让 | ✅ | 聊天页提示条固定在输入区上方且不接收指针事件，避免遮挡卡片或输入区、悬停导致提示长期不消失；其他页面仍可点击关闭与悬停暂停。`scripts/browser/chat-toast-hit-test.js` 验证真实 CSS 下的点击穿透 |
+
+配置状态接口：`GET /api/config/apply-status` 的 `state/requested_revision/applied_revision/message/error` 为权威快照。仅当前保存待应用时轮询，同一时间最多一个请求；终态和旧修订过滤沿用现有规则。此修复只涉及桌面 Web（含安装版打开的网页），移动 Web、插件 popup 与 CLI 不使用这个保存栏；不改后端应用流程、配置或安装器。
 
 接口：`GET /api/chat/personas` 获取目录，`PATCH /api/chat/sessions/{id}` 保存 persona，
 会话列表/详情中的 `metadata.persona` 是唯一持久来源。目录不可用时仅风格入口降级，

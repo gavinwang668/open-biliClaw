@@ -13694,6 +13694,8 @@ ${cardFeedbackBarHtml()}`;
     let settingsSavePhase = "idle";
     let settingsPendingApplyRevision = 0;
     let settingsLastTerminalRevision = 0;
+    let settingsApplyStatusTimer = null;
+    let settingsApplyStatusInFlight = false;
 
     safeBind("#migrationExportBtn", "click", () => { void exportMigrationData(); });
     safeBind("#migrationImportBtn", "click", () => {
@@ -13811,8 +13813,20 @@ ${cardFeedbackBarHtml()}`;
         settingsLastTerminalRevision = Math.max(settingsLastTerminalRevision, terminalRevision);
         reachedTerminal = true;
       }
+      const configStatus = $("#configStatus");
+      if (configStatus && (settingsPendingApplyRevision > 0 || reachedTerminal)) {
+        const fallback = settingsSavePhase === "applied"
+          ? "配置已应用" : settingsSavePhase === "failed"
+            ? "配置应用失败，已恢复上一次生效配置" : "配置已保存，正在后台应用…";
+        configStatus.value = String(snapshot?.error || snapshot?.message || fallback);
+        configStatus.setAttribute("role", settingsSavePhase === "failed" ? "alert" : "status");
+      }
       renderSettingsDirty();
       if (reachedTerminal) {
+        if (settingsApplyStatusTimer !== null) {
+          window.clearTimeout(settingsApplyStatusTimer);
+          settingsApplyStatusTimer = null;
+        }
         if (settingsSavePhase === "failed" && settingsDirtyFields.size > 0) {
           // Keep a new local draft in the form, but refresh the canonical
           // snapshot used by Discard. Otherwise a failed save followed by a
@@ -13832,8 +13846,26 @@ ${cardFeedbackBarHtml()}`;
     }
 
     async function refreshConfigApplyStatus() {
-      const snapshot = await requestJson(ENDPOINTS.configApplyStatus, { cache: "no-store" });
-      if (snapshot) applyConfigApplyStatus(snapshot);
+      if (settingsApplyStatusInFlight) return;
+      if (settingsApplyStatusTimer !== null) {
+        window.clearTimeout(settingsApplyStatusTimer);
+        settingsApplyStatusTimer = null;
+      }
+      settingsApplyStatusInFlight = true;
+      try {
+        const snapshot = await requestJson(ENDPOINTS.configApplyStatus, { cache: "no-store" });
+        if (snapshot) applyConfigApplyStatus(snapshot);
+      } finally {
+        settingsApplyStatusInFlight = false;
+        // WebSocket events are best effort. Poll only while our save is pending,
+        // including after a transient request failure, until an authoritative result.
+        if (settingsPendingApplyRevision > 0) {
+          settingsApplyStatusTimer = window.setTimeout(() => {
+            settingsApplyStatusTimer = null;
+            void refreshConfigApplyStatus();
+          }, 2000);
+        }
+      }
     }
 
     function markSettingsDirty(target) {
