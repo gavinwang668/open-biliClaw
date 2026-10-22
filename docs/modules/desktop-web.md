@@ -14,6 +14,8 @@ readiness 与配置后台应用状态均不等于官方联网/质量验收；当
 
 ## 概述
 
+聊天布局修复（2026-10-23）仅调整桌面 Web `/web` 的 `.chat-page`，包括安装版内打开的网页与其窄屏模式；移动 `/m`、插件 popup 和 CLI 没有该容器，不改布局。无新接口、配置、依赖或安装流程。
+
 `src/openbiliclaw/web/desktop/` 是桌面 Web 单页应用（`/web`，入口
 `index.html`，主逻辑 `assets/js/app.js` 单文件 IIFE，样式
 `assets/css/app.css`）。本文档当前聚焦「聊聊口味」tab 的 agent loop
@@ -63,6 +65,7 @@ LLM 实例设置页可选择 `cheaperinference`（Cheaper Inference），新实�
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | 配置应用状态恢复 | ✅ | 保存进入队列后每 2 秒查询应用状态，实时通知漏收或单次查询失败后继续恢复；终态停止查询，配置状态显示后台等待步骤/错误，保留新草稿 |
+| 聊天工作区自适应 | ✅ | legacy 与带会话侧栏模式均占满主区域可用宽度，不继承内容页 1120px 上限；消息气泡仍限宽，窄屏沿用侧栏浮层和输入框定位 |
 | M8 流式过程展示 | ✅ | `POST /api/chat/agent/stream` 真流式：thinking 过程文本 + 每步一行折叠工具摘要（可展开参数/结果）+ 审批卡内嵌；完成后整体折叠为「过程（N 步）」；`final` 落成答复气泡；历史回放从 `payload.agent_events` 重建同一视图 |
 | M8 会话列表 | ✅ | 侧栏（新建/切换/内联改名/归档/显示已归档），默认会话徽标，`active_turns>0` 活跃圆点，标题与预览轮询刷新（复用 2.5s 共享聊天轮询），当前会话持久化到 localStorage |
 | M8 skill 切换 | ✅ | 会话条 skill chip（图标+名称）弹出角色选择浮层（`GET /api/chat/skills`），按会话记忆选择、下一回合生效；`suggest_skill` 工具调用渲染为切换卡（一键切换/忽略） |

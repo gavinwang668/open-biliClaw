@@ -974,9 +974,10 @@
     .content-page-head h2, .profile-page-head h2 { margin-top: var(--space-1); }
     .profile-page-list { gap: var(--space-4); }
     .profile-page-actions { margin-top: var(--space-5); justify-content: start; }
-    .chat-page { width: min(100%, 920px); height: 100%; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+    /* Chat is a workspace, not an article: fill the main column while bubbles stay readable. */
+    .chat-page { width: 100%; max-width: none; height: 100%; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; }
     /* M8 agent loop 布局：有会话侧栏时页面整体放宽，主体换成「侧栏 + 对话」两栏。 */
-    .chat-page.has-agent-side { width: min(100%, 1220px); position: relative; }
+    .chat-page.has-agent-side { position: relative; }
     .chat-page.has-agent-side { grid-template-rows: auto minmax(0, 1fr); }
     .chat-page.has-agent-side .chat-main { min-height: 0; display: grid; grid-template-columns: 248px minmax(0, 1fr); gap: var(--space-4); }
     .chat-page.has-agent-side .chat-conversation { min-height: 0; min-width: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; }

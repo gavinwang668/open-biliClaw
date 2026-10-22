@@ -40,6 +40,7 @@
 | v0.3.164+ OpenAI-compatible JSON-object 合约 | ✅ | `LLMService.complete_structured_task()` 与 `complete_multimodal_structured_task()` 共享最小兼容层：已有大写 `JSON` 仅归一为小写 `json`；完全没有该 token 时只追加 `json`。这满足部分 OpenAI-compatible 端点对 `response_format=json_object` 的字面消息约束，不改变业务规则、画像、阈值、user 内容或 core-memory 排序；非结构化 `complete_with_core_memory()` 完全不改写 prompt。 |
 | v0.3.185+ 401 终态化与归属可见 | ✅ | `llm.base.LLMAuthError` 携带 `provider_name` / `endpoint`；OpenAI 系（openai / deepseek / ollama / openrouter / openai_compatible）、Claude、Gemini 的 `_map_error()` 在 401 时统一抛出它并记 WARNING（含 base_url + 上游 body 摘要），三家 `_is_retryable()` 一致视其为终态、**零重试**（此前 401 被当作可重试的通用 `LLMProviderError`，每分片白跑 3 次，在 provider 后台留下大量被拒请求）。`describe_llm_failure()` 的鉴权文案改为指名「{provider}（{host}）拒绝了当前 API key」并提示临时 token 过期这一成因；host 经 `urlsplit().hostname` 提取，base_url 内联凭据不外泄。裸子串 `"401"` 判定收紧为 `_LLM_AUTH_STATUS_RE` 限定形式（`HTTP 401` / `Error code: 401` / `"code":401` / `status_code=401`，排除 4010/4011），避免 request id 或 402 余额不足回包里的 `401` 让 auth 桶盖掉 rate-limited 桶 |
 | OpenAI-compatible 非瞬态 4xx 快速失败 | ✅ | OpenAI 系把 400/403/404/405/422 映射为 provider 内部不可重试请求错误，仍保留原 HTTP 状态与响应体供 registry fallback 和用户诊断，但不再对同一个错误请求立即重发三次；`404 model route not found` 因而在一次请求后快速暴露，等待用户改模型名或路由。401 继续使用带 provider/endpoint 的专用鉴权错误，402/429 继续走 backoff；HTTP 5xx、timeout 与传输错误仍保留有界重试。`response_format` 400 的既有 json_schema 兼容重试发生在 flavor 层，不受 provider 传输重试终态化影响。 |
+| 模型缺失提示归属 | ✅ | 未知/远程模型缺失默认提示检查服务端模型、API 地址和权限；仅异常链明确指出 Ollama 模型缺失时提示在服务所在机器拉取，不再默认归因本地 Ollama或断言所有模型缺失均为 HTTP 404 |
 | v0.3.162+ LLM 失败可操作说明 | ✅ | `llm.base.describe_llm_failure()` 沿异常 cause/context 链翻译上层错误；新增 authentication / unauthorized / unauthenticated / invalid API key / api key not valid 与限定形式 401 鉴权桶，并将 insufficient quota / quota / exhausted / 429 归入「额度用尽或被限流」桶，API 与 CLI 继续消费同一函数，不新增 init reason code |
 | v0.3.164 LLM 失败安全边界 | ✅ | `describe_llm_failure()` 识别 moderation、鉴权、额度/限流、provider/service 超时与空响应；`safe_llm_failure_message()` 为 API / CLI / OpenClaw 的公共边界提供固定安全兜底，未知异常不回传上游文本 |
 | 异常报警钩子（未发布） | ✅ | `LLMRegistry` 的 fallback 链与精确路由在每个 provider 失败点调用 `record_diagnostics_alert()`：429 → `rate_limited`、鉴权 → `auth_failed`、超时 → `timeout`、空/坏响应 → `bad_response`、其它 provider 异常 → `provider_error`，全部实例失败追加 error 级 `all_providers_failed`；告警进入进程内环形缓冲并由 `/api/diagnostics/alerts` 与 runtime-stream `diagnostics.alert` 事件暴露（见 [api 模块](api.md)），记录本身永不抛错、不影响 fallback 行为 |
@@ -115,6 +116,8 @@
 `l2_cache_stats()` 把 L2 持久化缓存暴露给诊断与维护面（CLI 清理等），namespace 注册保持一致。
 
 ## 公开 API
+
+`describe_llm_failure(exc)` 的模型缺失说明不默认指向本机 Ollama；仅同一异常包含 Ollama 和模型缺失信号时追加服务所在机器的拉取建议。固定安全文案不回显原始异常、API Key 或地址凭据；API、桌面/移动 Web、插件与 CLI 消费同一错误边界。签名与错误分类未变。
 
 `build_socratic_dialogue_prompt(..., socratic=True)` 继续提供共享朋友人设、用户语气与
 能力边界。两种 `socratic` 值都注入 `_DIALOGUE_FOLLOWUP_POLICY`，语气替换不会移除它：
