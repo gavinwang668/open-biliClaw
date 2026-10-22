@@ -64,6 +64,8 @@
 
 - 版本号同步：`pyproject.toml` / `extension/manifest.json` / `extension/package.json` → `0.3.231`；Firefox / Safari 清单的版本由构建脚本从 Chrome 清单注入。发布记录见 [v0.3.231 发布记录](testing/2026-10-22-release-v0.3.231.md)。
 
+- **国内镜像同步状态（2026-10-22）**：检查时 Gitee `main` 已同步至 `8b99ed46`，与当时 GitHub `main` 一致；v0.3.231 四个标签均指向 `13ea1e37`，Gitee Release 页尚未创建。AtomGit `main` 为 `58185cbb`，比当时 GitHub `main`（`8b99ed46`）落后 8 个提交；123 云盘分享页仍列出 v0.3.213 的 7 个文件，v0.3.231 安装包尚未上传。各镜像状态与后续同步记录见 [发布记录](testing/2026-10-22-release-v0.3.231.md)。
+
 ## v0.3.230：候选池恢复、蓝鱼实验室、多语言与来源权限优化（2026-10-21）
 
 - TikTok / Instagram 扩展站点权限统一默认声明：Chrome / Firefox 将 Instagram 从可选权限移入固定权限，Safari 补齐两者域名。Instagram 来源设置保存不再弹授权或在关闭来源时撤销站点权限；移除已无调用的授权等待代码。来源仍实验性、默认关闭，登录及实际站点访问检查保留；同步首页、README、安装、隐私和商店审核说明。验证见 [权限验收](testing/2026-10-21-default-source-permissions.md)。
