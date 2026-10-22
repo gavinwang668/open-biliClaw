@@ -81,6 +81,7 @@
     observer: null,
     applying: false,
     listener: null,
+    activation: 0,
     pending: null
   };
 
@@ -160,13 +161,15 @@
         catalog = toCatalog(await state.fetchCatalog(locale));
       } else {
         const response = await fetch(`${state.basePath}${locale}.json`, { cache: "no-cache" });
-        if (response.ok) catalog = toCatalog(await response.json());
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        catalog = toCatalog(await response.json());
       }
     } catch (error) {
       // A missing catalog is not fatal: the surface keeps its source copy.
       if (typeof console !== "undefined" && console.warn) {
         console.warn(`[i18n] catalog ${locale} unavailable`, error);
       }
+      return catalog; // Retry on the next switch; failures must not poison the cache.
     }
     state.catalogs.set(locale, catalog);
     return catalog;
@@ -222,9 +225,11 @@
   }
 
   async function activate(locale) {
+    const activation = ++state.activation;
     const normalized = normalizeLocale(locale);
     const fallback = await loadCatalog(DEFAULT_LOCALE);
     const primary = normalized === DEFAULT_LOCALE ? fallback : await loadCatalog(normalized);
+    if (activation !== state.activation) return;
     // Traditional Chinese gets its own complete catalog; English is filled in
     // incrementally, so untranslated copy falls back to the Chinese source
     // rather than disappearing.
@@ -418,6 +423,8 @@
           record.addedNodes.forEach((node) => {
             if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) roots.push(node);
           });
+        } else if (record.type === "attributes") {
+          roots.push(record.target);
         } else if (record.type === "characterData") {
           roots.push(record.target);
         }
@@ -427,7 +434,9 @@
     state.observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
-      characterData: true
+      characterData: true,
+      attributes: true,
+      attributeFilter: TRANSLATABLE_ATTRS
     });
   }
 

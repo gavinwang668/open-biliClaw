@@ -118,11 +118,15 @@
     @media (max-width: 480px) {
       .model-discovery-row { grid-template-columns: 1fr; }
       .model-discovery-row button { width: 100%; }
-    .setup-language { margin-left: auto; }
+    }
+    .setup-language { margin: 0 0 0 auto; display: grid; gap: 4px; }
+    #setupLanguageStatus { margin: 0 28px 12px; }
     .setup-language select {
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel-2);
+      min-height: 44px;
+      cursor: pointer;
       color: var(--text);
       font-size: 12px;
       padding: 4px 10px;
@@ -137,7 +141,6 @@
       clip: rect(0, 0, 0, 0);
       border: 0;
     }
-    }
   </style>
   <script src="/shared/i18n.js"></script>
 </head>
@@ -149,7 +152,7 @@
     <div class="head">
       <div class="brand"><img class="mark" src="/m/icon-maskable-192.png" alt=""><span>OpenBiliClaw</span></div>
       <label class="setup-language" for="setupLanguage">
-        <span class="sr-only">语言 / Language</span>
+        <span data-i18n-skip>语言 / 語言 / Language</span>
         <select id="setupLanguage" aria-label="语言 / Language" data-i18n-skip>
           <option value="zh-Hans">简体中文</option>
           <option value="zh-Hant">繁體中文</option>
@@ -163,6 +166,7 @@
         <div class="dot" data-dot="3"></div>
       </div>
     </div>
+    <div id="setupLanguageStatus" class="msg" role="status" aria-live="polite"></div>
     <div class="body">
 
       <!-- Step 0: 连接 AI -->
@@ -309,6 +313,9 @@
 
     const SETUP_LOCALE_KEY = "openbiliclaw.locale";
     let guardLocaleApplied = false;
+    let setupLocaleTouched = false;
+    let setupLocaleSave = Promise.resolve();
+    let setupLocaleSaved = true;
 
     function setupRuntime() {
       return globalThis.OpenBiliClawI18n;
@@ -317,29 +324,49 @@
     async function applySetupLocale(language, { persist = false } = {}) {
       const runtime = setupRuntime();
       const normalized = runtime ? runtime.normalizeLocale(language) : language || "zh-Hans";
+      if (persist) setupLocaleTouched = true;
       try {
         localStorage.setItem(SETUP_LOCALE_KEY, normalized);
       } catch {}
       const select = $("#setupLanguage");
       if (select) select.value = normalized;
-      if (!runtime) return normalized;
-      try {
-        await runtime.setLocale(normalized);
-      } catch (error) {
-        console.warn("setup: locale switch failed", error);
-      }
       if (persist) {
-        try {
-          await fetch("/api/config", {
+        setupLocaleSaved = false;
+        // Serialize writes so a slower, older choice cannot overwrite the latest.
+        setupLocaleSave = setupLocaleSave.catch(() => {}).then(async () => {
+          const response = await fetchWithTimeout("/api/config", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ language: normalized }),
           });
-        } catch (error) {
-          console.warn("setup: could not persist language", error);
-        }
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          if (select?.value === normalized) {
+            setupLocaleSaved = true;
+            clearMsg("#setupLanguageStatus");
+          }
+        }).catch((error) => {
+          if (select?.value === normalized) {
+            setupLocaleSaved = false;
+            showMsg("#setupLanguageStatus", "语言未能保存，请重新选择后重试。", "err");
+            const detail = document.createElement("span");
+            detail.setAttribute("data-i18n-skip", "");
+            detail.textContent = ` (${error.message})`;
+            $("#setupLanguageStatus").appendChild(detail);
+            console.warn("setup: could not persist language", error);
+          }
+        });
       }
+      if (runtime) await runtime.setLocale(normalized);
+      await setupLocaleSave;
       return normalized;
+    }
+
+    async function ensureSetupLocaleSaved() {
+      await setupLocaleSave;
+      if (setupLocaleTouched && !setupLocaleSaved) {
+        await applySetupLocale($("#setupLanguage").value, { persist: true });
+        if (!setupLocaleSaved) throw new Error("语言未能保存，请重新选择后重试。");
+      }
     }
 
     (function bootstrapSetupLocale() {
@@ -355,14 +382,15 @@
           // Only mirror the cached locale into the picker. Re-applying it here
           // can land after the /api/config response and silently overwrite the
           // backend language (the picker then disagreed with the page).
-          if (guardLocaleApplied) return;
+          if (guardLocaleApplied || setupLocaleTouched) return;
           const select = $("#setupLanguage");
           if (select && runtime.locale) select.value = runtime.locale;
         })
         .catch((error) => console.warn("setup: locale init failed", error));
       document.addEventListener("change", (event) => {
         if (event.target && event.target.id === "setupLanguage") {
-          void applySetupLocale(event.target.value, { persist: true });
+          void applySetupLocale(event.target.value, { persist: true })
+            .catch((error) => console.warn("setup: locale switch failed", error));
         }
       });
     })();
@@ -974,6 +1002,7 @@
       btn.disabled = true; btn.innerHTML = '<span class="spin"></span>保存中…';
       clearMsg("#msg0");
       try {
+        await ensureSetupLocaleSaved();
         const r = await fetchWithTimeout("/api/config", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -1935,6 +1964,7 @@
 
       let startBody = {};
       try {
+        await ensureSetupLocaleSaved();
         const payload = { sources: selected, llm_concurrency: readInitLlmConcurrency(), init_timeout_minutes: readInitTimeoutMinutes() };
         const sourceOptions = {};
         if (selected.includes("bangumi") && (sendBangumiUsername || bangumiToken)) {
@@ -2051,7 +2081,7 @@
         if (r.ok) {
           const data = await r.json();
           const currentConfig = configView(data);
-          if (currentConfig?.language) {
+          if (currentConfig?.language && !setupLocaleTouched) {
             guardLocaleApplied = true;
             void applySetupLocale(currentConfig.language);
           }

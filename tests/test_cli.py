@@ -4132,7 +4132,9 @@ def test_init_guides_missing_runtime_config_interactively(
         raising=False,
     )
 
-    # Wizard + source-prompt inputs:
+    monkeypatch.setattr(config_module, "_project_root", lambda: tmp_path)
+
+    # Wizard + source-prompt inputs (accept the language first):
     #   1. menu choice: "gemini"
     #   2. API key
     #   3. model (accept default)
@@ -4171,7 +4173,7 @@ def test_init_guides_missing_runtime_config_interactively(
         )
         + "\n"
     )
-    result = runner.invoke(app, ["init"], input=wizard_input + "n\n")
+    result = runner.invoke(app, ["init"], input="\n" + wizard_input + "n\n")
 
     assert result.exit_code == 1
     assert captured["provider"] == "gemini"
@@ -4184,6 +4186,8 @@ def test_init_guides_missing_runtime_config_interactively(
 def test_init_guides_missing_auth_interactively(
     monkeypatch: pytest.MonkeyPatch, runner: CliRunner, tmp_path: Path
 ) -> None:
+    monkeypatch.setattr(config_module, "_project_root", lambda: tmp_path)
+
     class FakeAuthManager:
         def __init__(self) -> None:
             self.saved_cookie = ""
@@ -4253,7 +4257,7 @@ def test_init_guides_missing_auth_interactively(
     result = runner.invoke(
         app,
         ["init"],
-        input="2\nSESSDATA=valid\ny\n\n\n\n" + "n\n" * 13,
+        input="\n2\nSESSDATA=valid\ny\n\n\n\n" + "n\n" * 13,
     )
 
     assert result.exit_code == 1

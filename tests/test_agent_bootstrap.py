@@ -866,6 +866,7 @@ def test_collect_human_install_wizard_default_path() -> None:
     prompts: list[tuple[str, str]] = []
     plain_inputs = iter(
         [
+            "",  # language
             "",
             "",
             "",
@@ -900,6 +901,7 @@ def test_collect_human_install_wizard_manual_cookie() -> None:
     prompts: list[tuple[str, str]] = []
     plain_inputs = iter(
         [
+            "2",  # Traditional Chinese
             "ollama",
             "qwen2.5:7b",
             "3",
@@ -918,6 +920,8 @@ def test_collect_human_install_wizard_manual_cookie() -> None:
         secret_input_func=lambda prompt: prompts.append(("secret", prompt)) or next(secret_inputs),
     )
 
+    assert answer.language == "zh-Hant"
+    assert "Select" in prompts[0][1]
     assert answer.provider == "ollama"
     assert answer.embedding_provider == ""
     assert answer.embedding_model == ""
@@ -1030,6 +1034,7 @@ def test_run_interactive_confirm_collects_full_human_install_choices(
         bootstrap,
         "collect_human_install_wizard",
         lambda **_kwargs: bootstrap.HumanInstallAnswers(
+            language="zh-Hant",
             provider="deepseek",
             llm_api_key="sk-new",
             llm_model="deepseek-v4-flash",
@@ -1053,6 +1058,7 @@ def test_run_interactive_confirm_collects_full_human_install_choices(
     text = (tmp_path / "config.toml").read_text(encoding="utf-8")
     output = capsys.readouterr().out
 
+    assert bootstrap.read_simple_toml(tmp_path / "config.toml")["general"]["language"] == "zh-Hant"
     assert returncode == 0
     assert 'default_provider = "deepseek"' in text
     assert 'api_key = "sk-new"' in text
@@ -1751,3 +1757,28 @@ def test_llm_preset_keeps_explicit_non_compat_provider_as_conflict(
         ]
     )
     assert bootstrap.apply_llm_preset_args(args) == 2
+
+
+@pytest.mark.parametrize(
+    ("existing", "answers", "expected"),
+    [
+        ("zh", ["3"], "en"),
+        ("zh-TW", [""], "zh-Hant"),
+        ("en-US", [""], "en"),
+        ("zh", ["fr", "2"], "zh-Hant"),
+    ],
+)
+def test_installer_language_selection(existing: str, answers: list[str], expected: str) -> None:
+    values = iter(answers)
+    assert bootstrap.collect_human_language(lambda _: next(values), existing) == expected
+
+
+def test_installer_language_flag_and_choices_match_runtime() -> None:
+    from openbiliclaw.i18n import SUPPORTED_LOCALES
+
+    assert bootstrap.INSTALL_LANGUAGES == SUPPORTED_LOCALES
+    args = bootstrap.build_arg_parser().parse_args(["--language", "en"])
+    bootstrap.apply_human_install_answers_to_args(
+        args, bootstrap.HumanInstallAnswers(provider="deepseek", language="zh-Hant")
+    )
+    assert args.language == "en"

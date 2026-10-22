@@ -12,6 +12,8 @@
 > 会继续运行，但远程入口会报告 helper 缺失。Docker 跨网络访问继续使用下文的 Caddy 公网
 > HTTPS overlay 或自管 TLS。完整边界见[应用内 Tailnet](modules/tailnet.md)。
 
+首次初始化先选语言：一键安装交互向导首先询问简体 / 繁体 / English；自动化可给 `scripts/agent_bootstrap.py` 传 `--language en`（或 `zh-Hans` / `zh-Hant`）。`/setup/` 页头也可保存语言；容器 CLI 可用 `docker exec -it openbiliclaw-backend openbiliclaw init --language zh-Hant`。不指定参数的非交互运行保留配置。安装日志与旧 CLI 提示尚未全部翻译。
+
 ## 前置条件
 
 - [Docker](https://docs.docker.com/get-docker/) 20.10+
@@ -130,7 +132,7 @@ $env:MODE="docker"; iwr https://raw.githubusercontent.com/whiteguo233/OpenBiliCl
 
 安装脚本会克隆 / 更新仓库，然后调用 `agent_bootstrap.py --mode docker --interactive-confirm --wait-for-extension-cookie`。bootstrap 的 Docker 顺序是：
 
-1. 在宿主机终端收集安装选择（LLM provider、embedding、B 站 Cookie 获取方式，以及小红书 / 抖音 / YouTube 初始化 opt-in；X / 知乎 / Reddit 请在 `/setup/` 引导页或后端设置页里开启）。Contract marker: human Docker one-line installer asks the same LLM provider first.
+1. 在宿主机终端收集安装选择（LLM provider、embedding、B 站 Cookie 获取方式，以及小红书 / 抖音 / YouTube 初始化 opt-in；X / 知乎 / Reddit 请在 `/setup/` 引导页或后端设置页里开启）。Contract marker: human Docker one-line installer asks language first, then the same LLM provider.
 2. 写入宿主机 `config.toml`。
 3. `docker compose up -d --build` 启动后端和 Ollama embedding sidecar。
 4. 把确认后的 `config.toml` / Cookie 文件同步到容器 `/app/runtime`。

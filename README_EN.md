@@ -28,6 +28,8 @@ China code mirror: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/Ope
 
 > 🇨🇳 **Mainland China sources**: [Gitee v0.3.231 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.231) is synced to the latest mainline; the [AtomGit source mirror](https://atomgit.com/whiteguo233/OpenBiliClaw) still trails v0.3.231. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.231). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
 
+Choose **简体中文 / 繁體中文 / English** before initialization: the one-line installer and interactive `openbiliclaw init` ask first; desktop packages offer a picker in the `/setup/` header. For automation, use `openbiliclaw init --language en`. The shared language is saved; historical content stays unchanged, and some legacy CLI and installer messages remain untranslated.
+
 ## OpenBiliClaw in 10 Seconds
 
 > **Official sources: Instagram & TikTok** (generally available since v0.3.231) — both are disabled by default and need to be enabled explicitly in settings. The extension includes site access for both by default, with no separate permission prompt when saving source settings.
