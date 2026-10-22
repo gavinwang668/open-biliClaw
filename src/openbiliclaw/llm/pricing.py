@@ -135,6 +135,11 @@ PRICING: dict[str, dict[str, tuple[float, float]]] = {
         # OpenRouter routes vary widely (anywhere from "free" relay of
         # local Ollama to GPT-4o-class). Without knowing the route, use
         # a midrange estimate and let users override per-call.
+        #
+        # Exception: the advertised ``:free`` route is billed at zero, so
+        # estimating it at the generic fallback would overstate the cost
+        # report for the exact route model discovery recommends.
+        "minimax/minimax-m3.1-flash:free": (0.0, 0.0),
         "default": (0.005, 0.015),
     },
     "orcarouter": {

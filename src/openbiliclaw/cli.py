@@ -2149,8 +2149,8 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
         {
             "label": "MiniMax 官方",
             "description": (
-                "MiniMax-M3.1-Flash: 1M context, adaptive reasoning; "
-                "$0.15 / $0.60 per million input / output tokens"
+                "MiniMax-M3.1-Flash (1M ctx / 自适应推理),便宜 ($0.15 / $0.60 per M),"
+                "适合做推荐这种结构化输出任务"
             ),
             "signup_url": (
                 "https://platform.minimaxi.com/user-center/basic-information/interface-key "
@@ -2160,8 +2160,8 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
             "base_url": "https://api.minimax.io/v1",
             "default_model": "MiniMax-M3.1-Flash",
             "hint": (
-                "MiniMax-M3.1-Flash (default, 1M context) / MiniMax-M3. "
-                "Explicit custom and legacy model IDs remain supported."
+                "MiniMax-M3.1-Flash (默认 / 最新 / 1M ctx / 自适应推理) / MiniMax-M3。"
+                "旧模型与自定义 ID 仍可用"
             ),
             "domain_alt": (
                 "国内用户改 base_url 为 https://api.minimaxi.com/v1 (旧 .chat 域名将停)"

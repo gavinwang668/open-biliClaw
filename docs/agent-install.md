@@ -338,7 +338,7 @@ user chooses an OpenAI-compatible gateway / preset path.
 |---|---|---|---|
 | ★ 1 | **中转站 / OneAPI / 公司团队 LLM 网关 (大多数人选这个)** | 用户自填 | 默认 `gpt-5-nano`;按你充值的那家给你的模型清单填(中转站常代理 OpenAI / Claude / 国产) |
 | 2 | **Kimi (Moonshot AI 月之暗面) 官方** | `https://api.moonshot.ai/v1` | `kimi-k2.6`(最新 / 256K ctx / 多模态)。⚠ 旧 K2-series **2026/05/25 停服**;旧 `moonshot-v1-*` 也将停 |
-| 3 | **MiniMax 官方** | `https://api.minimax.io/v1` | `MiniMax-M2.7`(4/2026 / 228K ctx / $0.30 ~ $1.20 per M) |
+| 3 | **MiniMax 官方** | `https://api.minimax.io/v1` | `MiniMax-M3.1-Flash`(默认 / 1M ctx / 自适应推理 / $0.15 ~ $0.60 per M) / `MiniMax-M3`。旧模型与自定义 ID 仍可用 |
 | 4 | **通义千问 (阿里 DashScope) 官方** | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus`(自动跟最新快照,当前 → qwen3.6-plus) / `qwen-flash`(便宜) / `qwen-max`(旗舰) |
 | 5 | **智谱 ChatGLM 官方** | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.7-flash`(1/2026 免费 / 200K ctx) / `glm-5`(2/2026 付费旗舰 / 745B MoE)。注意 base_url 用 `/api/paas/v4` 不是 `/v1` |
 | 6 | **商汤日日新 (SenseNova) 官方** | `https://token.sensenova.cn/v1` | `deepseek-v4-flash`(已实测连通)。新用户免费额度，可零成本体验本项目(issue #193)；其它可用模型以控制台清单为准。token 端点未验证 embedding，Phase 3 默认推荐独立 Ollama bge-m3 |

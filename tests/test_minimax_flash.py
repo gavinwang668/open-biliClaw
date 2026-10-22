@@ -415,3 +415,10 @@ async def test_discovery_filters_text_only_and_never_invents_routes(
 def test_flash_cost_uses_direct_list_and_cache_prices(provider):
     assert estimate_cost(provider, FLASH, 1_000_000, 1_000_000) == 5.4
     assert estimate_cost(provider, FLASH, 1_000_000, 0, 1_000_000) == 0.108
+
+
+def test_openrouter_free_flash_route_reports_zero_cost():
+    # Discovery recommends this route; the generic OpenRouter fallback
+    # would otherwise invent a midrange price for a free route.
+    cost = estimate_cost("openrouter", "minimax/minimax-m3.1-flash:free", 1_000_000, 1_000_000)
+    assert cost == 0.0

@@ -76,7 +76,7 @@ python3 scripts/agent_bootstrap.py --mode docker --interactive-confirm --wait-fo
    - **★ 2) 中转站 / OpenAI 协议兼容服务 ★第二推荐** —— **国内用户买中转站 / OneAPI Key 走这个**。也覆盖 Kimi / 通义 / 智谱 / 商汤日日新 / Yi / MiniMax 官方 + Azure / vLLM / LMStudio。选这个进**子菜单(10 个 preset)**:
      - **★ a) 中转站 / OneAPI / 公司团队 LLM 网关(大多数人选这个)** —— Base URL 自填 / 默认 `gpt-5-nano`;按你充值的中转站给的模型清单填
      - **b) Kimi (Moonshot AI) 官方** —— `https://api.moonshot.ai/v1` / 默认 `kimi-k2.6`。⚠ 旧 K2-series 2026/05/25 停服
-     - **c) MiniMax 官方** —— `https://api.minimax.io/v1` / 默认 `MiniMax-M2.7`(4/2026)
+     - **c) MiniMax 官方** —— `https://api.minimax.io/v1` / 默认 `MiniMax-M3.1-Flash`(1M ctx / 自适应推理);备选 `MiniMax-M3`,旧模型与自定义 ID 仍可用
      - **d) 通义千问 (阿里 DashScope) 官方** —— `https://dashscope.aliyuncs.com/compatible-mode/v1` / 默认 `qwen-plus`
      - **e) 智谱 ChatGLM 官方** —— `https://open.bigmodel.cn/api/paas/v4` / 默认 `glm-4.7-flash`(免费档);旗舰 `glm-5`
      - **f) 商汤日日新 (SenseNova) 官方** —— `https://token.sensenova.cn/v1` / 默认 `deepseek-v4-flash`(已实测连通)。新用户免费额度，零成本体验(issue #193);embedding 未验证，Phase 3 默认独立 Ollama bge-m3

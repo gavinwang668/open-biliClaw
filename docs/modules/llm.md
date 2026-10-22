@@ -127,15 +127,18 @@ an unadvertised paid Flash route.
 Flash has a 1,000,000-token context and 524,288-token maximum output. Its direct
 list prices per million tokens are $0.15 input, $0.015 cached input, and $0.60
 output. The cost tracker estimates these in CNY using its existing exchange-rate
-convention; custom gateways may charge differently. M3 remains available with
-standard input/output pricing of $0.30/$1.20 through 512k and $0.60/$2.40
-above 512k. The existing M3 estimate remains conservative.
+convention; custom gateways may charge differently. The OpenRouter `:free` route
+is estimated at zero rather than the generic OpenRouter fallback. M3 remains
+available with standard input/output pricing of $0.30/$1.20 through 512k and
+$0.60/$2.40 above 512k. The existing M3 estimate remains conservative.
 
 Flash always uses adaptive reasoning. Leave `reasoning_effort` empty for the API
 default or use `low`, `medium`, `high`, `xhigh`, or `max`; `none`, `off`, and
 `disabled` are rejected locally. Flash requests never retry with thinking
 disabled. Tool call IDs, arguments and reasoning history, plus remote and inline
 image content parts, pass through the existing OpenAI-compatible transport.
+`LLMResponse.reasoning_content` carries that thinking text so the agent loop can
+replay it in assistant history; it is never displayed to users.
 The default remains Chat Completions. Explicit `api_flavor = "responses"` uses
 native `/v1/responses` and its `reasoning.effort` field; this adapter's existing
 Responses tool-calling limitation still applies (the service uses prompt simulation).
