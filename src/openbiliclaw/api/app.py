@@ -240,6 +240,7 @@ from openbiliclaw.runtime.image_cache import (
     CoverFetchError,
     cleanup_image_cache,
     image_log_identity,
+    render_cover_for_display,
     save_extension_cover,
 )
 from openbiliclaw.runtime.image_fetch import ImageFetchCoordinator
@@ -2613,6 +2614,7 @@ def create_app(
     app.state.migration_import_phase = ""
     image_fetch_coordinator = ImageFetchCoordinator()
     app.state.image_fetch_coordinator = image_fetch_coordinator
+    app.state.image_service_client = None
     chat_reply_scheduler: DurableChatReplyScheduler
 
     def _complete_degraded_runtime_recovery() -> None:
@@ -7666,35 +7668,6 @@ def create_app(
             return JSONResponse({"error": "not_running"}, status_code=409)
         return JSONResponse({"cancelling": True, "run_id": run["run_id"]}, status_code=202)
 
-    def _resize_cover_for_mobile(
-        data: bytes,
-        content_type: str,
-    ) -> tuple[bytes, str]:
-        """Downscale/compress proxied cover images for mobile bandwidth.
-
-        Original CDN covers are often 300KB-500KB; mobile only renders them at
-        card/list size. A 640px JPEG keeps quality while cutting transfer size
-        dramatically. Failures fall back to the original bytes.
-        """
-        if not data or "image" not in content_type:
-            return data, content_type
-        try:
-            from io import BytesIO
-
-            from PIL import Image
-
-            image: Image.Image = Image.open(BytesIO(data))
-            if image.width <= 640:
-                return data, content_type
-            image.thumbnail((640, 640), Image.Resampling.LANCZOS)
-            if image.mode in {"RGBA", "P", "LA"}:
-                image = image.convert("RGB")
-            out = BytesIO()
-            image.save(out, format="JPEG", quality=80, optimize=True)
-            return out.getvalue(), "image/jpeg"
-        except Exception:
-            return data, content_type
-
     @app.get("/api/image-proxy", response_model=None)
     async def image_proxy(
         url: str = Query(..., description="URL-encoded image URL to proxy"),
@@ -7719,11 +7692,20 @@ def create_app(
             try:
                 import httpx
 
-                async with httpx.AsyncClient(timeout=30) as client:
-                    upstream = await client.get(
-                        f"{service_base}/api/image-proxy",
-                        params={"url": url},
+                client = app.state.image_service_client
+                if client is None:
+                    # App-owned pool: per-image clients repeatedly load TLS
+                    # roots and discard keep-alive sockets, even on localhost.
+                    # The internal child service must not inherit system proxies.
+                    client = httpx.AsyncClient(
+                        timeout=httpx.Timeout(30, connect=1, pool=5),
+                        trust_env=False,
                     )
+                    app.state.image_service_client = client
+                upstream = await client.get(
+                    f"{service_base}/api/image-proxy",
+                    params={"url": url},
+                )
                 if upstream.status_code == 200:
                     return Response(
                         content=upstream.content,
@@ -7777,7 +7759,7 @@ def create_app(
                 cache_id,
             )
         proxy_data, proxy_content_type = await asyncio.to_thread(
-            _resize_cover_for_mobile,
+            render_cover_for_display,
             result.data,
             result.content_type,
         )
@@ -9585,6 +9567,11 @@ def create_app(
         # shutdown; close then cancels both active and already-queued fetches.
         with suppress(Exception):
             await image_fetch_coordinator.close()
+        image_service_client = app.state.image_service_client
+        app.state.image_service_client = None
+        if image_service_client is not None:
+            with suppress(Exception):
+                await image_service_client.aclose()
         # Drain the self-owned dialogue settlement queue; it is not covered by
         # the background-task cancellation above.
         settlement_queue = getattr(ctx, "dialogue_settlement_queue", None)

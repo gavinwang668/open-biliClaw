@@ -143,11 +143,12 @@ Douyin source supply: daemon presence gate (explicit manual call bypasses it)
                      → one shared plugin-cycle wait budget → terminal dy_task → pending_eval
                      absent → zero enqueue; timeout/error/budget → bounded retry floor
 
-cover images: UI proxy foreground ───┐
-              refresh prefetch bg ───┴→ app-stable ImageFetchCoordinator(total 4 / bg 3, fg priority)
-                                      → cache-key singleflight → host allowlist + public DNS (proxy: fixed DoH)
-                                      → pinned IP (direct / CONNECT / SOCKS; original Host + TLS)
-                                      → atomic disk cache
+cover display: UI → main API pooled internal HTTP → image service
+                  (or in-process coordinator when service is unavailable)
+cover bytes: foreground + background prefetch → coordinator(total 10 / bg 8, foreground priority)
+             → disk cache hit / singleflight miss → allowlist + public DNS + pinned IP/TLS
+                                                  → atomic original disk cache
+foreground display only: original bytes → bounded 640px rendition LRU (128 / 16 MiB) → UI
 
 Instagram manual replenish → source quota + producer/task locks → topic/creator
                           → explicit bounded eval + copy (scheduler may be off)

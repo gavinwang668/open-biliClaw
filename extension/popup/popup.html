@@ -4550,7 +4550,7 @@
       min-width: 0;
       flex-shrink: 0;
       display: grid;
-      grid-template-columns: repeat(6, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 6px;
       padding: 4px;
       overflow-x: auto;
@@ -5061,11 +5061,13 @@
       overflow: hidden;
     }
 
-    @media (max-width: 430px) {
+    @media (max-width: 360px) {
       .settings-tabs {
-        grid-template-columns: repeat(6, minmax(92px, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
+    }
 
+    @media (max-width: 430px) {
       .settings-model-discovery-control {
         grid-template-columns: 1fr;
       }

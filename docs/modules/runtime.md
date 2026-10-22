@@ -1,5 +1,9 @@
 # Runtime Module
 
+## 封面显示副本缓存（2026-10-23）
+
+`image_cache.render_cover_for_display(data, content_type)` 在线程中生成 640px JPEG 显示副本，并按原始字节 SHA-256 与媒体类型存入线程安全 LRU；最多 128 项、16 MiB，只持有显示副本、不保留大尺寸原图。字节变化自动失效，超限淘汰最旧项，进程退出即释放。小图及解码失败继续返回原始字节，不改变原图磁盘缓存、CDN 抓取/SSRF 校验或预取策略。API 与独立 image_service 复用同一实现。
+
 Instagram 普通“换一批”现在通过 `force_refresh()` 执行一个有界 producer → `drain_pending(flush=True)` → 推荐文案波次。它复用来源锁、任务准入、配额和日预算，不依赖 scheduler；失败使用安全的 Instagram 提示进入 `refresh.failed`，已有部分结果保留。CLI `discover --source instagram --force` 仍可独立使用。
 
 Instagram 显式初始化的第 4 阶段通过 `run_init_backfill(sources=..., register_instagram_task=...)` 调用正式 producer、候选评估和同步推荐文案，共享 refresh 锁。API 在 kick 前把新建及恢复的发现任务登记到当前 InitCoordinator；初始化期间其它 pending task 仍不能领取。`build_instagram_discovery_producer(manual=True)` 允许来源已启用、scheduler 关闭时的显式 init；后台 tick 仍受原 scheduler/init/presence 门控。仅选 Instagram 不运行 B 站固定策略，旧的非 Instagram init 路径本次未重构。

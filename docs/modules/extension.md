@@ -1,5 +1,9 @@
 # 浏览器插件模块
 
+## 弹窗设置布局（2026-10-23）
+
+设置分类改为随弹窗宽度采用四列（极窄屏三列）换行，七个分类不再套用六列固定网格或窄屏 92px 最小列宽。320–600px 的真实 Chromium 布局回归检查所有分类可见、可点击；不改变设置字段与保存 API。验收详见 [布局与封面延迟报告](../verification/2026-10-23-popup-cover-latency.md)。
+
 Popup 的 LLM 实例、默认链与模块选择支持 `api_route`（API Route），新实例预填 `gpt-5.5` 与 `https://global.api-route.com/v1`；API Key 经后端配置接口保存，模型发现与探测复用既有入口。
 
 Popup 的 LLM 实例、默认链与模块选择支持 `cheaperinference`（Cheaper Inference），新实例预填 `gpt-5.4-mini` 与 `https://api.cheaperinference.com/v1`；API Key 经后端配置接口保存，模型发现与探测复用既有入口。

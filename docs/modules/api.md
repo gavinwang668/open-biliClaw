@@ -1,5 +1,9 @@
 # 后端 API
 
+## 封面转发与显示缓存（2026-10-23）
+
+`GET /api/image-proxy` 对独立图片服务复用 app-owned HTTPX 连接池，关闭应用时释放；内部连接不继承系统代理，连接超时 1 秒、读取超时 30 秒，服务不可用时仍回退进程内 coordinator，非 200 响应仍原样转发。成功响应与鉴权契约不变。独立服务和进程内模式共用 `image_cache.render_cover_for_display`，避免原图命中磁盘后重复缩图。
+
 扫码登录修复（2026-10-23）：`poll_qrcode()` 保留成功码 `0`，仅成功时返回本次响应的白名单 Cookie（内部字段 `cookie`，不返回前端）。主账号和大肥鱼扫码接口优先使用响应 Cookie，兼容旧 URL 参数回退；大肥鱼仍执行独立账号校验。网页、插件与移动端共用后端逻辑，CLI 登录路径未变。无配置、依赖或安装流程变更。
 
 `POST /api/recommendations/refresh` 的显式补库现包含 Instagram：来源启用且有配额缺口时运行一次有界 producer → eval → copy，不受后台 scheduler 开关影响。来源失败投影 `manual_refresh_state=failed` 和 `refresh.failed`，不再变成“成功但无候选”；部分已入库内容不回滚。`GET /api/image-proxy` 对每个重定向执行 DNS/IP 拒绝与数字连接地址固定，非公网目的地址返回 403，非标准端口返回 400；证书验证、大小和媒体类型限制保持。
