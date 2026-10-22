@@ -303,6 +303,7 @@ def test_pool_refill_event_keeps_loaded_cards_and_scroll_position(
     base_url, stub = stability_server
     _load_and_append(chromium_page, base_url, stub)
 
+    chromium_page.wait_for_function("window.__obcSockets.some(socket => socket.readyState === 1)")
     _stamp_cards(chromium_page)
     before = _card_report(chromium_page)
     assert all(stamp is not None for stamp in before["stamps"])
@@ -461,3 +462,85 @@ def test_disabled_autoload_does_not_consume_pool_during_background_hydration(
     assert after["count"] == before["count"]
     assert after["titles"] == before["titles"]
     assert after["stamps"] == before["stamps"]
+
+
+@pytest.mark.parametrize("fail_first", [False, True])
+def test_card_status_reads_yield_to_render_and_limit_fanout(
+    stability_server: tuple[str, StabilityStub],
+    chromium_page: Page,
+    fail_first: bool,
+) -> None:
+    """Real card creation must not enqueue 2*N reads ahead of its covers."""
+    page = chromium_page
+    page.add_init_script("window.failFirstStatusRead = " + json.dumps(fail_first))
+    page.add_init_script("""
+      const originalFetch = window.fetch.bind(window);
+      window.statusProbe = { active: 0, peak: 0, started: 0, done: 0, detached: 0,
+        release: false, waiters: [] };
+      window.fetch = async (input, options) => {
+        const url = String(input?.url || input);
+        if (!/\\/api\\/saved\\/(favorite|watch_later)\\/status\\?/.test(url)) {
+          return originalFetch(input, options);
+        }
+        const p = window.statusProbe;
+        p.started++; p.active++; p.peak = Math.max(p.peak, p.active);
+        if (!document.querySelector('#videoGrid .video-card')) p.detached++;
+        if (!p.release) await new Promise(resolve => p.waiters.push(resolve));
+        p.active--; p.done++;
+        if (window.failFirstStatusRead && p.done === 1) throw new Error("status unavailable");
+        return new Response(JSON.stringify({ saved: true }), {
+          headers: { 'content-type': 'application/json' }
+        });
+      };
+    """)
+    page.goto(f"{stability_server[0]}/web/")
+    expect(page.locator("#videoGrid .video-card:not(.is-skeleton)")).to_have_count(
+        CARD_COUNT, timeout=15000
+    )
+    page.wait_for_function("window.statusProbe.started >= 2")
+    probe = page.evaluate("window.statusProbe")
+    assert probe["peak"] <= 2, f"status reads flooded the connection queue: {probe['peak']}"
+    assert probe["detached"] == 0, "status reads started before cards entered the DOM"
+    page.evaluate(
+        """() => {const p=window.statusProbe;p.release=true;p.waiters.splice(0).forEach(f=>f());}"""
+    )
+    page.wait_for_function(f"window.statusProbe.done === {CARD_COUNT * 2}")
+    expect(page.locator('#videoGrid [data-action="favorite"][aria-pressed="true"]')).to_have_count(
+        CARD_COUNT
+    )
+    expect(
+        page.locator('#videoGrid [data-action="watch-later"][aria-pressed="true"]')
+    ).to_have_count(CARD_COUNT - int(fail_first))
+
+
+def test_auxiliary_hydration_yields_connections_without_gating_cards(
+    stability_server: tuple[str, StabilityStub],
+    chromium_page: Page,
+) -> None:
+    """Slow saved lists must not block cards or launch every secondary read."""
+    page = chromium_page
+    page.add_init_script("""
+      const originalFetch = window.fetch.bind(window);
+      window.auxProbe = { held: 0, config: 0, releases: [] };
+      window.fetch = async (input, options) => {
+        const path = new URL(String(input?.url || input), location.href).pathname;
+        const p = window.auxProbe;
+        if (path === '/api/config') p.config++;
+        if (['/api/saved/watch_later', '/api/saved/favorite'].includes(path)) {
+          p.held++;
+          await new Promise(resolve => p.releases.push(resolve));
+          if (path.endsWith('watch_later')) throw new Error('list unavailable');
+        }
+        return originalFetch(input, options);
+      };
+    """)
+    page.goto(f"{stability_server[0]}/web/")
+    expect(page.locator("#videoGrid .video-card:not(.is-skeleton)")).to_have_count(
+        CARD_COUNT,
+        timeout=15000,
+    )
+    page.wait_for_function("window.auxProbe.held === 2")
+    page.wait_for_function("window.__obcSockets.some(socket => socket.readyState === 1)")
+    assert page.evaluate("window.auxProbe.config") == 0
+    page.evaluate("window.auxProbe.releases.splice(0).forEach(resolve => resolve())")
+    page.wait_for_function("window.auxProbe.config > 0")

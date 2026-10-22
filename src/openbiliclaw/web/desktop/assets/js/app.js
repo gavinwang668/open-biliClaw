@@ -3272,9 +3272,34 @@
     function removeDesktopSavedItem(listKind, itemKey) {
       return desktopSavedApi.remove(listKind, itemKey);
     }
+    // Card construction used to send 2*N fetches synchronously, before the
+    // browser could discover the newly inserted cover images. Yield once and
+    // bound background reads; explicit save/remove actions bypass this queue.
+    const desktopSavedStatusQueue = [];
+    let desktopSavedStatusActive = 0;
+    let desktopSavedStatusTimer = null;
+    function pumpDesktopSavedStatus() {
+      desktopSavedStatusTimer = null;
+      while (desktopSavedStatusActive < 2 && desktopSavedStatusQueue.length) {
+        const { listKind, itemKey, resolve, reject } = desktopSavedStatusQueue.shift();
+        desktopSavedStatusActive++;
+        Promise.resolve().then(() => desktopSavedApi.status(listKind, itemKey))
+          .then(resolve, reject).finally(() => {
+            desktopSavedStatusActive--;
+            scheduleDesktopSavedStatus();
+          });
+      }
+    }
+    function scheduleDesktopSavedStatus() {
+      if (desktopSavedStatusTimer !== null || !desktopSavedStatusQueue.length) return;
+      desktopSavedStatusTimer = setTimeout(pumpDesktopSavedStatus, 0);
+    }
     function savedStatus(listKind, itemOrBvid) {
       const itemKey = desktopSavedItem(itemOrBvid).item_key;
-      return desktopSavedApi.status(listKind, itemKey);
+      return new Promise((resolve, reject) => {
+        desktopSavedStatusQueue.push({ listKind, itemKey, resolve, reject });
+        scheduleDesktopSavedStatus();
+      });
     }
     function watchLaterStatus(itemOrBvid) { return savedStatus("watch_later", itemOrBvid); }
     function favoriteStatus(itemOrBvid) { return savedStatus("favorite", itemOrBvid); }
@@ -12215,30 +12240,49 @@ ${cardFeedbackBarHtml()}`;
         (snapshot) => applyInitialRuntimeSnapshot(snapshot),
         () => markDesktopRuntimeFailedAndRecover(),
       );
+      // Auxiliary panels may take several batches. Start live updates after
+      // the initial runtime read rather than waiting for those panels.
+      void runtimeApplicationPromise.then(() => {
+        if (!document.hidden) connectRuntimeStream();
+      });
       const runtimeReconciliationPromise = recommendationApplicationPromise.then(
         () => reconcileRuntimeAfterRecommendations(),
         () => reconcileRuntimeAfterRecommendations(),
       );
 
-      const secondaryPromises = [
-        pendingConfirmationsPromise,
-        syncWatchLaterButtons(),
-        syncFavoriteButtons(),
-        requestJson(ENDPOINTS.health),
-        requestJson(ENDPOINTS.initStatus).then(applyInitStatusSnapshot),
-        requestJson(`${ENDPOINTS.activityFeed}?limit=5`).then(applyActivitySnapshot),
-        requestJson(ENDPOINTS.profile).then(applyProfileSnapshot),
-        requestJson(ENDPOINTS.delightBatch).then(applyDelightSnapshot),
-        requestJson(ENDPOINTS.notificationPending).then(applyNotificationSnapshot),
-        requestJson(`${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&limit=100`).then(applyChatSnapshot),
-        requestJson(`${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&scope=delight&limit=80`).then(applyDelightChatSnapshot),
-        loadConfigSnapshot(),
-        refreshPlatformAvailability(),
+      const secondaryTasks = [
+        () => syncWatchLaterButtons(),
+        () => syncFavoriteButtons(),
+        () => requestJson(ENDPOINTS.health),
+        () => requestJson(ENDPOINTS.initStatus).then(applyInitStatusSnapshot),
+        () => requestJson(`${ENDPOINTS.activityFeed}?limit=5`).then(applyActivitySnapshot),
+        () => requestJson(ENDPOINTS.profile).then(applyProfileSnapshot),
+        () => requestJson(ENDPOINTS.delightBatch).then(applyDelightSnapshot),
+        () => requestJson(ENDPOINTS.notificationPending).then(applyNotificationSnapshot),
+        () => requestJson(`${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&limit=100`).then(applyChatSnapshot),
+        () => requestJson(`${ENDPOINTS.chatTurns}?session=${encodeURIComponent(SHARED_CHAT_SESSION)}&scope=delight&limit=80`).then(applyDelightChatSnapshot),
+        () => loadConfigSnapshot(),
+        () => refreshPlatformAvailability(),
       ];
 
-      // 预取 LAN IP，供二维码面板使用；它不参与任一首屏资源的应用顺序。
-      requestJson(ENDPOINTS.qrInfo).then((info) => { if (info?.lan_ip) _cachedLanIp = info.lan_ip; }).catch(() => {});
-      await Promise.allSettled(secondaryPromises);
+      // Keep auxiliary startup traffic from filling the HTTP/1 connection
+      // queue ahead of covers. Each task still settles independently, so one
+      // failed endpoint cannot prevent later panels from being hydrated.
+      secondaryTasks.push(() => requestJson(ENDPOINTS.qrInfo).then((info) => {
+        if (info?.lan_ip) _cachedLanIp = info.lan_ip;
+      }));
+      let secondaryIndex = 0;
+      async function hydrateSecondaryWorker() {
+        while (secondaryIndex < secondaryTasks.length) {
+          const task = secondaryTasks[secondaryIndex++];
+          try { await task(); } catch { /* Match the former allSettled policy. */ }
+        }
+      }
+      await Promise.allSettled([
+        pendingConfirmationsPromise,
+        hydrateSecondaryWorker(),
+        hydrateSecondaryWorker(),
+      ]);
       await validateDialogueContext({ announce: true });
       renderDialogueContextBar();
       await Promise.allSettled([
