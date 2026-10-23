@@ -288,6 +288,10 @@ descriptor、CLI（适用时）、capability manifest、幂等测试和集成文
 ## 3. 系统架构
 
 ```text
+packaged desktop/shared scripts → DesktopAssets (ordered manifest; 2 content versions; precompressed gzip)
+                               → /web/assets/desktop-bundle.js?v=… → one defer request from /web
+shared sources / original asset paths → mobile / extension; no Node build or install/config changes
+
 config save → safe API handoff → committed generation (wait for settings queue)
             → parent supervisor → stop old children → reload workers / recommendation / images
                                 └ retain parent's locked data path; durable candidates resume

@@ -22,6 +22,7 @@
 |------|------|------|
 | 本地 Ollama GPU → CPU 自动回退 | ✅ | 正式向量请求与诊断共享 endpoint/model 模式；CPU 实际返回有效向量后才确认恢复。 |
 | 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / OpenAI-compatible，带 retry + 超时 |
+| OpenAI SDK 首次资源加载 | ✅ | Chat Completions / Responses 的惰性资源属性在工作线程解析，避免首次就绪探测同步导入 SDK 时阻塞封面、推荐及其它 HTTP 请求；实际异步请求与流仍运行在原事件循环。 |
 | Responses JSON 输入契约（issue #265） | ✅ | 拆分 system 后检查 `input`，缺少 JSON 标记时追加最小 user 指令，避免偏好分析 HTTP 400。 |
 | v0.3.x OrcaRouter Provider 支持 | ✅ | 新增 `OrcaRouterProvider`（OpenAI 兼容协议）：一个 Key 跑 150+ 模型，默认 `openai/gpt-4o`，默认端点 `https://api.orcarouter.ai/v1`；沿用统一超时 / 重试 / 错误归一化 / JSON mode 与 per-call model 覆盖。网关把 `reasoning_effort` 与嵌套 `reasoning` 对象都原样转发给上游路由，非推理模型会以 HTTP 400 拒绝（已对 `openai/gpt-4o` 实测），因此适配器**不发送任何推理参数**，推理模型使用自身默认档位 |
 | v0.3.x Requesty Provider 支持 | ✅ | 新增 `RequestyProvider`（OpenAI 兼容协议）：一个 Key 跑多家模型，默认 `openai/gpt-4o-mini`，默认端点 `https://router.requesty.ai/v1`（欧盟区可改 `https://router.eu.requesty.ai/v1`）；沿用统一超时 / 重试 / 错误归一化 / JSON mode 与 per-call model 覆盖；适配器不发送任何推理参数；`list_models()` 先列出 `GET /models/managed` 的托管策略（失败时只记 WARNING），再合并 `GET /models` 目录。不参与自动排序，只有用户显式配置实例或调用链时才会使用 |
@@ -134,6 +135,12 @@
 一轮/两轮来自 2026-10-13 产品取舍，模型更换后需复验多轮收敛表现。
 
 `OpenAIProvider.complete(..., json_mode=True)` 在 Responses flavor 下确保 `input` 消息包含大小写不敏感的 `json` 标记；缺失时追加 `Return valid json.` user 指令。调用方消息和 `instructions` 缓存前缀不变，已有 JSON 输入和普通文本调用保持原样。连接测试仍表示普通文本连通性，不承诺所有结构化任务成功。
+
+`OpenAIProvider` 的 Chat Completions / Responses 请求入口先在线程中解析 SDK 的
+`chat.completions` / `responses` 惰性属性，再在调用方事件循环中执行 `create()`。
+不把网络请求或流消费迁移到线程，不改变公开方法签名、请求参数、动态 token 刷新、重试或
+流式回退语义；SDK 自身继续缓存资源。该路径由网页、插件、移动端和 CLI 共享，无新增配置
+或依赖。模型列表及 embedding 路径本次未调整。
 
 ### 本地 Ollama 向量运行模式
 

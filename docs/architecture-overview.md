@@ -160,6 +160,9 @@ durable turn → 固定时间/payload → 确认入口（待聊列表/卡片） 
                                                    └→ 卡片/锚/chat/probe/confusion/replay/legacy 全部 worker-only
 卡片 action → 同步 200（空队列快路）| 202 processing → popup/移动/桌面轮询；CLI 无 action
 
+包内桌面/共享脚本 → DesktopAssets（固定依赖顺序；最近两个内容版本；预压缩 gzip）
+                 → /web/assets/desktop-bundle.js?v=… → /web 一次 defer 请求
+共享源码/原资源入口 → 移动端/插件；无需 Node 构建，无安装或配置变化
 桌面首屏：推荐 hydration │ runtime hydration │ health/profile/activity/config 次级 hydration（三分支独立）
 桌面后台恢复（已有卡片）：跳过可能补池的推荐 GET │ 只同步 runtime / 库存状态
 

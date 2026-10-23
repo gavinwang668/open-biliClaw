@@ -5,6 +5,10 @@
 OpenBiliClaw 采用分层架构设计，从上到下依次为：
 
 ```text
+packaged desktop/shared scripts → DesktopAssets (ordered manifest; 2 content versions; precompressed gzip)
+                               → /web/assets/desktop-bundle.js?v=… → one defer request from /web
+shared sources / original asset paths → mobile / extension; no Node build or install/config changes
+
 config save → safe API handoff → committed generation (wait for settings queue)
             → parent supervisor → stop old children → reload workers / recommendation / images
                                 └ retain parent's locked data path; durable candidates resume
@@ -298,6 +302,10 @@ tag-owned 节点；`GET /api/config` 只投影 staged 布尔值和安全运行�
 - [Discovery 模块架构图](diagrams/discovery-architecture.html)
 
 ## 模块职责
+
+### Desktop static assets (`api/desktop_assets.py`)
+
+`DesktopAssets` 将包内固定清单的桌面与共享脚本按原依赖顺序拼接，保留最近两个内容版本及其预压缩 gzip 表示；桌面 HTML 只引用一次带版本的 defer 请求。原共享源码与静态资源入口继续供移动端、插件和开发工具使用，无 Node 构建、安装步骤或配置变化。版本缓存、编码协商和鉴权边界见 [API 模块](modules/api.md#桌面首屏静态脚本2026-10-23)。
 
 ### Durable agent stream ownership (`api/` / `soul/`)
 

@@ -5503,14 +5503,21 @@ def create_app(
 
     _lan_ip_value: str | None = None
     _lan_ip_checked_at = float("-inf")
+    _lan_ip_lock = asyncio.Lock()
 
-    def _health_lan_ip() -> str | None:
+    async def _health_lan_ip() -> str | None:
         nonlocal _lan_ip_value, _lan_ip_checked_at
         if time.monotonic() - _lan_ip_checked_at < _LAN_IP_TTL_SECONDS:
             return _lan_ip_value
-        _lan_ip_value = _detect_lan_ip()
-        _lan_ip_checked_at = time.monotonic()
-        return _lan_ip_value
+        async with _lan_ip_lock:
+            # Several startup health reads share one cold probe. Interface
+            # enumeration shells out (up to seconds on Windows/VPN hosts), so
+            # it must not hold the HTTP loop needed by recommendations/images.
+            if time.monotonic() - _lan_ip_checked_at < _LAN_IP_TTL_SECONDS:
+                return _lan_ip_value
+            _lan_ip_value = await asyncio.to_thread(_detect_lan_ip)
+            _lan_ip_checked_at = time.monotonic()
+            return _lan_ip_value
 
     async def _fresh_lan_ip() -> str | None:
         """Detect the LAN IP now, bypassing the ``/api/health`` TTL cache.
@@ -5523,9 +5530,12 @@ def create_app(
         shared cache that ``/api/health`` reads.
         """
         nonlocal _lan_ip_value, _lan_ip_checked_at
-        _lan_ip_value = await asyncio.to_thread(_detect_lan_ip)
-        _lan_ip_checked_at = time.monotonic()
-        return _lan_ip_value
+        # Keep explicit fresh reads ordered after an in-flight health probe;
+        # an older health result must not overwrite the newly detected address.
+        async with _lan_ip_lock:
+            _lan_ip_value = await asyncio.to_thread(_detect_lan_ip)
+            _lan_ip_checked_at = time.monotonic()
+            return _lan_ip_value
 
     # Embedding readiness is probed live (see _health_embedding_ready) and the
     # result cached here so frequent /api/health polls share one provider call.
@@ -5854,7 +5864,7 @@ def create_app(
     @app.get("/api/health", response_model=HealthResponse, response_model_exclude_none=True)
     async def health() -> HealthResponse | JSONResponse:
         profile_ready = _health_profile_ready()
-        lan_ip = _health_lan_ip()
+        lan_ip = await _health_lan_ip()
         embedding_ready = await _health_embedding_ready()
         llm_registered = _health_llm_registered()
         llm_callable = _health_llm_callable() if llm_registered else False
@@ -25257,82 +25267,15 @@ def create_app(
     # ── Desktop Web UI ───────────────────────────────────────────
     _desktop_dir = _Path(__file__).resolve().parent.parent / "web" / "desktop"
     if _desktop_dir.is_dir():
-        _desktop_index_path = _desktop_dir / "index.html"
+        from openbiliclaw.api.desktop_assets import DesktopAssets
 
-        def _desktop_asset_version() -> str:
-            import hashlib
-
-            digest = hashlib.sha256()
-            # Paths are relative to the desktop root except the shared modules,
-            # which live outside it — an upgrade that only changed
-            # shared renderers would otherwise be served from cache forever.
-            for relative, root in (
-                ("assets/css/app.css", _desktop_dir),
-                ("assets/css/classic.css", _desktop_dir),
-                ("assets/js/app.js", _desktop_dir),
-                ("assets/js/chat-agent-core.js", _desktop_dir),
-                ("agent-chat.js", _shared_web_dir),
-                ("i18n.js", _shared_web_dir),
-                ("dialogue-confirmation.js", _shared_web_dir),
-                ("source-status.js", _shared_web_dir),
-                ("director-client.js", _shared_web_dir),
-            ):
-                path = root / relative
-                if not path.is_file():
-                    continue
-                stat = path.stat()
-                digest.update(relative.encode("utf-8"))
-                digest.update(str(stat.st_mtime_ns).encode("ascii"))
-                digest.update(str(stat.st_size).encode("ascii"))
-            return digest.hexdigest()[:12]
+        _desktop_assets = DesktopAssets(_web_dir)
 
         def _desktop_index_response() -> Response:
-            if not _desktop_index_path.is_file():
+            if not (_desktop_dir / "index.html").is_file():
                 raise HTTPException(status_code=404, detail="desktop web index not found")
-            version = _desktop_asset_version()
-            html = _desktop_index_path.read_text(encoding="utf-8")
-            html = html.replace(
-                'href="/web/assets/css/app.css"',
-                f'href="/web/assets/css/app.css?v={version}"',
-            )
-            html = html.replace(
-                'href="/web/assets/css/classic.css"',
-                f'href="/web/assets/css/classic.css?v={version}"',
-            )
-            html = html.replace(
-                'src="/web/assets/js/app.js"',
-                f'src="/web/assets/js/app.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/web/assets/js/chat-agent-core.js"',
-                f'src="/web/assets/js/chat-agent-core.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/web/assets/js/fish-settings.js"',
-                f'src="/web/assets/js/fish-settings.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/shared/agent-chat.js"',
-                f'src="/shared/agent-chat.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/shared/i18n.js"',
-                f'src="/shared/i18n.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/shared/dialogue-confirmation.js"',
-                f'src="/shared/dialogue-confirmation.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/shared/source-status.js"',
-                f'src="/shared/source-status.js?v={version}"',
-            )
-            html = html.replace(
-                'src="/shared/director-client.js"',
-                f'src="/shared/director-client.js?v={version}"',
-            )
             return Response(
-                html,
+                _desktop_assets.current().html,
                 media_type="text/html; charset=utf-8",
                 headers={"Cache-Control": "no-store"},
             )
@@ -25344,6 +25287,18 @@ def create_app(
         @app.get("/web/", include_in_schema=False)
         def _desktop_index_slash() -> Response:
             return _desktop_index_response()
+
+        @app.get("/web/index.html", include_in_schema=False)
+        def _desktop_index_file() -> Response:
+            return _desktop_index_response()
+
+        @app.get("/web/assets/desktop-bundle.js", include_in_schema=False)
+        def _desktop_bundle(request: Request, v: str | None = None) -> Response:
+            return _desktop_assets.response(
+                v,
+                accept_encoding=request.headers.get("accept-encoding", ""),
+                if_none_match=request.headers.get("if-none-match", ""),
+            )
 
         app.mount("/web", _StaticFiles(directory=_desktop_dir, html=True), name="desktop-web")
 

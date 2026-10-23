@@ -647,6 +647,8 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 ## 🏛️ Architecture Overview
 
+Desktop scripts: `packaged desktop/shared scripts → DesktopAssets (fixed dependency order, two content versions, precompressed gzip) → one defer request from /web`. Shared sources and original asset paths remain available to mobile and extension surfaces. No Node build, installation, or configuration changes are required. See the [Desktop Web module](docs/modules/desktop-web.md).
+
 Cover display: `UI → pooled API connection → image service (disk originals → bounded rendition cache) → UI`. An unavailable image service falls back to in-process handling.
 
 TikTok covers: `image proxy → DoH public-address validation → pinned IP / original TLS identity → cache`, following the configured network route.

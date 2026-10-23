@@ -914,10 +914,16 @@ class OpenAIProvider(LLMProvider):
         return await self._send_with_retry(self._create_response, **kwargs)
 
     async def _create_chat_completion(self, **kwargs: Any) -> Any:
-        return await self._client.chat.completions.create(**kwargs)
+        # SDK resources are lazy cached properties: the first access imports
+        # openai.resources synchronously, which can stall unrelated HTTP work
+        # during a startup readiness probe. Resolve only that resource off-loop;
+        # the async transport and stream continue on their original event loop.
+        completions = await asyncio.to_thread(lambda: self._client.chat.completions)
+        return await completions.create(**kwargs)
 
     async def _create_response(self, **kwargs: Any) -> Any:
-        return await self._client.responses.create(**kwargs)
+        responses = await asyncio.to_thread(lambda: self._client.responses)
+        return await responses.create(**kwargs)
 
     async def _send_with_retry(self, send: Callable[..., Awaitable[Any]], **kwargs: Any) -> Any:
         """Send a request with bounded retry for transient failures."""
