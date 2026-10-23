@@ -28,8 +28,6 @@ China code mirror: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/Ope
 
 > 🇨🇳 **Mainland China sources**: [Gitee v0.3.231 source](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.231) is synced to the latest mainline. Get installers from the [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.231). [123 Cloud](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3) still holds v0.3.213 files; the latest domestic installer mirror is pending.
 
-Choose **简体中文 / 繁體中文 / English** before initialization: the one-line installer and interactive `openbiliclaw init` ask first; desktop packages offer a picker in the `/setup/` header. For automation, use `openbiliclaw init --language en`. The shared language is saved; historical content stays unchanged, and some legacy CLI and installer messages remain untranslated.
-
 ## OpenBiliClaw in 10 Seconds
 
 A local-first AI discovery agent that learns your taste across Bilibili, Xiaohongshu (RedNote), Douyin, YouTube, TikTok, X, Zhihu, Reddit, Linux.do, Bangumi, V2EX, Weibo, GitHub, Instagram, and the open web — without handing your profile to another platform.

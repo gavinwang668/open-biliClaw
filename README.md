@@ -31,8 +31,6 @@
 
 > 🇨🇳 **国内源**：[Gitee v0.3.231 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.231)已同步至最新主线。安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.231) 获取；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)仍保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。
 
-首次初始化可选择 **简体中文 / 繁體中文 / English**：一键安装器和交互式 `openbiliclaw init` 会先询问，桌面安装包在 `/setup/` 页头选择；自动化使用 `openbiliclaw init --language en`。选择保存为共用语言，历史内容保留原文；部分旧 CLI 和安装日志仍未翻译。
-
 ## 10 秒看懂 OpenBiliClaw
 
 一个纯本地、私有、开源的自进化跨平台内容发现 Agent：从你的跨平台使用、反馈和对话中持续深化心理画像，带着对你的理解主动去 B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram 与开放 Web 找内容。

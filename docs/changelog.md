@@ -29,7 +29,7 @@
 
 - 2026-10-23：CLI 初始化与一键安装器先选择简体 / 繁体 / English，支持 `--language`；修复首次设置语言保存失败无提示、配置预填覆盖用户选择和桌面菜单样式遗漏。共用翻译运行时补动态属性翻译、快速切换竞态和失败目录重试；补语言保存与三语回归，记录历史 CLI / 安装日志 / 后台通知尚未完整本地化的范围。
 
-- README 精简：删除「正式来源：Instagram 与 TikTok」整段（来源说明已在安装步骤与来源表中覆盖），并移除各处 AtomGit 镜像“落后于 v0.3.231”的说明；中英文 README 与 `docs/index.md` 同步，国内源与安装包入口保持不变。
+- README 精简：删除「正式来源：Instagram 与 TikTok」整段（来源说明已在安装步骤与来源表中覆盖），并移除各处 AtomGit 镜像“落后于 v0.3.231”的说明与首启语言选择说明；中英文 README、`docs/index.md` 与站点首页同步，国内源与安装包入口保持不变。
 
 - 修复 `test_sparse_json_landing_e2e` 的全仓红灯：Jev 完整评估合入后新增了 API 热重载重建与 CLI Jev 两条 `ContentDiscoveryEngine` 组装点（均未显式传 `evaluation_candidate_transport`，仍走 sparse-json 默认），该测试里硬编码的组装点数量仍是 4。只更新断言与注释，不改引擎行为。
 
