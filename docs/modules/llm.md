@@ -22,6 +22,7 @@
 |------|------|------|
 | 本地 Ollama GPU → CPU 自动回退 | ✅ | 正式向量请求与诊断共享 endpoint/model 模式；CPU 实际返回有效向量后才确认恢复。 |
 | 2.1 Provider 实现 | ✅ | OpenAI / Claude / Gemini / DeepSeek / Ollama / OpenRouter / OrcaRouter / Requesty / API Route / Cheaper Inference / OpenAI-compatible，带 retry + 超时 |
+| MiniMax-M3.1-Flash 预设 | ✅ | CLI 与 `--llm-preset minimax` 默认 Flash；直连与 OpenRouter 模型发现优先当前文本模型、隐藏历史别名；Flash 自适应推理校验、`reasoning_content` 回放、$0.15 / $0.60（缓存 0.10）计价 |
 | Responses JSON 输入契约（issue #265） | ✅ | 拆分 system 后检查 `input`，缺少 JSON 标记时追加最小 user 指令，避免偏好分析 HTTP 400。 |
 | v0.3.x OrcaRouter Provider 支持 | ✅ | 新增 `OrcaRouterProvider`（OpenAI 兼容协议）：一个 Key 跑 150+ 模型，默认 `openai/gpt-4o`，默认端点 `https://api.orcarouter.ai/v1`；沿用统一超时 / 重试 / 错误归一化 / JSON mode 与 per-call model 覆盖。网关把 `reasoning_effort` 与嵌套 `reasoning` 对象都原样转发给上游路由，非推理模型会以 HTTP 400 拒绝（已对 `openai/gpt-4o` 实测），因此适配器**不发送任何推理参数**，推理模型使用自身默认档位 |
 | v0.3.x Requesty Provider 支持 | ✅ | 新增 `RequestyProvider`（OpenAI 兼容协议）：一个 Key 跑多家模型，默认 `openai/gpt-4o-mini`，默认端点 `https://router.requesty.ai/v1`（欧盟区可改 `https://router.eu.requesty.ai/v1`）；沿用统一超时 / 重试 / 错误归一化 / JSON mode 与 per-call model 覆盖；适配器不发送任何推理参数；`list_models()` 先列出 `GET /models/managed` 的托管策略（失败时只记 WARNING），再合并 `GET /models` 目录。不参与自动排序，只有用户显式配置实例或调用链时才会使用 |
@@ -113,6 +114,38 @@
 和文档 embedding 在 provider 返回空向量时都不写完成缓存；连续失败会触发熔断冷却，防止
 不可达 embedding 端点刷日志或反复出网。`EmbeddingService.l2_cache` /
 `l2_cache_stats()` 把 L2 持久化缓存暴露给诊断与维护面（CLI 清理等），namespace 注册保持一致。
+
+## MiniMax text models
+
+The CLI MiniMax preset and `agent_bootstrap.py --llm-preset minimax` default to
+`MiniMax-M3.1-Flash` at `https://api.minimax.io/v1`. The current text suggestions
+are Flash first, then `MiniMax-M3`; saved legacy and custom model IDs remain usable.
+Direct MiniMax model discovery hides historical text suggestions but leaves
+non-text models intact. OpenRouter discovery prioritizes the advertised
+`minimax/minimax-m3.1-flash` route and `minimax/minimax-m3`; it does not invent
+an unadvertised free variant. (Live catalog check, 2026-10-23: OpenRouter lists
+the paid Flash route only.)
+
+Flash has a 1,000,000-token context and 524,288-token maximum output. Its direct
+list prices per million tokens are $0.15 input, $0.015 cached input, and $0.60
+output. The cost tracker estimates these in CNY using its existing exchange-rate
+convention; custom gateways may charge differently. The OpenRouter Flash route
+carries the same $0.15/$0.60 list price and cache-read rate, so it is estimated
+from that route price rather than the generic OpenRouter fallback. M3 remains
+available with standard input/output pricing of $0.30/$1.20 through 512k and
+$0.60/$2.40 above 512k. The existing M3 estimate remains conservative.
+
+Flash always uses adaptive reasoning. Leave `reasoning_effort` empty for the API
+default or use `low`, `medium`, `high`, `xhigh`, or `max`; `none`, `off`, and
+`disabled` are rejected locally. Flash requests never retry with thinking
+disabled. Tool call IDs, arguments and reasoning history, plus remote and inline
+image content parts, pass through the existing OpenAI-compatible transport.
+`LLMResponse.reasoning_content` carries that thinking text so the agent loop can
+replay it in assistant history; it is never displayed to users.
+The default remains Chat Completions. Explicit `api_flavor = "responses"` uses
+native `/v1/responses` and its `reasoning.effort` field; this adapter's existing
+Responses tool-calling limitation still applies (the service uses prompt simulation).
+Full conversation history remains client-side.
 
 ## 公开 API
 

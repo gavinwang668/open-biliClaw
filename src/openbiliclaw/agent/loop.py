@@ -268,7 +268,7 @@ class AgentLoop:
             if text:
                 yield AgentEvent(type="thinking", step=step, text=text)
 
-            messages.append(self._assistant_message(text, calls))
+            messages.append(self._assistant_message(text, calls, response.reasoning_content))
             for call in calls:
                 summary = _summarize_tool_call(call.name, call.arguments)
                 yield AgentEvent(
@@ -466,8 +466,10 @@ class AgentLoop:
     def _assistant_message(
         text: str,
         calls: list[_NormalizedToolCall],
+        reasoning_content: str = "",
     ) -> dict[str, Any]:
         return {
+            **({"reasoning_content": reasoning_content} if reasoning_content else {}),
             "role": "assistant",
             "content": text,
             "tool_calls": [
