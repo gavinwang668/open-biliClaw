@@ -19,7 +19,7 @@
 
 [项目主页](https://whiteguo233.github.io/OpenBiliClaw/) | [English](README_EN.md) | 中文
 
-国内 AtomGit 源码镜像：[OpenBiliClaw](https://atomgit.com/whiteguo233/OpenBiliClaw)（当前仍落后于 v0.3.231）
+国内 AtomGit 源码镜像：[OpenBiliClaw](https://atomgit.com/whiteguo233/OpenBiliClaw)
 
 </div>
 
@@ -29,16 +29,9 @@
 >
 > 📱 想要原生 App？Flutter 移动端客户端（Android / iOS / Web / 桌面）在独立仓库 [`OpenBiliClaw-mobile`](https://github.com/whiteguo233/OpenBiliClaw-mobile)：推荐、对话、画像、收藏 / 稍后再看 / 30 天历史一应俱全，连接同一本地后端。
 
-> 🇨🇳 **国内源**：[Gitee v0.3.231 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.231)已同步至最新主线；[AtomGit 源码镜像](https://atomgit.com/whiteguo233/OpenBiliClaw)当前仍落后于 v0.3.231。安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.231) 获取；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)仍保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。
+> 🇨🇳 **国内源**：[Gitee v0.3.231 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.231)已同步至最新主线。安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.231) 获取；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)仍保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。
 
 ## 10 秒看懂 OpenBiliClaw
-
-> **正式来源：Instagram 与 TikTok**（v0.3.231 起正式可用），两者默认关闭、需在设置里显式启用；插件默认包含两者的站点访问权限，无需在保存设置时单独授权。
->
-> - **Instagram**（v0.3.227 起提供，v0.3.231 起正式可用）：按话题、创作者发现内容；同一浏览器登录后，可有界只读导入本人近期点赞、收藏和关注来初始化画像。推荐卡收藏仅保存在本地。[连接说明](docs/modules/instagram.md) · [实测范围](docs/platform-source-acceptance.instagram.md)。
-> - **TikTok**（v0.3.229 起提供，v0.3.231 起正式可用）：未登录可发现推荐流、话题和创作者视频，浏览器登录后可关键词搜索。公开发现→真实模型评估→推荐及桌面/手机 Web 展示已有实测。[连接说明](docs/modules/tiktok.md) · [实测范围](docs/platform-source-acceptance.tiktok.md)。
->
-> 已知限制：TikTok 站内收藏暂缓，非空真实账号画像、周期增量与 Firefox 登录态仍在验证（[#295](https://github.com/whiteguo233/OpenBiliClaw/issues/295)）；Instagram 的完整 Likes 历史、双账号、Firefox 登录态与手机真机仍在验证。两者均不宣称全部账号能力已完成验收。
 
 一个纯本地、私有、开源的自进化跨平台内容发现 Agent：从你的跨平台使用、反馈和对话中持续深化心理画像，带着对你的理解主动去 B 站、小红书、抖音、YouTube、TikTok、X、知乎、Reddit、Linux.do、Bangumi、V2EX、微博、GitHub、Instagram 与开放 Web 找内容。
 
@@ -68,7 +61,7 @@ MiniMax 配置预设默认使用 `MiniMax-M3.1-Flash`，并保留 `MiniMax-M3` �
 普通用户只需四步；Firefox、Docker、脚本和手动部署等备用路径都在 [安装与部署详情](#安装与部署详情)。
 
 1. **装插件** —— [Chrome 应用商店一键安装](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)（自动更新），或从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载 zip 手动安装（最新功能先到，商店版可能滞后几天）。
-2. **装后端** —— 从同一个 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载桌面安装包（macOS `.dmg` / Windows `.exe`，开箱即用、常驻菜单栏/托盘）。每个平台有两种安装包:**精简版**(默认,首启自动下载向量模型 bge-m3)与 **`-with-embedding` 完整版**(已内置 bge-m3 ~1.1GB,离线开箱即用)——网络差 / 想离线的选完整版,其余选精简版。**Gitee 源码已同步至 v0.3.231；AtomGit 镜像仍在追赶，最新版安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.231)。123 云盘当前仍是 v0.3.213 历史文件。** 想改源码或深度定制,就把下面这句话粘给 Claude Code / Codex CLI / Cursor 等 AI 编程助手：
+2. **装后端** —— 从同一个 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载桌面安装包（macOS `.dmg` / Windows `.exe`，开箱即用、常驻菜单栏/托盘）。每个平台有两种安装包:**精简版**(默认,首启自动下载向量模型 bge-m3)与 **`-with-embedding` 完整版**(已内置 bge-m3 ~1.1GB,离线开箱即用)——网络差 / 想离线的选完整版,其余选精简版。**Gitee 源码已同步至 v0.3.231，最新版安装包见 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.231)。123 云盘当前仍是 v0.3.213 历史文件。** 想改源码或深度定制,就把下面这句话粘给 Claude Code / Codex CLI / Cursor 等 AI 编程助手：
 
    ```text
    请按照 https://raw.githubusercontent.com/whiteguo233/OpenBiliClaw/main/docs/agent-install.md 的说明帮我部署 OpenBiliClaw 后端(务必用 Bash 的 curl 下载这个文档,不要用 WebFetch — 会丢关键指令)
@@ -327,7 +320,7 @@ npm run package:firefox        # 额外打成未签名 openbiliclaw-extension-v*
 
 到 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 的 `openbiliclaw-v*` 聚合发布页下载对应系统的安装包。这个聚合页会同步展示：
 
-> 🇨🇳 **国内源**：[Gitee v0.3.231 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.231)已同步至最新主线；[AtomGit 源码镜像](https://atomgit.com/whiteguo233/OpenBiliClaw)当前仍落后于 v0.3.231。安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.231) 获取；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)仍保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。
+> 🇨🇳 **国内源**：[Gitee v0.3.231 源码](https://gitee.com/whiteguo233/openbiliclaw/tree/openbiliclaw-v0.3.231)已同步至最新主线。安装包请从 [GitHub Release](https://github.com/whiteguo233/OpenBiliClaw/releases/tag/openbiliclaw-v0.3.231) 获取；[123 云盘](https://4001474255.share.123pan.cn/123pan/IxbZMh-90KO3)仍保留 v0.3.213 历史文件，最新版国内安装包镜像待更新。
 
 - 当前后端源码 tag：`backend-v*`
 - 当前插件 release：`extension-v*`，并附 `openbiliclaw-extension-v*.zip` / `openbiliclaw-extension-v*-firefox.zip`（Firefox 临时调试）；启用 AMO signing 时还会附 `openbiliclaw-extension-v*-firefox.xpi`（Firefox 正式安装）

@@ -4,6 +4,8 @@
 
 ## 未发布：推荐导演与 Jev 完整评估（2026-10-22）
 
+- README 精简：删除「正式来源：Instagram 与 TikTok」整段（来源说明已在安装步骤与来源表中覆盖），并移除各处 AtomGit 镜像“落后于 v0.3.231”的说明；中英文 README 与 `docs/index.md` 同步，国内源与安装包入口保持不变。
+
 - 修复 `test_sparse_json_landing_e2e` 的全仓红灯：Jev 完整评估合入后新增了 API 热重载重建与 CLI Jev 两条 `ContentDiscoveryEngine` 组装点（均未显式传 `evaluation_candidate_transport`，仍走 sparse-json 默认），该测试里硬编码的组装点数量仍是 4。只更新断言与注释，不改引擎行为。
 
 - 整合导演/Jev 历史实现与最新 main，保持 v0.3.231 的来源、聊天流、多语言和配置子进程重载能力；解决 17 个文件冲突。Jev 三端配置/CLI 新文案补齐简体、繁体及英文，移动页保留语言与评估器同次保存，测试沿用严格本机 Host/peer 校验。默认导演仍关闭，不改用户配置，不把代码合入视为官方模型或推荐质量验收；本次不发版或重启日常服务。
