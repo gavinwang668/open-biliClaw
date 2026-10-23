@@ -156,7 +156,7 @@ LLM_PRESETS: dict[str, dict[str, str]] = {
     },
     "minimax": {
         "base_url": "https://api.minimax.io/v1",
-        "model": "MiniMax-M2.7",
+        "model": "MiniMax-M3.1-Flash",
     },
     "qwen": {
         "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -946,7 +946,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "installs don't have to remember each vendor's endpoint. "
             "Implies --provider=openai_compatible. --llm-base-url / --llm-model still "
             "override the preset on a per-field basis. Presets: "
-            "kimi (Moonshot), minimax (M2.7), qwen (DashScope), zhipu (GLM), "
+            "kimi (Moonshot), minimax (M3.1-Flash), qwen (DashScope), zhipu (GLM), "
             "sensenova (商汤日日新, 免费额度), yi (零一万物), self-hosted (vLLM/LMStudio), "
             "relay (中转站/OneAPI), azure (Azure OpenAI), custom (no preset)."
         ),

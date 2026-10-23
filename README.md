@@ -62,6 +62,9 @@
 
 ## 快速开始
 
+MiniMax 配置预设默认使用 `MiniMax-M3.1-Flash`，并保留 `MiniMax-M3` 与已保存的自定义模型。
+推理设置与价格见 [MiniMax text models](docs/modules/llm.md#minimax-text-models)。
+
 普通用户只需四步；Firefox、Docker、脚本和手动部署等备用路径都在 [安装与部署详情](#安装与部署详情)。
 
 1. **装插件** —— [Chrome 应用商店一键安装](https://chromewebstore.google.com/detail/cdfjfkdjjhdaccbldipkjhpibnfbiamg)（自动更新），或从 [Latest Release](https://github.com/whiteguo233/OpenBiliClaw/releases/latest) 下载 zip 手动安装（最新功能先到，商店版可能滞后几天）。

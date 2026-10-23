@@ -2149,8 +2149,8 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
         {
             "label": "MiniMax 官方",
             "description": (
-                "国产代码 / agent 场景的当前 SOTA 之一 (M3: 1M ctx / 图文视频输入),"
-                "便宜 ($0.60 / $2.40 per M),适合做推荐这种结构化输出任务"
+                "MiniMax-M3.1-Flash (1M ctx / 自适应推理),便宜 ($0.15 / $0.60 per M),"
+                "适合做推荐这种结构化输出任务"
             ),
             "signup_url": (
                 "https://platform.minimaxi.com/user-center/basic-information/interface-key "
@@ -2158,11 +2158,10 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
             ),
             "supports_embedding": "false",
             "base_url": "https://api.minimax.io/v1",
-            "default_model": "MiniMax-M3",
+            "default_model": "MiniMax-M3.1-Flash",
             "hint": (
-                "MiniMax-M3 (默认 / 最新 / 5-2026 / 1M ctx) / "
-                "MiniMax-M2.7 / MiniMax-M2.5 / MiniMax-M2.1。"
-                "旧 abab 系列 (abab6.5*) 已被 M 系列替代"
+                "MiniMax-M3.1-Flash (默认 / 最新 / 1M ctx / 自适应推理) / MiniMax-M3。"
+                "旧模型与自定义 ID 仍可用"
             ),
             "domain_alt": (
                 "国内用户改 base_url 为 https://api.minimaxi.com/v1 (旧 .chat 域名将停)"
