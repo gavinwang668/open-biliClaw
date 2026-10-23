@@ -47,6 +47,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | 多进程配置恢复 | ✅（进程级回归） | 完整配置应用后由父 supervisor 替换旧 worker，等待队列结束和旧 owner 退出，固定 active data path，保留候选继续评估与文案入池。 |
 | Instagram 手动补库 | ✅（自动化） | 普通刷新实际调用来源 producer；scheduler 关闭仍可同步评估和生成文案；失败不包装成空跑成功。 |
 | 封面 DNS/IP 安全边界 | ✅（自动化） | 每次抓取/重定向解析全部地址并拒绝非公网；连接固定 IP，保留 CDN 的 Host/TLS 校验；HTTP CONNECT 和 SOCKS5 同样使用数字目的地址。 |
+| 封面默认 TLS 上下文复用 | ✅ | 默认 certifi CA 按进程、trust_env 和证书包文件状态存入最多 4 项 LRU，避免每张冷封面重复解析证书；自定义 SSL_CERT_FILE/SSL_CERT_DIR 保留每次重载。连接和 DNS/IP 验证仍逐 hop 独立。 |
 | Instagram 显式初始化补池 | ✅（自动化） | 本轮来源选择驱动正式 producer；新建/恢复 task 在 kick 前归属当前 init；小批量 flush 后同步生成推荐表达，scheduler 可保持关闭。完整真站验收边界见 Instagram 台账。 |
 | 应用内 Tailnet helper supervisor | ✅ | `[tailnet].enabled=true` 时，`start` / `serve-api` / 冻结桌面入口发现并托管独立 Go `tsnet` helper；节点状态写 `data/tailnet/`，Auth Key 从父环境取出后只经 stdin bootstrap 传入。JSONL 事件脱敏后原子写 `status.json` 并驱动首次浏览器登录 / ready 提示；关闭先 EOF、再有界 terminate/kill。helper 固定反代 `127.0.0.1:<当前入口有效端口>`，显式 `--port` 或桌面 `OPENBILICLAW_PORT` 可覆盖磁盘 `api.port`；远程入口失败不阻止本机 API。构建固定省略 logtail / Web UI，macOS 12 以下只降级此 helper。 |
 | Windows 后台子进程不再弹控制台窗口 | ✅ | 新增 `openbiliclaw/proc.py::no_window_kwargs()`：Windows 下返回 `creationflags=CREATE_NO_WINDOW`，其它平台返回空 dict，可无条件 splat。后端自行发起的全部外部命令都已接入——Reddit 的 `rdt` / `opencli`（含状态探测与每个关键词一条的发现命令）、自动更新的 `git`、`agent-browser` 版本探测与命令、mcporter 灵感检索、SQLite 修复用的 `sqlite3` / `lsof`、托管 ollama 退出用的 `taskkill`。用户在终端主动敲的命令（`openbiliclaw` CLI、`codex login`、dev 用 optimizer）保持原样，它们本来就有自己的控制台且需要交互提示。`tests/test_proc_no_window.py` 用 AST 扫描 `src/` 全量守住这条约定：任何新的 `subprocess.run` / `Popen` / `create_subprocess_exec` 漏掉该 kwarg 即测试失败（`os.name == "nt"` 分支的 else 支路自动豁免）。第三方库自己起的孙进程不在该 flag 覆盖范围内，已知的一处是 rdt-cli 凭据超 TTL 时的 `uv run --with browser-cookie3`，靠 `_RDT_CREDENTIAL_TTL_SECONDS` 比 rdt 阈值提前 6 小时判过期来规避（见 `sources/reddit_tasks.py` 常量注释）。X 的 twitter-cli 与 YouTube 的 yt-dlp 均为进程内库调用，不起子进程。 |
@@ -427,6 +428,8 @@ embedding_progress.reset()
 TikTok 的 curl_cffi 图片传输通过 `network.curl_cffi_proxy_kwargs()` 物化 OS/环境代理，并在 direct/custom 模式覆盖 libcurl 环境继承与 NO_PROXY；每跳仍保留 CONNECT_TO 公网地址固定、原始 Host/SNI 和 TLS 校验。Instagram 继续使用上述共享海外图片传输。
 
 `runtime.image_network.resolve_public_addresses(host, *, proxy=None)` 在每次请求及重定向前进行最长 5 秒 DNS 解析；任何 loopback/private/link-local/reserved/multicast、IPv4 映射或 IPv6 过渡地址都会拒绝，混合公网/内网答案也整体拒绝。仅允许标准 HTTPS 443。`ImageTransport` 使用 HTTPCore 的公开 `AsyncNetworkBackend` 接口固定已验证的数字地址，无第二次目标域名解析，HTTP Host 和 TLS server name 始终为原始 CDN；证书校验不关闭。代理只作为可信传输，CONNECT/SOCKS5 发送数字 IP，代理认证只用于隧道握手。每 hop 重算 CN-direct 或海外 `[network]` direct/system/custom 策略，不能跨域重定向继承错误出口。
+
+TLS 初始化只复用默认 certifi CA 的 `SSLContext`：进程内最多 4 项，以 PID、`trust_env`、证书包路径及设备/inode/大小/mtime/ctime 标识，升级或原地改写证书包后重建，证书包不可读取时沿用 HTTPX 的失败行为。启用 `trust_env` 且配置 `SSL_CERT_FILE` 或 `SSL_CERT_DIR` 时绕过缓存，保留自定义证书和目录内证书的每次重载；CN direct 仍忽略环境 CA。CDN TLS、HTTPS 代理握手与 DoH 复用这项内部优化，不改变公开 API、不缓存 DNS 答案，也不复用逐 hop 的连接池。`certifi` 从 HTTPX 已有的传递依赖提升为显式声明，现有打包清单已包含它，不增加安装步骤。
 
 直连使用本机 DNS；实际选用代理的海外 CDN 通过同一代理向固定、正常 TLS 校验的 `https://1.1.1.1/dns-query` 查询 A/AAAA，避免本机 fake-IP/污染答案破坏数字 IP 隧道。仅发送公开 CDN 域名，不发送账号、Cookie、原 URL path/query 或签名。每响应最多 64 KiB，不跟随重定向，校验 Question/Status/答案后再固定地址；DoH 不可达或答案不安全时 fail closed，不降级为未验证域名 CONNECT。额外 DNS 数据流及 Cloudflare 服务依赖见[隐私政策](../privacy.md)。
 

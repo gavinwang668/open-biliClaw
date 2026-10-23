@@ -577,3 +577,30 @@ def test_early_startup_still_waits_for_login(
     chromium_page.goto(f"{base}/web/")
     expect(chromium_page.locator("#authOverlay")).to_be_visible()
     assert state.recommendation_gets == 0
+
+
+def test_startup_controls_avoid_eager_geometry_and_top_button_still_works(
+    chromium_page: Page, stability_server: tuple[str, StabilityStub]
+) -> None:
+    """Ancillary controls must not force layout during shell construction."""
+    base, _ = stability_server
+    chromium_page.add_init_script(
+        """(() => {
+          window.__eagerTopReads = 0;
+          const original = window.getComputedStyle;
+          window.getComputedStyle = function(...args) {
+            if (new Error().stack.includes('initBackToTop')) window.__eagerTopReads++;
+            return original.apply(this, args);
+          };
+        })();"""
+    )
+    chromium_page.goto(f"{base}/web/")
+    expect(chromium_page.locator("#videoGrid .video-card:not(.is-skeleton)")).to_have_count(
+        CARD_COUNT
+    )
+    assert chromium_page.evaluate("window.__eagerTopReads") == 0
+    chromium_page.evaluate("window.scrollTo(0, 700)")
+    expect(chromium_page.locator("#backToTop")).to_be_visible()
+    chromium_page.locator("#backToTop").click()
+    chromium_page.wait_for_function("window.scrollY < 10")
+    expect(chromium_page.locator("#backToTop")).to_be_hidden()

@@ -235,10 +235,20 @@
         target.scrollTo({ top: 0, behavior });
       };
 
-      document.addEventListener("scroll", sync, true);
-      window.addEventListener("resize", sync, { passive: true });
+      // Batch geometry reads after the shell's writes. Reading computed style
+      // here synchronously forces a full layout before renderAll changes it.
+      let syncFrame = 0;
+      const scheduleSync = () => {
+        if (syncFrame) return;
+        syncFrame = requestAnimationFrame(() => {
+          syncFrame = 0;
+          sync();
+        });
+      };
+      document.addEventListener("scroll", scheduleSync, { capture: true, passive: true });
+      window.addEventListener("resize", scheduleSync, { passive: true });
       button.addEventListener("click", scrollToTop);
-      sync();
+      scheduleSync();
     }
     const grid = $("#videoGrid");
     const sourceFilterDefinitions = [
