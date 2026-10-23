@@ -90,7 +90,7 @@ PYTHONPATH=src python scripts/validate_jev_single_pass.py --live --confirm-free-
 | `tls-proxy enable [--san HOST_OR_IP]...` | 持久开启可选 LAN/self-managed HTTPS 入口 | ✅ |
 | `tls-proxy disable` | 持久关闭 TLS 入口（不删除证书） | ✅ |
 | `tls-proxy status` | 显示开关、端口、证书目录与 SAN | ✅ |
-| `init` | 首次初始化 / `--force` 重新初始化 | ✅ | stage 1 的 B 站收藏事件补上 `bvid` / url / `fav_time`（2026-07-26+）：此前收藏没有身份，进不了 `seen_items`，收藏过的视频会被当新内容推回；历史事件同时补 `content_id` / 完播秒数 / 时长 / 分区，供偏好分析 prompt 与画像抽样权重区分满播与划走；2026-07-27 起 `view` 也参与满意度判定，但**只判正向**：完播 ≥80% 且观看 ≥15 秒 → `positive/finished_watch`，低完播保持 `unknown` 不判负。收藏还会带上播放量 / 发布时间 / 简介（截 200 字，仅入库不进 prompt），并按 `attr` 丢弃失效视频——它们的标题字面是「已失效视频」，占真实样本 6%，原样进画像等于凭空造出一个兴趣。导入前按 `(事件类型, 内容身份, 时间戳)` 跳过账本已有行：重跑 init 曾让账本 56% 变成重复行；键含时间戳让真实重看仍能落地，无身份的行一律保留 |
+| `init [--language locale]` | 首次初始化 / `--force` 重新初始化 | ✅ | stage 1 的 B 站收藏事件补上 `bvid` / url / `fav_time`（2026-07-26+）：此前收藏没有身份，进不了 `seen_items`，收藏过的视频会被当新内容推回；历史事件同时补 `content_id` / 完播秒数 / 时长 / 分区，供偏好分析 prompt 与画像抽样权重区分满播与划走；2026-07-27 起 `view` 也参与满意度判定，但**只判正向**：完播 ≥80% 且观看 ≥15 秒 → `positive/finished_watch`，低完播保持 `unknown` 不判负。收藏还会带上播放量 / 发布时间 / 简介（截 200 字，仅入库不进 prompt），并按 `attr` 丢弃失效视频——它们的标题字面是「已失效视频」，占真实样本 6%，原样进画像等于凭空造出一个兴趣。导入前按 `(事件类型, 内容身份, 时间戳)` 跳过账本已有行：重跑 init 曾让账本 56% 变成重复行；键含时间戳让真实重看仍能落地，无身份的行一律保留 |
 | `fetch-douyin` | 单独触发抖音 bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
 | `fetch-xhs` | 单独触发小红书 bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
 | `fetch-youtube` | 单独触发 YouTube bootstrap 拉取（不重建画像；默认复用近期任务） | ✅ |
@@ -157,6 +157,13 @@ CLI/Agent Bridge 保持兼容但不新增卡片选择 UI，也不伪造 `reply_t
 server-owned binding、context preview 与卡片 action 不改变 CLI 的既有契约。
 
 ## 详细说明
+
+### 初始化语言选择
+
+`openbiliclaw init` 在交互终端首先显示 `简体中文 / 繁體中文 / English`，接受编号或 locale，
+默认当前配置语言；选择写回 `[general].language` 后才检查模型与认证。
+`openbiliclaw init --language zh-Hant` 可跳过提问（接受 `zh-TW`、`en-US` 等别名），非法值退出 2。
+非交互调用未提供该参数时保留当前语言，不读 stdin。语言选择不会翻译所有历史 CLI 提示。
 
 ### `openbiliclaw language`
 

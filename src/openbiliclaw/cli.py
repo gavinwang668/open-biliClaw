@@ -1889,6 +1889,55 @@ def _is_interactive_terminal() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
+def _select_init_language(language: str | None = None) -> None:
+    """Select and persist the init language before provider/auth setup.
+
+    Non-interactive callers keep their config unless --language is explicit.
+    Configuration diagnostics deliberately allow an unconfigured first run.
+    """
+    if language is None and not _is_interactive_terminal():
+        return
+
+    from openbiliclaw.cli_i18n import cli_translator, reset_cli_locale_cache, resolve_cli_locale
+    from openbiliclaw.config import load_config, save_config
+    from openbiliclaw.i18n import SUPPORTED_LOCALES, native_name, resolve_locale
+
+    config = load_config()
+    tr = cli_translator(config)
+    if language is None:
+        console.print("\n[bold]语言 / 語言 / Language[/bold]")
+        for index, locale in enumerate(SUPPORTED_LOCALES, 1):
+            console.print(f"  {index}. {native_name(locale)} ({locale})")
+        default = str(SUPPORTED_LOCALES.index(resolve_cli_locale(config)) + 1)
+        while True:
+            choice = typer.prompt("选择 / 選擇 / Select (1/2/3)", default=default).strip()
+            language = SUPPORTED_LOCALES[int(choice) - 1] if choice in {"1", "2", "3"} else choice
+            if resolve_locale(language) is not None:
+                break
+            console.print(
+                tr(
+                    "cli.language.unsupported",
+                    value=choice,
+                    supported=" / ".join(SUPPORTED_LOCALES),
+                )
+            )
+
+    resolved = resolve_locale(language)
+    if resolved is None:
+        console.print(
+            tr("cli.language.unsupported", value=language, supported=" / ".join(SUPPORTED_LOCALES))
+        )
+        raise typer.Exit(2)
+    config.language = resolved
+    save_config(config)
+    reset_cli_locale_cache()
+    console.print(
+        cli_translator(config)(
+            "cli.language.changed", locale=resolved, native=native_name(resolved)
+        )
+    )
+
+
 def _save_runtime_provider_config(
     provider: str,
     *,
@@ -2149,8 +2198,8 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
         {
             "label": "MiniMax 官方",
             "description": (
-                "国产代码 / agent 场景的当前 SOTA 之一 (M3: 1M ctx / 图文视频输入),"
-                "便宜 ($0.60 / $2.40 per M),适合做推荐这种结构化输出任务"
+                "MiniMax-M3.1-Flash (1M ctx / 自适应推理),便宜 ($0.15 / $0.60 per M),"
+                "适合做推荐这种结构化输出任务"
             ),
             "signup_url": (
                 "https://platform.minimaxi.com/user-center/basic-information/interface-key "
@@ -2158,11 +2207,10 @@ _OPENAI_COMPAT_PRESETS: tuple[tuple[str, dict[str, str]], ...] = (
             ),
             "supports_embedding": "false",
             "base_url": "https://api.minimax.io/v1",
-            "default_model": "MiniMax-M3",
+            "default_model": "MiniMax-M3.1-Flash",
             "hint": (
-                "MiniMax-M3 (默认 / 最新 / 5-2026 / 1M ctx) / "
-                "MiniMax-M2.7 / MiniMax-M2.5 / MiniMax-M2.1。"
-                "旧 abab 系列 (abab6.5*) 已被 M 系列替代"
+                "MiniMax-M3.1-Flash (默认 / 最新 / 1M ctx / 自适应推理) / MiniMax-M3。"
+                "旧模型与自定义 ID 仍可用"
             ),
             "domain_alt": (
                 "国内用户改 base_url 为 https://api.minimaxi.com/v1 (旧 .chat 域名将停)"
@@ -11070,6 +11118,9 @@ async def run_guided_init(
 
 @app.command()
 def init(
+    language: str | None = typer.Option(
+        None, "--language", help="语言 / 語言 / Language: zh-Hans, zh-Hant, en."
+    ),
     no_bilibili: bool = typer.Option(
         False,
         "--no-bilibili",
@@ -11292,6 +11343,7 @@ def init(
 
     已初始化时默认（交互终端）先二次确认，--force 跳过确认并直接按重新初始化执行。
     """
+    _select_init_language(language)
     _prepare_init_runtime()
 
     # Snapshot the highest llm_usage row id seen at start so the

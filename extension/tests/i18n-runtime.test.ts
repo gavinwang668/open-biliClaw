@@ -52,6 +52,7 @@ function fixture(fetchCatalog?: (locale: string) => Promise<Catalog>) {
   const frames: Array<() => void> = [];
   let callback: ((records: unknown[]) => void) | undefined;
   let observed = false;
+  let observedOptions: { attributes?: boolean; attributeFilter?: string[] } | undefined;
   const context = vm.createContext({
     document: {
       documentElement: root,
@@ -65,7 +66,10 @@ function fixture(fetchCatalog?: (locale: string) => Promise<Catalog>) {
     NodeFilter: { SHOW_TEXT: 4, FILTER_REJECT: 2, FILTER_ACCEPT: 1 },
     MutationObserver: class {
       constructor(fn: (records: unknown[]) => void) { callback = fn; }
-      observe() { observed = true; }
+      observe(_root: unknown, options: { attributes?: boolean; attributeFilter?: string[] }) {
+        observed = true;
+        observedOptions = options;
+      }
       disconnect() { observed = false; }
     },
     requestAnimationFrame(fn: () => void) { frames.push(fn); return frames.length; },
@@ -82,7 +86,11 @@ function fixture(fetchCatalog?: (locale: string) => Promise<Catalog>) {
   vm.runInContext(source, context);
   const runtime = context.OpenBiliClawI18n;
   function mutate(records: unknown[]) {
-    if (observed) callback?.(records);
+    if (observed) callback?.(records.filter((record) => {
+      const mutation = record as { type: string; attributeName?: string };
+      return mutation.type !== "attributes" || (observedOptions?.attributes &&
+        observedOptions.attributeFilter?.includes(mutation.attributeName ?? ""));
+    }));
     while (frames.length) frames.shift()!();
   }
   function added(node: DomNode) {
@@ -132,6 +140,18 @@ test("locale round trip restores text and attributes, including dynamically upda
   assert.equal(f.label.getAttribute("title"), "設定");
   await f.runtime.setLocale("zh-Hans");
   assert.equal(f.label.getAttribute("title"), "设置");
+});
+
+test("dynamic attributes translate after identity startup and restore their latest source", async () => {
+  const f = fixture();
+  await f.runtime.init({ locale: "zh-Hans" });
+  await f.runtime.setLocale("en");
+  f.label.setAttribute("title", "停用");
+  f.mutate([{ type: "attributes", target: f.label, attributeName: "title" }]);
+  assert.equal(f.label.getAttribute("title"), "Disabled");
+  await f.runtime.setLocale("zh-Hans");
+  assert.equal(f.label.getAttribute("title"), "停用");
+  assert.deepEqual(f.metrics.requests, ["en"]);
 });
 
 test("source locale restores a translated node detached during the language switch", async () => {

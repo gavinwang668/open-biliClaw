@@ -462,6 +462,8 @@
           record.addedNodes.forEach((node) => {
             if (node.nodeType === Node.ELEMENT_NODE || node.nodeType === Node.TEXT_NODE) roots.push(node);
           });
+        } else if (record.type === "attributes") {
+          roots.push(record.target);
         } else if (record.type === "characterData") {
           roots.push(record.target);
         }
@@ -471,7 +473,9 @@
     state.observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
-      characterData: true
+      characterData: true,
+      attributes: true,
+      attributeFilter: TRANSLATABLE_ATTRS
     });
   }
 

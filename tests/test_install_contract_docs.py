@@ -115,7 +115,10 @@ def test_docker_docs_promote_human_one_line_installer_contract() -> None:
 
     assert "MODE=docker curl -fsSL .../install.sh | bash" in install_sh
     assert "MODE=docker curl -fsSL https://raw.githubusercontent.com" in docker_doc
-    assert "human Docker one-line installer asks the same LLM provider first" in docker_doc
+    assert (
+        "human Docker one-line installer asks language first, then the same LLM provider"
+        in docker_doc
+    )
     assert "http://ollama:11434/v1" in docker_doc
     assert "127.0.0.1:8420/api/bilibili/cookie" in docker_doc
     assert "init` 是 v0.3.20+ 的交互式向导" not in docker_doc
@@ -149,7 +152,7 @@ def test_human_installers_run_full_terminal_wizard_before_init() -> None:
     assert "--interactive-confirm" in install_sh
     assert "--interactive-confirm" in install_ps1
     assert "human_install_choices_set" in bootstrap
-    assert "human one-line installer asks LLM provider first" in agent_doc
+    assert "human one-line installer asks language first, then LLM provider" in agent_doc
     assert "openai_compatible" in bootstrap
     assert "GetPassWarning" in bootstrap
 
