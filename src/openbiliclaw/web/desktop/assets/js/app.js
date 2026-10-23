@@ -10186,7 +10186,9 @@ ${cardFeedbackBarHtml()}`;
         else { syncEditing(); if (password?.focus) password.focus(); }
       });
       saveBtn?.addEventListener("click", () => void apply(true));
-      void load();
+      // Hidden settings must not compete with first-screen requests.
+      // openSettingsPage reloads the authoritative state before editing.
+      checkbox.disabled = true;
       return { reload: load };
     }
 
@@ -10251,7 +10253,9 @@ ${cardFeedbackBarHtml()}`;
         }
       }
       checkbox.addEventListener("change", () => void apply(Boolean(checkbox.checked)));
-      void load();
+      // Hidden settings must not compete with first-screen requests.
+      // openSettingsPage reloads the authoritative state before editing.
+      checkbox.disabled = true;
       return { reload: load };
     }
 
@@ -14107,6 +14111,8 @@ ${cardFeedbackBarHtml()}`;
 
     restoreBackendEndpoint();
     restoreFrontendSettings();
+    // Start authentication before presentation work; hydration still awaits it.
+    void startDesktopBackendSession({ forceHydrate: true });
     {
       const runtime = globalThis.OpenBiliClawI18n;
       if (runtime) {
@@ -14140,5 +14146,4 @@ ${cardFeedbackBarHtml()}`;
     if (["models", "sources", "scheduler", "advanced", "general", "frontend", "logging"].includes(requestedSettingsPanel)) {
       openSettingsPage(requestedSettingsPanel);
     }
-    void startDesktopBackendSession({ forceHydrate: true });
     })();

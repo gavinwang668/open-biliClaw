@@ -544,3 +544,36 @@ def test_auxiliary_hydration_yields_connections_without_gating_cards(
     assert page.evaluate("window.auxProbe.config") == 0
     page.evaluate("window.auxProbe.releases.splice(0).forEach(resolve => resolve())")
     page.wait_for_function("window.auxProbe.config > 0")
+
+
+def test_startup_defers_hidden_settings_reads(
+    chromium_page: Page, stability_server: tuple[str, StabilityStub]
+) -> None:
+    """Startup authenticates once; hidden machine settings load on demand."""
+    base, _ = stability_server
+    requests: list[str] = []
+    chromium_page.on("request", lambda request: requests.append(request.url))
+    chromium_page.goto(f"{base}/web/")
+    expect(chromium_page.locator("#videoGrid .video-card:not(.is-skeleton)")).to_have_count(
+        CARD_COUNT
+    )
+    assert sum(url.endswith("/api/auth/status") for url in requests) == 1
+    assert not any(url.endswith("/api/autostart-status") for url in requests)
+    assert chromium_page.locator("#autostartEnabled").is_disabled()
+    chromium_page.goto(f"{base}/web/?settings=general")
+    expect(chromium_page.locator("#authHint")).to_contain_text("仅本机")
+    assert any(url.endswith("/api/autostart-status") for url in requests)
+
+
+def test_early_startup_still_waits_for_login(
+    chromium_page: Page, stability_server: tuple[str, StabilityStub]
+) -> None:
+    """Moving startup earlier must not bypass the authentication gate."""
+    base, state = stability_server
+    chromium_page.route(
+        "**/api/auth/status",
+        lambda route: route.fulfill(json={"enabled": True, "authenticated": False}),
+    )
+    chromium_page.goto(f"{base}/web/")
+    expect(chromium_page.locator("#authOverlay")).to_be_visible()
+    assert state.recommendation_gets == 0
