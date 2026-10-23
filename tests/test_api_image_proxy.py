@@ -451,7 +451,10 @@ async def test_image_service_forwarding_reuses_client(monkeypatch: pytest.Monkey
                 assert response.content == b"cover"
         assert len(created) == 1
         assert not created[0].is_closed
-        await app.router.shutdown()
+        # FastAPI >= 0.161 (Starlette >= 1.0) dropped ``Router.shutdown()``;
+        # the registered shutdown handlers are the stable surface.
+        for shutdown_handler in app.router.on_shutdown:
+            await shutdown_handler()
         assert created[0].is_closed
         assert app.state.image_service_client is None
     finally:
