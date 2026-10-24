@@ -83,11 +83,12 @@ MiniMax 配置预设默认使用 `MiniMax-M3.1-Flash`，并保留 `MiniMax-M3` �
 不启用 Funnel/Serve，建议同时在本机 Web 设置中开启应用密码（源码安装也可执行
 `openbiliclaw set-password`）。详见[应用内 Tailnet](docs/modules/tailnet.md)。
 
-可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](docs/modules/discovery.md#可选-parallel-grounding)。
+可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](docs/modules/discovery.md#可选-parallel-grounding)。也可加入 `keenable`，见 [Discovery](docs/modules/discovery.md#可选-keenable-grounding)。
 
 ```text
-query inspiration → configured provider chain → optional Parallel Search MCP
-                  ← title / URL / excerpts    ← https://search.parallel.ai/mcp
+query inspiration → configured provider chain
+                  ├ optional Parallel Search MCP ← title / URL / excerpts  ← https://search.parallel.ai/mcp
+                  ├ optional Keenable Search API ← title / URL / snippets  ← https://api.keenable.ai/v1/search/public
                   → keyword grounding (no direct recommendation-pool writes)
 ```
 

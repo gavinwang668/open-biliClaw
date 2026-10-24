@@ -509,6 +509,36 @@ def test_external_search_provider_includes_parallel_backend(
     assert captured["backends"] == ("parallel", "bing_rss")
 
 
+def test_external_search_provider_includes_keenable_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    expected = object()
+
+    def build(backends: object, **kwargs: object) -> object:
+        captured["backends"] = backends
+        captured["keenable_api_key"] = kwargs.get("keenable_api_key")
+        return expected
+
+    monkeypatch.setattr(
+        "openbiliclaw.discovery.inspiration_provider.build_inspiration_search_provider",
+        build,
+    )
+    config = SimpleNamespace(
+        discovery=SimpleNamespace(
+            inspiration_search_enabled=True,
+            inspiration_search_backends=("local_cache", "bing_rss", "keenable"),
+            keenable_api_key="",
+        )
+    )
+
+    provider = build_v2ex_external_search_provider(config)
+
+    assert provider is expected
+    assert captured["backends"] == ("bing_rss", "keenable")
+    assert captured["keenable_api_key"] == ""
+
+
 def test_external_search_provider_is_absent_without_configured_external_backend() -> None:
     config = SimpleNamespace(
         discovery=SimpleNamespace(
