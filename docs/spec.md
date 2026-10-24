@@ -821,11 +821,12 @@ localhost。两个入口互斥，默认 HTTP 不变。
 
 ---
 
-可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](modules/discovery.md#可选-parallel-grounding)。
+可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](modules/discovery.md#可选-parallel-grounding)。也可加入 `keenable`，见 [Discovery](modules/discovery.md#可选-keenable-grounding)。
 
 ```text
-query inspiration → configured provider chain → optional Parallel Search MCP
-                  ← title / URL / excerpts    ← https://search.parallel.ai/mcp
+query inspiration → configured provider chain
+                  ├ optional Parallel Search MCP ← title / URL / excerpts  ← https://search.parallel.ai/mcp
+                  ├ optional Keenable Search API ← title / URL / snippets  ← https://api.keenable.ai/v1/search/public
                   → keyword grounding (no direct recommendation-pool writes)
 ```
 

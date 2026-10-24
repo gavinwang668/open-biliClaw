@@ -77,11 +77,12 @@ this default-off edge is tailnet-private and enables no Funnel/Serve. Enable the
 local Web settings as defense in depth (source installs may also use `openbiliclaw set-password`). See
 [Embedded Tailnet](docs/modules/tailnet.md).
 
-Optional keyword grounding: add `parallel` to `[discovery].inspiration_search_backends`. Existing defaults stay unchanged; see [Discovery](docs/modules/discovery.md#可选-parallel-grounding).
+Optional keyword grounding: add `parallel` to `[discovery].inspiration_search_backends`. Existing defaults stay unchanged; see [Discovery](docs/modules/discovery.md#可选-parallel-grounding). `keenable` can be added the same way; see [Discovery](docs/modules/discovery.md#可选-keenable-grounding).
 
 ```text
-query inspiration → configured provider chain → optional Parallel Search MCP
-                  ← title / URL / excerpts    ← https://search.parallel.ai/mcp
+query inspiration → configured provider chain
+                  ├ optional Parallel Search MCP ← title / URL / excerpts  ← https://search.parallel.ai/mcp
+                  ├ optional Keenable Search API ← title / URL / snippets  ← https://api.keenable.ai/v1/search/public
                   → keyword grounding (no direct recommendation-pool writes)
 ```
 

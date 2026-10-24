@@ -733,10 +733,11 @@ PyInstaller + Ollama/Tailnet/可选模型资源
 
 两个桌面 workflow 共用 `.github/actions/macos-signing`，从 Actions Secrets 临时导入钥匙串，交给 `packaging/build.py`；无运行时 Apple 依赖。详见[打包模块](modules/packaging.md)。
 
-可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](modules/discovery.md#可选-parallel-grounding)。
+可选关键词 grounding：在 `[discovery].inspiration_search_backends` 中加入 `parallel`；默认链不变，见 [Discovery](modules/discovery.md#可选-parallel-grounding)。也可加入 `keenable`，见 [Discovery](modules/discovery.md#可选-keenable-grounding)。
 
 ```text
-query inspiration → configured provider chain → optional Parallel Search MCP
-                  ← title / URL / excerpts    ← https://search.parallel.ai/mcp
+query inspiration → configured provider chain
+                  ├ optional Parallel Search MCP ← title / URL / excerpts  ← https://search.parallel.ai/mcp
+                  ├ optional Keenable Search API ← title / URL / snippets  ← https://api.keenable.ai/v1/search/public
                   → keyword grounding (no direct recommendation-pool writes)
 ```

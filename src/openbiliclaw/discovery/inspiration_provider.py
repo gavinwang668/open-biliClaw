@@ -25,7 +25,7 @@ from openbiliclaw.proc import no_window_kwargs
 def _overseas_routing_kwargs(transport: httpx.AsyncBaseTransport | None) -> dict[str, Any]:
     """Routing kwargs for an overseas search-API ``httpx.AsyncClient``.
 
-    Exa / You.com / Serply are overseas SaaS endpoints, so they follow the
+    Exa / You.com / Serply / Keenable are overseas SaaS endpoints, so they follow the
     process-wide ``[network]`` routing policy (``custom`` passes the explicit
     proxy, ``system`` inherits environment proxies, ``direct`` forces off).
     Hardwiring ``trust_env=False`` here left them direct-connected even when
@@ -528,6 +528,53 @@ class SerplyInspirationProvider:
         )
         response.raise_for_status()
         return parse_serply_search_payload(response.json())[:count]
+
+
+class KeenableInspirationProvider:
+    """Keenable provider implemented through Keenable's direct HTTP search API.
+
+    Works without an account through the public endpoint, which requires an
+    ``X-Keenable-Title`` app name; an optional API key switches to the keyed
+    endpoint and lifts the anonymous rate limit.
+    """
+
+    backend_alias = "keenable"
+    _PUBLIC_URL = "https://api.keenable.ai/v1/search/public"
+    _KEYED_URL = "https://api.keenable.ai/v1/search"
+
+    def __init__(
+        self,
+        *,
+        api_key: str = "",
+        timeout_seconds: float = 6.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._api_key = str(api_key or "").strip()
+        self._timeout_seconds = max(1.0, float(timeout_seconds))
+        self._url = self._KEYED_URL if self._api_key else self._PUBLIC_URL
+        headers = {"X-Keenable-Title": "OpenBiliClaw", "Accept": "application/json"}
+        if self._api_key:
+            headers["X-API-Key"] = self._api_key
+        self._client = httpx.AsyncClient(
+            timeout=self._timeout_seconds,
+            **_overseas_routing_kwargs(transport),
+            headers=headers,
+        )
+
+    def begin_stage(self) -> None:
+        return None
+
+    async def search(self, query: str, *, limit: int) -> list[ExaPreviewItem]:
+        clean_query = str(query or "").strip()
+        count = max(1, min(10, int(limit)))
+        if not clean_query:
+            return []
+        response = await self._client.post(
+            self._url,
+            json={"query": clean_query, "max_results": count},
+        )
+        response.raise_for_status()
+        return parse_keenable_search_payload(response.json())[:count]
 
 
 def _rss_element_text(element: ElementTree.Element | None) -> str:
@@ -1964,6 +2011,7 @@ def build_inspiration_search_provider(
     exa_api_key: str = "",
     you_api_key: str = "",
     serply_api_key: str = "",
+    keenable_api_key: str = "",
 ) -> InspirationSearchProvider | None:
     """Build the configured inspiration search provider chain."""
 
@@ -2031,6 +2079,13 @@ def build_inspiration_search_provider(
                     timeout_seconds=timeout_seconds,
                 )
             )
+        elif backend == "keenable":
+            providers.append(
+                KeenableInspirationProvider(
+                    api_key=keenable_api_key,
+                    timeout_seconds=timeout_seconds,
+                )
+            )
     if not providers:
         return None
     if len(providers) == 1:
@@ -2069,6 +2124,7 @@ def _normalize_search_backends(value: object) -> tuple[str, ...]:
         "you_search": "you",
         "serply": "serply",
         "serply.io": "serply",
+        "keenable": "keenable",
     }
     normalized: list[str] = []
     seen: set[str] = set()
@@ -2208,6 +2264,41 @@ def parse_serply_search_payload(payload: object) -> list[ExaPreviewItem]:
         description = str(item.get("description") or "").strip()
         previews.append(
             ExaPreviewItem(title=title, url=url, highlights=(description,) if description else ())
+        )
+    return previews
+
+
+# Same per-result text budget the Exa direct provider requests through
+# ``contents.text.maxCharacters``; Keenable returns longer snippets uncapped.
+_KEENABLE_SNIPPET_MAX_CHARS = 400
+
+
+def parse_keenable_search_payload(payload: object) -> list[ExaPreviewItem]:
+    """Parse Keenable search JSON output into preview items."""
+
+    if isinstance(payload, str):
+        try:
+            data = json.loads(payload)
+        except (TypeError, ValueError):
+            return []
+    else:
+        data = payload
+    raw_results: object = data.get("results", []) if isinstance(data, dict) else data
+    if not isinstance(raw_results, list):
+        return []
+
+    previews: list[ExaPreviewItem] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        title = _clean_title(item.get("title"))
+        url = str(item.get("url") or "").strip()
+        if not title or not url:
+            continue
+        snippet = _first_text(item.get("snippet"), item.get("description"))
+        snippet = snippet[:_KEENABLE_SNIPPET_MAX_CHARS].rstrip()
+        previews.append(
+            ExaPreviewItem(title=title, url=url, highlights=(snippet,) if snippet else ())
         )
     return previews
 
