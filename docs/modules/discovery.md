@@ -1656,7 +1656,7 @@ TikTok 双轨关键词（merged / inspiration axis）已补专属生成测试；
 
 ### 可选 Keenable grounding
 
-在 `[discovery]` 中设置 `inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "exa", "you", "serply", "keenable"]` 可启用 [Keenable](https://keenable.ai) 搜索 API（文档见 [docs.keenable.ai](https://docs.keenable.ai)）。默认配置不变。未填写 `keenable_api_key` 时直连匿名端点 `POST https://api.keenable.ai/v1/search/public`，固定带 `X-Keenable-Title: OpenBiliClaw` 标识调用方，无需账户、API Key、mcporter 或新增依赖；匿名额度为每 IP 每秒 10 次、每小时 1000 次（取自 Keenable 官方 Rate limits 文档，2026-10 核对；项目侧不额外限流）。填写 `keenable_api_key` 后改用 `POST https://api.keenable.ai/v1/search`（`X-API-Key`），仅提升速率限制。仅把 grounding query 发送到固定端点，不附带画像、Cookie 或本地凭据；沿用 `[network]` 海外出口策略。
+在 `[discovery]` 中设置 `inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "exa", "you", "serply", "keenable"]` 可启用 [Keenable](https://keenable.ai) 搜索 API（文档见 [docs.keenable.ai](https://docs.keenable.ai)）。默认配置不变。未填写 `keenable_api_key` 时直连匿名端点 `POST https://api.keenable.ai/v1/search/public`，固定带 `X-Keenable-Title: OpenBiliClaw` 标识调用方，无需账户、API Key、mcporter 或新增依赖；匿名额度为每 IP 每秒 10 次、每小时 1000 次（取自 Keenable 官方 Rate limits 文档，2026-10 核对；项目侧不额外限流）。填写 `keenable_api_key` 后改用 `POST https://api.keenable.ai/v1/search`（`X-API-Key`），仅提升速率限制；key 被拒（401/403）时该次调用自动退回匿名端点并打 WARNING，其余错误沿用既有 fallback。仅把 grounding query 发送到固定端点，不附带画像、Cookie 或本地凭据；沿用 `[network]` 海外出口策略。
 
 | 已实现功能 | 状态 |
 |---|---|
@@ -1691,3 +1691,11 @@ grounding key，`InspirationGroundingKeys.from_discovery_config(section)` 从 `[
 行为不变：默认链与别名解析结果、未配置 key 时的 mcporter 回退、V2EX 外部召回白名单
 （`local_cache` / `platform_sources` 仍被排除）、Keenable 匿名与 keyed 端点选择均与之前一致；
 V2EX 路径用 `default=()` 调用归一化，缺失或全为未知后端时仍返回 `None`，不会回落到默认链。
+
+### 搜索后端链契约（2026-10-24 起）
+
+`build_inspiration_search_provider()` 无论配置了几个后端都返回 `FallbackInspirationSearchProvider`（链式顺序不变，`providers` 只读视图可查看装配结果）：
+
+- 单后端配置同样获得既有的错误 cooldown、`provider_failures` / `provider_successes` 计数和 `last_search_provider` 归因；此前裸 provider 会让 `grounding_source` 退化成 `"none"`，并在每次 probe 重打同一个失败端点。
+- 单后端时 `pages_per_probe` 固定为 1，单次请求条数与装配前一致；多后端仍按配置的每 probe 页数叠加。
+- 失败语义不变：链上有可用结果就返回，全部失败时把最后一个真实错误抛给调用方，不吞异常。

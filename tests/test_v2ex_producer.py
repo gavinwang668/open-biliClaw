@@ -479,7 +479,8 @@ def test_external_search_provider_includes_keyless_bing_rss_backend(
     provider = build_v2ex_external_search_provider(config)
 
     assert provider is not None
-    assert provider.backend_alias == "bing_rss"
+    (inner,) = provider.providers
+    assert inner.backend_alias == "bing_rss"
 
 
 def test_external_search_provider_includes_parallel_backend(

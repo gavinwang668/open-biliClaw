@@ -529,12 +529,15 @@ class KeenableInspirationProvider:
 
     Works without an account through the public endpoint, which requires an
     ``X-Keenable-Title`` app name; an optional API key switches to the keyed
-    endpoint and lifts the anonymous rate limit.
+    endpoint and lifts the anonymous rate limit. A rejected key degrades to the
+    public endpoint instead of disabling the backend — the key only ever buys
+    quota, so a stale one must not cost the user their grounding.
     """
 
     backend_alias = "keenable"
     _PUBLIC_URL = "https://api.keenable.ai/v1/search/public"
     _KEYED_URL = "https://api.keenable.ai/v1/search"
+    _KEY_REJECTED_STATUSES = frozenset({401, 403})
 
     def __init__(
         self,
@@ -546,13 +549,12 @@ class KeenableInspirationProvider:
         self._api_key = str(api_key or "").strip()
         self._timeout_seconds = max(1.0, float(timeout_seconds))
         self._url = self._KEYED_URL if self._api_key else self._PUBLIC_URL
-        headers = {"X-Keenable-Title": "OpenBiliClaw", "Accept": "application/json"}
-        if self._api_key:
-            headers["X-API-Key"] = self._api_key
+        # The key rides on the keyed request only; keeping it out of the client
+        # defaults lets the anonymous retry go out without it.
         self._client = httpx.AsyncClient(
             timeout=self._timeout_seconds,
             **_overseas_routing_kwargs(transport),
-            headers=headers,
+            headers={"X-Keenable-Title": "OpenBiliClaw", "Accept": "application/json"},
         )
 
     def begin_stage(self) -> None:
@@ -563,10 +565,19 @@ class KeenableInspirationProvider:
         count = max(1, min(10, int(limit)))
         if not clean_query:
             return []
+        payload = {"query": clean_query, "max_results": count}
         response = await self._client.post(
             self._url,
-            json={"query": clean_query, "max_results": count},
+            json=payload,
+            headers={"X-API-Key": self._api_key} if self._api_key else None,
         )
+        if self._api_key and response.status_code in self._KEY_REJECTED_STATUSES:
+            logger.warning(
+                "keenable rejected the configured API key (HTTP %s); "
+                "retrying the anonymous endpoint",
+                response.status_code,
+            )
+            response = await self._client.post(self._PUBLIC_URL, json=payload)
         response.raise_for_status()
         return parse_keenable_search_payload(response.json())[:count]
 
@@ -599,6 +610,12 @@ class BingRssInspirationProvider:
             # the image cache's CN-CDN branch.
             trust_env=False,
             transport=transport,
+            # Bing answers ``www.bing.com`` with a 302 to the regional edge
+            # (``cn.bing.com`` from CN networks). httpx does not follow
+            # redirects by default, so ``raise_for_status()`` turned that hop
+            # into a failure and this key-free fallback produced nothing there
+            # (measured 2026-10-24: 302 → 200 with valid RSS).
+            follow_redirects=True,
             headers={
                 "user-agent": (
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -663,6 +680,12 @@ class FallbackInspirationSearchProvider:
         self._disabled_until: dict[int, float] = {}
         self._ledger = self._new_ledger()
         self.last_search_provider: str | None = None
+
+    @property
+    def providers(self) -> tuple[InspirationSearchProvider, ...]:
+        """Providers in chain order (read-only view for introspection and tests)."""
+
+        return tuple(self._providers)
 
     @staticmethod
     def _new_ledger() -> dict[str, object]:
@@ -2110,7 +2133,13 @@ def build_inspiration_search_provider(
     if not providers:
         return None
     if len(providers) == 1:
-        return providers[0]
+        # Keep the wrapper even for a lone backend: it owns the error cooldown
+        # and the ``last_search_provider`` attribution the inspiration pipeline
+        # reads into ``grounding_source``. A bare provider silently reported
+        # ``grounding_source="none"`` and re-hit a failing endpoint on every
+        # probe. ``pages_per_probe`` stays at its default 1 so the request size
+        # for single-backend configs is unchanged.
+        return FallbackInspirationSearchProvider(providers)
     return FallbackInspirationSearchProvider(providers, pages_per_probe=pages_per_probe)
 
 
