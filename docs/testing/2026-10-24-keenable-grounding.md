@@ -1,5 +1,8 @@
 # Keenable grounding 验收（2026-10-24）
 
+> **2026-10-24 后续**：Keenable grounding 已收敛为**纯匿名免费模式** —— `[discovery].keenable_api_key` 与 `/v1/search`（`X-API-Key`）分支已移除，`KeenableInspirationProvider` 只请求 `/v1/search/public`。本文中 keyed 端点与 key 回退相关的验证仅作历史记录。
+
+
 范围：可选 `keenable` query inspiration grounding 后端（`[discovery].inspiration_search_backends` 显式加入 `keenable` 才启用）。默认链不变，插件 / 桌面 Web / 移动 Web / CLI 均复用同一后端配置，不新增设置控件。
 
 ## 接口契约（真实匿名端点）

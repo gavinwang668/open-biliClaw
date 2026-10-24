@@ -1,5 +1,8 @@
 # inspiration grounding fallback 修复验收（2026-10-24）
 
+> **2026-10-24 后续**：Keenable grounding 已收敛为**纯匿名免费模式** —— `[discovery].keenable_api_key` 与 `/v1/search`（`X-API-Key`）分支已移除，`KeenableInspirationProvider` 只请求 `/v1/search/public`。本文中 keyed 端点与 key 回退相关的验证仅作历史记录。
+
+
 范围：`src/openbiliclaw/discovery/inspiration_provider.py` 的三个修复——`bing_rss` 302 区域跳转、Keenable key 被拒回退匿名端点、单后端配置也装配 fallback。
 
 ## 真实请求验证
