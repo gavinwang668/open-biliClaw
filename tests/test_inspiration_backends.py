@@ -14,6 +14,7 @@ from openbiliclaw.discovery.inspiration_backends import (
 )
 from openbiliclaw.discovery.inspiration_provider import (
     ExaInspirationProvider,
+    FallbackInspirationSearchProvider,
     InspirationGroundingKeys,
     build_inspiration_search_provider,
 )
@@ -92,7 +93,9 @@ def test_builder_uses_bundled_exa_key_instead_of_mcporter(
         ["exa"], grounding_keys=InspirationGroundingKeys(exa="test-exa-key")
     )
 
-    assert isinstance(provider, ExaInspirationProvider)
+    assert isinstance(provider, FallbackInspirationSearchProvider)
+    (inner,) = provider.providers
+    assert isinstance(inner, ExaInspirationProvider)
 
 
 def test_builder_without_bundled_key_stays_on_the_mcporter_free_path(
