@@ -4,6 +4,8 @@
 
 ## 未发布：推荐导演与 Jev 完整评估（2026-10-22）
 
+- query inspiration 新增可选 `keenable` grounding 后端：`KeenableInspirationProvider` 直连 Keenable 搜索 API 获取标题、URL 与摘要，默认走匿名 `/v1/search/public`；新增可选 `[discovery].keenable_api_key`，填写后改走 `/v1/search` 以提升速率限制。默认后端顺序不变，沿用现有网络策略、限时和失败回退；V2EX 正式 search 的外部召回白名单同步接纳 `keenable`。验证见 [Keenable grounding 验收](testing/2026-10-24-keenable-grounding.md)。
+
 - 修复 main CI 在最新依赖上的红灯：FastAPI 0.161 / Starlette 1.x 移除了 `Router.shutdown()`，`test_api_image_proxy` 改为逐个调用 `app.router.on_shutdown` 注册的处理器；断言与生产代码不变。
 
 - 整合扫码登录、配置保存状态、聊天/插件布局与多轮首屏性能修复，兼容最新 main 的初始化语言选择、动态属性翻译与 MiniMax 路由。共享 i18n 保留简体启动快速路径、目录请求合并/重试及最后选择生效，补合并后的属性翻译回归；合入验证见[首屏验收记录](verification/2026-10-23-first-screen-live-ab.md#主线整合验证2026-10-23)。
