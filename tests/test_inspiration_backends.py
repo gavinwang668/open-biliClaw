@@ -70,12 +70,13 @@ def test_grounding_keys_read_discovery_section() -> None:
         exa_api_key=" exa ",
         you_api_key="you",
         serply_api_key="",
-        keenable_api_key="keen",
+        keenable_api_key="stale-key",
     )
 
     keys = InspirationGroundingKeys.from_discovery_config(discovery)
 
-    assert keys == InspirationGroundingKeys(exa=" exa ", you="you", serply="", keenable="keen")
+    # Keenable is anonymous-only, so a leftover key must not travel with the bundle.
+    assert keys == InspirationGroundingKeys(exa=" exa ", you="you", serply="")
 
 
 def test_grounding_keys_default_to_empty_for_missing_fields() -> None:

@@ -9,7 +9,11 @@ import httpx
 import pytest
 
 from openbiliclaw import network
-from openbiliclaw.config import Config, DiscoveryConfig, load_config, save_config
+from openbiliclaw.config import (
+    DiscoveryConfig,
+    load_config,
+    load_config_with_diagnostics,
+)
 from openbiliclaw.discovery.inspiration import ExaPreviewItem
 from openbiliclaw.discovery.inspiration_provider import (
     FallbackInspirationSearchProvider,
@@ -92,35 +96,18 @@ async def test_config_factory_keyless_search(
     ]
 
 
-async def test_api_key_uses_keyed_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == "https://api.keenable.ai/v1/search"
-        assert request.headers["x-api-key"] == "test-keenable-key"
-        assert request.headers["x-keenable-title"] == "OpenBiliClaw"
-        assert json.loads(request.content) == {"query": "query", "max_results": 10}
-        return httpx.Response(200, json={"results": []})
-
-    _route_through(monkeypatch, handler)
-    provider = build_inspiration_search_provider(
-        ["keenable"], grounding_keys=InspirationGroundingKeys(keenable="  test-keenable-key  ")
-    )
-    assert isinstance(provider, FallbackInspirationSearchProvider)
-    assert [inner.backend_alias for inner in provider.providers] == ["keenable"]
-
-    assert await provider.search("query", limit=25) == []
-
-
-def test_api_key_round_trips_through_save_load(tmp_path: Path) -> None:
+def test_removed_api_key_field_surfaces_a_notice_instead_of_silently_dropping(
+    tmp_path: Path,
+) -> None:
     config_path = tmp_path / "config.toml"
-    config = Config()
-    config.discovery.keenable_api_key = "test-keenable-key"
+    config_path.write_text('[discovery]\nkeenable_api_key = "stale-key"\n')
 
-    save_config(config, config_path)
+    config, diagnostics = load_config_with_diagnostics(config_path, consult_environment=False)
 
-    assert 'keenable_api_key = "test-keenable-key"' in config_path.read_text(encoding="utf-8")
-    loaded = load_config(config_path, consult_environment=False)
-    assert loaded.discovery.keenable_api_key == "test-keenable-key"
-    assert "keenable" not in loaded.discovery.inspiration_search_backends
+    assert not hasattr(config.discovery, "keenable_api_key")
+    assert any(issue.field == "discovery.keenable_api_key" for issue in diagnostics.issues), [
+        issue.field for issue in diagnostics.issues
+    ]
 
 
 def test_parse_keenable_search_payload_caps_snippets() -> None:
@@ -185,63 +172,6 @@ async def test_blank_query_does_not_request() -> None:
     provider = KeenableInspirationProvider(transport=httpx.MockTransport(handler))
 
     assert await provider.search(" ", limit=3) == []
-
-
-async def test_rejected_api_key_degrades_to_anonymous_endpoint(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    calls: list[tuple[str, str | None]] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append((str(request.url), request.headers.get("x-api-key")))
-        if str(request.url) == "https://api.keenable.ai/v1/search":
-            return httpx.Response(401, json={"error": "Missing authentication"})
-        return httpx.Response(
-            200,
-            json={
-                "results": [
-                    {"title": "Anonymous", "url": "https://example.test/a", "snippet": "ok"}
-                ]
-            },
-        )
-
-    _route_through(monkeypatch, handler)
-    provider = build_inspiration_search_provider(
-        ["keenable"], grounding_keys=InspirationGroundingKeys(keenable="stale-key")
-    )
-    assert isinstance(provider, FallbackInspirationSearchProvider)
-
-    items = await provider.search("query", limit=2)
-
-    assert calls == [
-        ("https://api.keenable.ai/v1/search", "stale-key"),
-        ("https://api.keenable.ai/v1/search/public", None),
-    ]
-    assert items == [
-        ExaPreviewItem(title="Anonymous", url="https://example.test/a", highlights=("ok",))
-    ]
-    assert any("rejected the configured API key" in record.message for record in caplog.records)
-    assert provider.last_search_provider == "keenable"
-
-
-async def test_keyed_server_error_is_not_retried_anonymously(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        calls.append(str(request.url))
-        return httpx.Response(500)
-
-    _route_through(monkeypatch, handler)
-    provider = build_inspiration_search_provider(
-        ["keenable"], grounding_keys=InspirationGroundingKeys(keenable="key")
-    )
-
-    with pytest.raises(httpx.HTTPStatusError):
-        await provider.search("query", limit=1)
-
-    assert calls == ["https://api.keenable.ai/v1/search"]
 
 
 async def test_single_backend_failure_cools_down_before_retrying(

@@ -1656,13 +1656,13 @@ TikTok 双轨关键词（merged / inspiration axis）已补专属生成测试；
 
 ### 可选 Keenable grounding
 
-在 `[discovery]` 中设置 `inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "exa", "you", "serply", "keenable"]` 可启用 [Keenable](https://keenable.ai) 搜索 API（文档见 [docs.keenable.ai](https://docs.keenable.ai)）。默认配置不变。未填写 `keenable_api_key` 时直连匿名端点 `POST https://api.keenable.ai/v1/search/public`，固定带 `X-Keenable-Title: OpenBiliClaw` 标识调用方，无需账户、API Key、mcporter 或新增依赖；匿名额度为每 IP 每秒 10 次、每小时 1000 次（取自 Keenable 官方 Rate limits 文档，2026-10 核对；项目侧不额外限流）。填写 `keenable_api_key` 后改用 `POST https://api.keenable.ai/v1/search`（`X-API-Key`），仅提升速率限制；key 被拒（401/403）时该次调用自动退回匿名端点并打 WARNING，其余错误沿用既有 fallback。仅把 grounding query 发送到固定端点，不附带画像、Cookie 或本地凭据；沿用 `[network]` 海外出口策略。
+在 `[discovery]` 中设置 `inspiration_search_backends = ["local_cache", "platform_sources", "bing_rss", "exa", "you", "serply", "keenable"]` 可启用 [Keenable](https://keenable.ai) 搜索 API（文档见 [docs.keenable.ai](https://docs.keenable.ai)）。默认配置不变。该后端**只有匿名免费模式**：直连 `POST https://api.keenable.ai/v1/search/public`，固定带 `X-Keenable-Title: OpenBiliClaw` 标识调用方，无需账户、API Key、mcporter 或新增依赖；匿名额度为每 IP 每秒 10 次、每小时 1000 次（取自 Keenable 官方 Rate limits 文档，2026-10 核对；项目侧不额外限流）。项目有意不保留 keyed 分支：API Key 只提升速率限制，而关键词灵感每轮只有十几次请求，免费额度足够，少一条付费路径就少一处要维护的凭据与失败模式。仅把 grounding query 发送到固定端点，不附带画像、Cookie 或本地凭据；沿用 `[network]` 海外出口策略。
 
 | 已实现功能 | 状态 |
 |---|---|
 | 可选 Keenable 标题 / URL / 摘要 grounding（匿名或 API Key），既有 fallback 与 cooldown | ✅ |
 
-公开 API：`KeenableInspirationProvider(api_key="", timeout_seconds=6.0, transport=None)` 实现 `begin_stage()` 和 `search(query, *, limit)`；由 `build_inspiration_search_provider(..., grounding_keys=InspirationGroundingKeys(keenable=...))` 按 `keenable` 名称装配，6 s 请求超时落在上层 8 s 绝对期限之内。`parse_keenable_search_payload()` 读取 `results[].title / url / snippet`（`snippet` 为空时回退 `description`），摘要截断到 400 字符，与 Exa 直连请求的 `maxCharacters` 一致。HTTP 错误、限流或空结果进入已有后备链。摘要只作为关键词灵感证据，不直接写推荐池；本变更不增加聊天工具或页面抓取接口。V2EX 正式 search 的外部召回白名单同样接纳 `keenable`。
+公开 API：`KeenableInspirationProvider(timeout_seconds=6.0, transport=None)` 实现 `begin_stage()` 和 `search(query, *, limit)`；由 `build_inspiration_search_provider()` 按 `keenable` 名称装配（不需要任何 key），6 s 请求超时落在上层 8 s 绝对期限之内。`parse_keenable_search_payload()` 读取 `results[].title / url / snippet`（`snippet` 为空时回退 `description`），摘要截断到 400 字符，与 Exa 直连请求的 `maxCharacters` 一致。HTTP 错误、限流或空结果进入已有后备链。摘要只作为关键词灵感证据，不直接写推荐池；本变更不增加聊天工具或页面抓取接口。V2EX 正式 search 的外部召回白名单同样接纳 `keenable`。
 
 该配置可由现有配置文件 / CLI `config-show` 使用，后端共享行为覆盖插件、桌面 Web 和移动 Web 的发现流程；不新增各端设置控件。
 
@@ -1682,10 +1682,10 @@ TikTok 双轨关键词（merged / inspiration axis）已补专属生成测试；
 `src/openbiliclaw/discovery/inspiration_backends.py` 维护，`config` 复用同一默认链（该模块是
 只依赖标准库的叶子模块，不产生导入环）。
 
-公开 API：`InspirationGroundingKeys(exa="", you="", serply="", keenable="")` 打包四个可选
+公开 API：`InspirationGroundingKeys(exa="", you="", serply="")` 打包三个可选
 grounding key，`InspirationGroundingKeys.from_discovery_config(section)` 从 `[discovery]`
 读取（缺失字段取空串）。`build_inspiration_search_provider(..., grounding_keys=...)` 取代
-原先的 `exa_api_key / you_api_key / serply_api_key / keenable_api_key` 四个关键字参数；
+原先的 `exa_api_key / you_api_key / serply_api_key` 三个关键字参数；
 新增 grounding 后端只需在词表与键包各加一处，不必再改三个调用点。
 
 行为不变：默认链与别名解析结果、未配置 key 时的 mcporter 回退、V2EX 外部召回白名单

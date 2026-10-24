@@ -525,32 +525,24 @@ class SerplyInspirationProvider:
 
 
 class KeenableInspirationProvider:
-    """Keenable provider implemented through Keenable's direct HTTP search API.
+    """Keenable provider implemented through Keenable's public search API.
 
-    Works without an account through the public endpoint, which requires an
-    ``X-Keenable-Title`` app name; an optional API key switches to the keyed
-    endpoint and lifts the anonymous rate limit. A rejected key degrades to the
-    public endpoint instead of disabling the backend — the key only ever buys
-    quota, so a stale one must not cost the user their grounding.
+    Anonymous-only by project decision: Keenable's free public endpoint needs no
+    account or API key, only the ``X-Keenable-Title`` app identifier. There is
+    deliberately no keyed path — the key only ever bought a higher rate limit,
+    and keeping a second, paid branch around was surface without value.
     """
 
     backend_alias = "keenable"
     _PUBLIC_URL = "https://api.keenable.ai/v1/search/public"
-    _KEYED_URL = "https://api.keenable.ai/v1/search"
-    _KEY_REJECTED_STATUSES = frozenset({401, 403})
 
     def __init__(
         self,
         *,
-        api_key: str = "",
         timeout_seconds: float = 6.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        self._api_key = str(api_key or "").strip()
         self._timeout_seconds = max(1.0, float(timeout_seconds))
-        self._url = self._KEYED_URL if self._api_key else self._PUBLIC_URL
-        # The key rides on the keyed request only; keeping it out of the client
-        # defaults lets the anonymous retry go out without it.
         self._client = httpx.AsyncClient(
             timeout=self._timeout_seconds,
             **_overseas_routing_kwargs(transport),
@@ -565,19 +557,10 @@ class KeenableInspirationProvider:
         count = max(1, min(10, int(limit)))
         if not clean_query:
             return []
-        payload = {"query": clean_query, "max_results": count}
         response = await self._client.post(
-            self._url,
-            json=payload,
-            headers={"X-API-Key": self._api_key} if self._api_key else None,
+            self._PUBLIC_URL,
+            json={"query": clean_query, "max_results": count},
         )
-        if self._api_key and response.status_code in self._KEY_REJECTED_STATUSES:
-            logger.warning(
-                "keenable rejected the configured API key (HTTP %s); "
-                "retrying the anonymous endpoint",
-                response.status_code,
-            )
-            response = await self._client.post(self._PUBLIC_URL, json=payload)
         response.raise_for_status()
         return parse_keenable_search_payload(response.json())[:count]
 
@@ -2027,11 +2010,14 @@ class InspirationGroundingKeys:
     exa: str = ""
     you: str = ""
     serply: str = ""
-    keenable: str = ""
 
     @classmethod
     def from_discovery_config(cls, discovery: object) -> InspirationGroundingKeys:
-        """Read the optional keys off a ``[discovery]`` config section."""
+        """Read the optional keys off a ``[discovery]`` config section.
+
+        Keenable is intentionally absent: its grounding backend only uses the
+        free anonymous endpoint, so there is no key to carry.
+        """
 
         def _key(name: str) -> str:
             return str(getattr(discovery, name, "") or "")
@@ -2040,7 +2026,6 @@ class InspirationGroundingKeys:
             exa=_key("exa_api_key"),
             you=_key("you_api_key"),
             serply=_key("serply_api_key"),
-            keenable=_key("keenable_api_key"),
         )
 
 
@@ -2124,12 +2109,7 @@ def build_inspiration_search_provider(
                 )
             )
         elif backend == "keenable":
-            providers.append(
-                KeenableInspirationProvider(
-                    api_key=keys.keenable,
-                    timeout_seconds=timeout_seconds,
-                )
-            )
+            providers.append(KeenableInspirationProvider(timeout_seconds=timeout_seconds))
     if not providers:
         return None
     if len(providers) == 1:

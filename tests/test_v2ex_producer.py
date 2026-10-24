@@ -529,7 +529,6 @@ def test_external_search_provider_includes_keenable_backend(
         discovery=SimpleNamespace(
             inspiration_search_enabled=True,
             inspiration_search_backends=("local_cache", "bing_rss", "keenable"),
-            keenable_api_key="",
         )
     )
 
@@ -537,8 +536,6 @@ def test_external_search_provider_includes_keenable_backend(
 
     assert provider is expected
     assert captured["backends"] == ("bing_rss", "keenable")
-    keys = captured["grounding_keys"]
-    assert getattr(keys, "keenable", None) == ""
 
 
 def test_external_search_provider_is_absent_without_configured_external_backend() -> None:
