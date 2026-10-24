@@ -20,6 +20,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
+from openbiliclaw.discovery.inspiration_backends import (
+    DEFAULT_INSPIRATION_SEARCH_BACKENDS,
+    normalize_inspiration_search_backends,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -174,14 +179,9 @@ _DEFAULT_INSPIRATION_SEARCH_RESULTS_PER_QUERY = 5
 _DEFAULT_INSPIRATION_MAX_SEEDS_PER_ASPECT = 3
 _DEFAULT_INSPIRATION_MAX_KEYWORDS_PER_PLATFORM = 12
 _DEFAULT_INSPIRATION_BREADTH = "high"
-_DEFAULT_INSPIRATION_SEARCH_BACKENDS: tuple[str, ...] = (
-    "local_cache",
-    "platform_sources",
-    "bing_rss",
-    "exa",
-    "you",
-    "serply",
-)
+# Shared with `discovery.inspiration_provider` so the default chain and the alias
+# table live in one place — see `openbiliclaw/discovery/inspiration_backends.py`.
+_DEFAULT_INSPIRATION_SEARCH_BACKENDS: tuple[str, ...] = DEFAULT_INSPIRATION_SEARCH_BACKENDS
 _DEFAULT_ADMISSION_MIN_SCORE = 0.60
 _DEFAULT_CANDIDATE_EVAL_CONCURRENCY = 3
 _MIN_ADMISSION_MIN_SCORE = 0.50
@@ -4072,42 +4072,9 @@ def normalize_github_source_config(
 
 
 def _normalize_inspiration_search_backends(value: object) -> tuple[str, ...]:
-    """Normalize inspiration search backend names for the mcporter provider chain."""
+    """Normalize inspiration search backend names onto the shared canonical set."""
 
-    raw_values = (
-        list(_DEFAULT_INSPIRATION_SEARCH_BACKENDS) if value is None else _coerce_str_list(value)
-    )
-    aliases = {
-        "bing": "bing_rss",
-        "bing_rss": "bing_rss",
-        "bing-rss": "bing_rss",
-        "exa": "exa",
-        "parallel": "parallel",
-        "local": "local_cache",
-        "cache": "local_cache",
-        "local_cache": "local_cache",
-        "local-cache": "local_cache",
-        "platform-source": "platform_sources",
-        "platform_sources": "platform_sources",
-        "platform": "platform_sources",
-        "you": "you",
-        "you.com": "you",
-        "youcom": "you",
-        "you-search": "you",
-        "you_search": "you",
-        "serply": "serply",
-        "serply.io": "serply",
-        "keenable": "keenable",
-    }
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw in raw_values:
-        backend = aliases.get(raw.strip().lower())
-        if backend is None or backend in seen:
-            continue
-        normalized.append(backend)
-        seen.add(backend)
-    return tuple(normalized or _DEFAULT_INSPIRATION_SEARCH_BACKENDS)
+    return normalize_inspiration_search_backends(value)
 
 
 # Single source of truth: every env var ``_build_api_auth`` honors for

@@ -13,6 +13,7 @@ from openbiliclaw.config import Config, DiscoveryConfig, load_config, save_confi
 from openbiliclaw.discovery.inspiration import ExaPreviewItem
 from openbiliclaw.discovery.inspiration_provider import (
     FallbackInspirationSearchProvider,
+    InspirationGroundingKeys,
     KeenableInspirationProvider,
     build_inspiration_search_provider,
     parse_keenable_search_payload,
@@ -72,7 +73,7 @@ async def test_config_factory_keyless_search(
     observed = _route_through(monkeypatch, handler)
     provider = build_inspiration_search_provider(
         config.discovery.inspiration_search_backends,
-        keenable_api_key=config.discovery.keenable_api_key,
+        grounding_keys=InspirationGroundingKeys.from_discovery_config(config.discovery),
     )
     assert isinstance(provider, KeenableInspirationProvider)
     assert observed == [{"trust_env": False}]
@@ -99,7 +100,7 @@ async def test_api_key_uses_keyed_endpoint(monkeypatch: pytest.MonkeyPatch) -> N
 
     _route_through(monkeypatch, handler)
     provider = build_inspiration_search_provider(
-        ["keenable"], keenable_api_key="  test-keenable-key  "
+        ["keenable"], grounding_keys=InspirationGroundingKeys(keenable="  test-keenable-key  ")
     )
     assert isinstance(provider, KeenableInspirationProvider)
 

@@ -2115,6 +2115,7 @@ class RuntimeContext:
         if bool(getattr(discovery_cfg, "inspiration_search_enabled", False)):
             from openbiliclaw.config import derive_inspiration_breadth_params
             from openbiliclaw.discovery.inspiration_provider import (
+                InspirationGroundingKeys,
                 build_inspiration_search_provider,
                 build_platform_source_backends,
             )
@@ -2125,10 +2126,7 @@ class RuntimeContext:
             inspiration_provider = build_inspiration_search_provider(
                 getattr(discovery_cfg, "inspiration_search_backends", None),
                 database=self.database,
-                exa_api_key=str(getattr(discovery_cfg, "exa_api_key", "") or ""),
-                you_api_key=str(getattr(discovery_cfg, "you_api_key", "") or ""),
-                serply_api_key=str(getattr(discovery_cfg, "serply_api_key", "") or ""),
-                keenable_api_key=str(getattr(discovery_cfg, "keenable_api_key", "") or ""),
+                grounding_keys=InspirationGroundingKeys.from_discovery_config(discovery_cfg),
                 platform_backends=build_platform_source_backends(
                     new_config,
                     database=self.database,
