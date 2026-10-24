@@ -4,6 +4,8 @@
 
 ## 未发布：推荐导演与 Jev 完整评估（2026-10-22）
 
+- 收敛 query inspiration 后端的默认链、别名表与 V2EX 外部召回白名单到 `discovery/inspiration_backends.py`，四个 grounding key 改由 `InspirationGroundingKeys` 打包传递；默认链、别名解析、未配置 key 时的 mcporter 回退与 V2EX 召回行为不变。
+
 - query inspiration 新增可选 `keenable` grounding 后端：`KeenableInspirationProvider` 直连 Keenable 搜索 API 获取标题、URL 与摘要，默认走匿名 `/v1/search/public`；新增可选 `[discovery].keenable_api_key`，填写后改走 `/v1/search` 以提升速率限制。默认后端顺序不变，沿用现有网络策略、限时和失败回退；V2EX 正式 search 的外部召回白名单同步接纳 `keenable`。验证见 [Keenable grounding 验收](testing/2026-10-24-keenable-grounding.md)。
 
 - 修复 main CI 在最新依赖上的红灯：FastAPI 0.161 / Starlette 1.x 移除了 `Router.shutdown()`，`test_api_image_proxy` 改为逐个调用 `app.router.on_shutdown` 注册的处理器；断言与生产代码不变。

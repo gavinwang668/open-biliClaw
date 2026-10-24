@@ -1662,6 +1662,32 @@ TikTok 双轨关键词（merged / inspiration axis）已补专属生成测试；
 |---|---|
 | 可选 Keenable 标题 / URL / 摘要 grounding（匿名或 API Key），既有 fallback 与 cooldown | ✅ |
 
-公开 API：`KeenableInspirationProvider(api_key="", timeout_seconds=6.0, transport=None)` 实现 `begin_stage()` 和 `search(query, *, limit)`；由 `build_inspiration_search_provider(..., keenable_api_key=...)` 按 `keenable` 名称装配，6 s 请求超时落在上层 8 s 绝对期限之内。`parse_keenable_search_payload()` 读取 `results[].title / url / snippet`（`snippet` 为空时回退 `description`），摘要截断到 400 字符，与 Exa 直连请求的 `maxCharacters` 一致。HTTP 错误、限流或空结果进入已有后备链。摘要只作为关键词灵感证据，不直接写推荐池；本变更不增加聊天工具或页面抓取接口。V2EX 正式 search 的外部召回白名单同样接纳 `keenable`。
+公开 API：`KeenableInspirationProvider(api_key="", timeout_seconds=6.0, transport=None)` 实现 `begin_stage()` 和 `search(query, *, limit)`；由 `build_inspiration_search_provider(..., grounding_keys=InspirationGroundingKeys(keenable=...))` 按 `keenable` 名称装配，6 s 请求超时落在上层 8 s 绝对期限之内。`parse_keenable_search_payload()` 读取 `results[].title / url / snippet`（`snippet` 为空时回退 `description`），摘要截断到 400 字符，与 Exa 直连请求的 `maxCharacters` 一致。HTTP 错误、限流或空结果进入已有后备链。摘要只作为关键词灵感证据，不直接写推荐池；本变更不增加聊天工具或页面抓取接口。V2EX 正式 search 的外部召回白名单同样接纳 `keenable`。
 
 该配置可由现有配置文件 / CLI `config-show` 使用，后端共享行为覆盖插件、桌面 Web 和移动 Web 的发现流程；不新增各端设置控件。
+
+### 后端词表与 grounding key 打包（2026-10-24）
+
+| 已实现功能 | 状态 |
+|---|---|
+| 默认链、别名表、外部召回白名单收敛到 `discovery/inspiration_backends.py` 单一来源 | ✅ |
+| 四个 grounding API key 由 `InspirationGroundingKeys` 打包，装配调用点不再逐个透传 | ✅ |
+
+关键字灵感后端原先在 `config._normalize_inspiration_search_backends()` 与
+`inspiration_provider._normalize_search_backends()` 各存一份默认链与别名表，V2EX 外部召回
+又硬编码第三份白名单；四个 `*_api_key` 也在 CLI、API 运行时和 V2EX producer 三处重复取键。
+现在默认链 `DEFAULT_INSPIRATION_SEARCH_BACKENDS`、别名表
+`INSPIRATION_SEARCH_BACKEND_ALIASES`、外部召回集合 `EXTERNAL_INSPIRATION_SEARCH_BACKENDS`
+与新函数 `normalize_inspiration_search_backends(value, *, default=...)` 只在
+`src/openbiliclaw/discovery/inspiration_backends.py` 维护，`config` 复用同一默认链（该模块是
+只依赖标准库的叶子模块，不产生导入环）。
+
+公开 API：`InspirationGroundingKeys(exa="", you="", serply="", keenable="")` 打包四个可选
+grounding key，`InspirationGroundingKeys.from_discovery_config(section)` 从 `[discovery]`
+读取（缺失字段取空串）。`build_inspiration_search_provider(..., grounding_keys=...)` 取代
+原先的 `exa_api_key / you_api_key / serply_api_key / keenable_api_key` 四个关键字参数；
+新增 grounding 后端只需在词表与键包各加一处，不必再改三个调用点。
+
+行为不变：默认链与别名解析结果、未配置 key 时的 mcporter 回退、V2EX 外部召回白名单
+（`local_cache` / `platform_sources` 仍被排除）、Keenable 匿名与 keyed 端点选择均与之前一致；
+V2EX 路径用 `default=()` 调用归一化，缺失或全为未知后端时仍返回 `None`，不会回落到默认链。

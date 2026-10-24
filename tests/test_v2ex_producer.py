@@ -517,7 +517,7 @@ def test_external_search_provider_includes_keenable_backend(
 
     def build(backends: object, **kwargs: object) -> object:
         captured["backends"] = backends
-        captured["keenable_api_key"] = kwargs.get("keenable_api_key")
+        captured["grounding_keys"] = kwargs.get("grounding_keys")
         return expected
 
     monkeypatch.setattr(
@@ -536,7 +536,8 @@ def test_external_search_provider_includes_keenable_backend(
 
     assert provider is expected
     assert captured["backends"] == ("bing_rss", "keenable")
-    assert captured["keenable_api_key"] == ""
+    keys = captured["grounding_keys"]
+    assert getattr(keys, "keenable", None) == ""
 
 
 def test_external_search_provider_is_absent_without_configured_external_backend() -> None:

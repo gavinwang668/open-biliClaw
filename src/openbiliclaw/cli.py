@@ -15140,6 +15140,7 @@ def keyword_inspiration_dry_run(
     from openbiliclaw.config import derive_inspiration_breadth_params, load_config
     from openbiliclaw.discovery.douyin import split_csv_values
     from openbiliclaw.discovery.inspiration_provider import (
+        InspirationGroundingKeys,
         build_inspiration_search_provider,
         build_platform_source_backends,
     )
@@ -15265,10 +15266,7 @@ def keyword_inspiration_dry_run(
                 inspiration_provider=build_inspiration_search_provider(
                     getattr(config.discovery, "inspiration_search_backends", None),
                     database=database,
-                    exa_api_key=str(getattr(config.discovery, "exa_api_key", "") or ""),
-                    you_api_key=str(getattr(config.discovery, "you_api_key", "") or ""),
-                    serply_api_key=str(getattr(config.discovery, "serply_api_key", "") or ""),
-                    keenable_api_key=str(getattr(config.discovery, "keenable_api_key", "") or ""),
+                    grounding_keys=InspirationGroundingKeys.from_discovery_config(config.discovery),
                     platform_backends=build_platform_source_backends(
                         config,
                         database=database,

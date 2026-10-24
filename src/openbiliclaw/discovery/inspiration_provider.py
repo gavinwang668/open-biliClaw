@@ -19,6 +19,9 @@ from xml.etree import ElementTree
 import httpx
 
 from openbiliclaw.discovery.inspiration import ExaPreviewItem
+from openbiliclaw.discovery.inspiration_backends import (
+    normalize_inspiration_search_backends,
+)
 from openbiliclaw.proc import no_window_kwargs
 
 
@@ -42,15 +45,6 @@ def _overseas_routing_kwargs(transport: httpx.AsyncBaseTransport | None) -> dict
 
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_SEARCH_BACKENDS: tuple[str, ...] = (
-    "local_cache",
-    "platform_sources",
-    "bing_rss",
-    "exa",
-    "you",
-    "serply",
-)
 
 
 def _ledger_int(value: object) -> int:
@@ -1998,6 +1992,35 @@ def build_platform_source_backends(
     return backends
 
 
+@dataclass(frozen=True)
+class InspirationGroundingKeys:
+    """API keys for the optional external grounding backends.
+
+    The four keys always travel together from ``[discovery]`` through CLI / API
+    runtime setup into :func:`build_inspiration_search_provider`. Bundling them
+    keeps a new grounding backend from editing every call site.
+    """
+
+    exa: str = ""
+    you: str = ""
+    serply: str = ""
+    keenable: str = ""
+
+    @classmethod
+    def from_discovery_config(cls, discovery: object) -> InspirationGroundingKeys:
+        """Read the optional keys off a ``[discovery]`` config section."""
+
+        def _key(name: str) -> str:
+            return str(getattr(discovery, name, "") or "")
+
+        return cls(
+            exa=_key("exa_api_key"),
+            you=_key("you_api_key"),
+            serply=_key("serply_api_key"),
+            keenable=_key("keenable_api_key"),
+        )
+
+
 def build_inspiration_search_provider(
     backends: object = None,
     *,
@@ -2008,15 +2031,13 @@ def build_inspiration_search_provider(
     platforms_per_probe: int = 2,
     riskcontrolled_probe_budget: int = 4,
     pages_per_probe: int = 1,
-    exa_api_key: str = "",
-    you_api_key: str = "",
-    serply_api_key: str = "",
-    keenable_api_key: str = "",
+    grounding_keys: InspirationGroundingKeys | None = None,
 ) -> InspirationSearchProvider | None:
     """Build the configured inspiration search provider chain."""
 
+    keys = grounding_keys or InspirationGroundingKeys()
     providers: list[InspirationSearchProvider] = []
-    for backend in _normalize_search_backends(backends):
+    for backend in normalize_inspiration_search_backends(backends):
         if backend == "local_cache":
             if database is not None:
                 providers.append(LocalInspirationProvider(database))
@@ -2039,10 +2060,10 @@ def build_inspiration_search_provider(
         elif backend == "parallel":
             providers.append(ParallelInspirationProvider(timeout_seconds=timeout_seconds))
         elif backend == "exa":
-            if str(exa_api_key or "").strip():
+            if str(keys.exa or "").strip():
                 providers.append(
                     ExaInspirationProvider(
-                        api_key=exa_api_key,
+                        api_key=keys.exa,
                         timeout_seconds=timeout_seconds,
                     )
                 )
@@ -2056,10 +2077,10 @@ def build_inspiration_search_provider(
             else:
                 _warn_mcporter_missing_once("exa")
         elif backend == "you":
-            if str(you_api_key or "").strip():
+            if str(keys.you or "").strip():
                 providers.append(
                     YouInspirationProvider(
-                        api_key=you_api_key,
+                        api_key=keys.you,
                         timeout_seconds=timeout_seconds,
                     )
                 )
@@ -2072,17 +2093,17 @@ def build_inspiration_search_provider(
                 )
             else:
                 _warn_mcporter_missing_once("you")
-        elif backend == "serply" and str(serply_api_key or "").strip():
+        elif backend == "serply" and str(keys.serply or "").strip():
             providers.append(
                 SerplyInspirationProvider(
-                    api_key=serply_api_key,
+                    api_key=keys.serply,
                     timeout_seconds=timeout_seconds,
                 )
             )
         elif backend == "keenable":
             providers.append(
                 KeenableInspirationProvider(
-                    api_key=keenable_api_key,
+                    api_key=keys.keenable,
                     timeout_seconds=timeout_seconds,
                 )
             )
@@ -2091,50 +2112,6 @@ def build_inspiration_search_provider(
     if len(providers) == 1:
         return providers[0]
     return FallbackInspirationSearchProvider(providers, pages_per_probe=pages_per_probe)
-
-
-def _normalize_search_backends(value: object) -> tuple[str, ...]:
-    raw_values: list[str]
-    if value is None:
-        raw_values = list(_DEFAULT_SEARCH_BACKENDS)
-    elif isinstance(value, str):
-        raw_values = [item.strip() for item in value.split(",") if item.strip()]
-    elif isinstance(value, (list, tuple)):
-        raw_values = [str(item).strip() for item in value if str(item).strip()]
-    else:
-        raw_values = []
-
-    aliases = {
-        "bing": "bing_rss",
-        "bing_rss": "bing_rss",
-        "bing-rss": "bing_rss",
-        "exa": "exa",
-        "parallel": "parallel",
-        "local": "local_cache",
-        "cache": "local_cache",
-        "local_cache": "local_cache",
-        "local-cache": "local_cache",
-        "platform_sources": "platform_sources",
-        "platform-source": "platform_sources",
-        "platform": "platform_sources",
-        "you": "you",
-        "you.com": "you",
-        "youcom": "you",
-        "you-search": "you",
-        "you_search": "you",
-        "serply": "serply",
-        "serply.io": "serply",
-        "keenable": "keenable",
-    }
-    normalized: list[str] = []
-    seen: set[str] = set()
-    for raw in raw_values:
-        backend = aliases.get(raw.strip().lower())
-        if backend is None or backend in seen:
-            continue
-        normalized.append(backend)
-        seen.add(backend)
-    return tuple(normalized or _DEFAULT_SEARCH_BACKENDS)
 
 
 def _mcporter_cli_missing() -> bool:
