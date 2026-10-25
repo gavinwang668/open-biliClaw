@@ -13,6 +13,11 @@ runtime-stream clients → API PresenceTracker (connect/disconnect; 20s heartbea
                       → atomic data/runtime/extension_presence.json (60s active lease)
                       → full/discovery worker presence gate → browser task queues
 
+Douyin confirmed discovery failures → dy_tasks-derived retry_at (15/30m exponential; cap 6h)
+                                   → producer pre-keyword-claim / client / pending-task gates
+Douyin native search stream → original Response returned immediately to page
+                            → bounded clone JSON frames → partial ACK / failed → dy_tasks
+
 config save → safe API handoff → committed generation (wait for settings queue)
             → parent supervisor → stop old children → reload workers / recommendation / images
                                 └ retain parent's locked data path; durable candidates resume

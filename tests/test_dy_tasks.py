@@ -26,6 +26,52 @@ def database(tmp_path: Path) -> Database:
     return db
 
 
+def test_discovery_failure_holds_queued_discovery_but_not_explicit_bootstrap(
+    database: Database,
+) -> None:
+    queue = DyTaskQueue(database)
+    failed = queue.enqueue_with_id("hot", {"hot_items": [{"sentence_id": "one"}]})
+    pending = queue.enqueue_with_id("search", {"keywords": ["next"]})
+    bootstrap = queue.enqueue_with_id("bootstrap_profile", {"scopes": ["dy_like"]})
+    assert queue.next_pending()["id"] == failed
+    queue.fail(failed, error="api_rate_limited")
+
+    assert queue.next_pending()["id"] == bootstrap
+    assert queue.get(pending)["status"] == "pending"
+
+
+def test_claimed_discovery_failure_blocks_new_tasks_across_database_instances(
+    database: Database,
+) -> None:
+    queue = DyTaskQueue(database)
+    failed = queue.enqueue_with_id("hot", {"hot_items": [{"sentence_id": "one"}]})
+    assert queue.next_pending()["id"] == failed
+    queue.fail(failed, error="api_timeout")
+    reader = Database(database._db_path)
+    reader.initialize()
+    try:
+        with pytest.raises(RuntimeError, match="cooldown"):
+            DyTaskQueue(reader).enqueue_with_id("feed", {"max_items": 10})
+    finally:
+        reader.close()
+
+
+def test_discovery_can_resume_after_the_durable_cooldown_expires(database: Database) -> None:
+    queue = DyTaskQueue(database)
+    failed = queue.enqueue_with_id("hot", {"hot_items": [{"sentence_id": "one"}]})
+    assert queue.next_pending()["id"] == failed
+    queue.fail(failed, error="api_rate_limited")
+    assert queue.discovery_retry_at() is not None
+    # Fixture time travel only: do not wait thirty minutes in the unit suite.
+    database.conn.execute(
+        "UPDATE dy_tasks SET completed_at = datetime('now', '-7 hours') WHERE id = ?", (failed,)
+    )
+    database.conn.commit()
+    assert queue.discovery_retry_at() is None
+    resumed = queue.enqueue_with_id("feed", {"max_items": 6})
+    assert queue.next_pending()["id"] == resumed
+
+
 def test_dy_bootstrap_videos_to_events_maps_scopes_to_event_types() -> None:
     """Each Douyin scope maps to its canonical event_type."""
     events = dy_bootstrap_videos_to_events(

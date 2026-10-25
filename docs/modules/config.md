@@ -1705,3 +1705,13 @@ Agent search_web 使用既有 `[network]` 出站策略连接固定公开 Exa MCP
 TikTok 封面的 DoH 查询和固定地址下载遵循 `[network]` 路由，system 模式会把系统代理传给 libcurl；不存在额外 Cookie 或模型配置。该安全路径依赖 `cloudflare-dns.com` 可达，失败时不降级到未验证 DNS。
 
 TikTok 账号初始化等待默认 480 秒（`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT_SECONDS`），独立于默认关闭的周期增量间隔。scope 预算在后端与插件两层累计限制为最多 300，不信任回调声明的 scope_counts。
+
+
+## 抖音发现节流补充（issue #332）
+
+本轮无新增配置字段。`[sources.douyin]` 的 `daily_*_budget`、成功轮次最小间隔和原模型路由保持。
+`min_interval_minutes=0` 只关闭该成功 cadence，不绕过已领取发现任务失败后的共享冷却。
+基础失败 15 分钟，明确限流 / 验证信号 30 分钟，连续失败指数增加、上限 6 小时；
+这是本地保守退避，不是抖音官方承诺的安全阈值。共用 `DouyinPluginSearchClient` / `DyTaskQueue`
+的正式发现、inspiration 和 direct fallback 路径遵守同一冷却，新进程也会读取；
+正式 producer 在领取关键词之前暂停。显式 bootstrap / 验证与发现策略分开，独立 direct client 不是这道门控的网络防火墙。

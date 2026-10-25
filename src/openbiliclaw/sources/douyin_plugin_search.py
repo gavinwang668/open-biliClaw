@@ -186,12 +186,15 @@ class DouyinPluginSearchClient:
         if not keyword or limit <= 0:
             self.last_search_outcome = "empty"
             return []
+        if self._discovery_is_cooling():
+            self.last_search_outcome = "failed"
+            return []
 
         plugin_items = await self._search_via_plugin(keyword, limit=max(1, limit))
         if plugin_items:
             return plugin_items[:limit]
 
-        if self._allow_direct_fallback:
+        if self._allow_direct_fallback and not self._discovery_is_cooling():
             logger.info("douyin plugin search empty; falling back to direct-cookie search")
             fallback_items = await self._direct_client.search_aweme(keyword, limit=limit)
             self.last_search_outcome = "used" if fallback_items else "empty"
@@ -204,6 +207,9 @@ class DouyinPluginSearchClient:
         if limit <= 0:
             self.last_hot_outcome = "empty"
             return []
+        if self._discovery_is_cooling():
+            self.last_hot_outcome = "failed"
+            return []
 
         hot_terms = await self._load_hot_terms(limit=_HOT_SEED_POOL_LIMIT)
         # Prioritize actionable seeds across the whole board before truncating
@@ -214,7 +220,7 @@ class DouyinPluginSearchClient:
         if plugin_items:
             return plugin_items[:limit]
 
-        if self._allow_direct_fallback:
+        if self._allow_direct_fallback and not self._discovery_is_cooling():
             logger.info("douyin plugin hot empty; falling back to direct-cookie hot")
             fallback_items = await self._direct_client.get_hot_board(limit=limit)
             self.last_hot_outcome = "used" if fallback_items else "empty"
@@ -236,13 +242,16 @@ class DouyinPluginSearchClient:
         if limit <= 0:
             self.last_feed_outcome = "empty"
             return []
+        if self._discovery_is_cooling():
+            self.last_feed_outcome = "failed"
+            return []
 
         plugin_items = await self._feed_via_plugin(limit=max(1, limit))
         if plugin_items:
             return plugin_items[:limit]
 
         fallback = getattr(self._direct_client, "get_recommend_feed", None)
-        if self._allow_direct_fallback and callable(fallback):
+        if self._allow_direct_fallback and callable(fallback) and not self._discovery_is_cooling():
             logger.info("douyin plugin feed empty; falling back to direct-cookie feed")
             typed_fallback = cast(
                 "Callable[..., Awaitable[list[dict[str, object]]]]",
@@ -253,6 +262,13 @@ class DouyinPluginSearchClient:
             return fallback_items
         logger.info("douyin plugin feed empty; direct-cookie fallback disabled")
         return []
+
+    def _discovery_is_cooling(self) -> bool:
+        retry_at = DyTaskQueue(self._database).discovery_retry_at()
+        if retry_at is None:
+            return False
+        logger.info("douyin discovery paused until %s after browser failure", retry_at.isoformat())
+        return True
 
     async def _search_via_plugin(self, keyword: str, *, limit: int) -> list[dict[str, object]]:
         try:

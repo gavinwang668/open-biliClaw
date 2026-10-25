@@ -23,6 +23,7 @@ import {
   isDouyinSearchResultUrl,
   isSameWindowSameOriginDouyinMessage,
   isValidFeedExecuteMessage,
+  isValidHotExecuteMessage,
   isValidSearchExecuteMessage,
   isValidScopeExecuteMessage,
   resolveHotSeedAwemeId,
@@ -30,6 +31,53 @@ import {
   shouldReplayEarlyDiscoveryItems,
   waitForCurrentVideoAwemeId,
 } from "../src/content/douyin.ts";
+
+test("hot navigation resumes collection without resubmitting the board word", async () => {
+  await runHot({
+    task_id: "hot-navigation", sentence_id: "sentence", word: "热点", max_items: 12,
+    resume_after_navigation: true,
+  }, {
+    search: async input => {
+      assert.equal(input.resume_after_navigation, true);
+      return { task_id: input.task_id, keyword: input.keyword, items: [], scope_count: 0, status: "empty" };
+    },
+    related: async () => { throw new Error("word search must not use related"); },
+  });
+});
+
+test("the observed verification page stops hot collection before any upstream collector", async t => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
+  Object.defineProperty(globalThis, "document", { configurable: true, value: { title: "验证码中间页" } });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, "document", previous);
+    else Reflect.deleteProperty(globalThis, "document");
+  });
+  let upstreamCalls = 0;
+  const result = await runHot({ task_id: "challenge", sentence_id: "one", word: "热点", max_items: 12 }, {
+    search: async input => {
+      upstreamCalls += 1;
+      return { task_id: input.task_id, keyword: input.keyword, items: [], scope_count: 0, status: "empty" };
+    },
+    related: async () => { throw new Error("must stop before related too"); },
+  });
+  assert.equal(upstreamCalls, 0);
+  assert.equal(result.status, "failed");
+  assert.equal(result.error, "captcha_required");
+});
+
+test("positive partial videos cannot hide an explicit rate-limit response", () => {
+  assert.deepEqual(classifyDouyinDiscoveryCompletion({
+    source: "search", itemCount: 2, apiError: "HTTP 429",
+    uiTriggered: true, searchNavigationOk: true,
+  }), { status: "failed", error: "api_rate_limited" });
+});
+
+test("hot execution rejects a malformed navigation resume flag", () => {
+  assert.equal(isValidHotExecuteMessage({
+    task_id: "hot-navigation", sentence_id: "sentence", word: "热点", max_items: 12,
+    resume_after_navigation: "true",
+  }), false);
+});
 
 for (const status of ["ok", "failed"] as const) {
   test(`hot-board words use the native search collector and preserve ${status}`, async () => {
@@ -136,14 +184,14 @@ test("passive discovery buffer replays early items with dedupe, TTL, and a hard 
   assert.deepEqual(buffer.drain("dy_feed"), { items: [], responsesObserved: 0 });
 });
 
-test("discovery completion keeps harvested items successful", () => {
+test("discovery completion keeps harvested items despite local capture failures", () => {
   assert.deepEqual(
     classifyDouyinDiscoveryCompletion({
       source: "search",
       itemCount: 1,
       injectStatus: "error: injection failed after DOM rendered",
       fetchTapInstallStatus: "unknown",
-      apiError: "HTTP 429",
+      apiError: "timeout",
       uiTriggered: false,
       searchNavigationOk: false,
     }),

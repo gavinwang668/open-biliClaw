@@ -643,6 +643,8 @@ The whole loop stays local — the agent host just calls the CLI bridge; your pr
 
 Extension presence: `runtime-stream → API atomic heartbeat → data/runtime/extension_presence.json → full/discovery worker → browser task queues`. Idle connections renew every 20 seconds; active leases expire after 60 seconds, while normal disconnects retain their configured grace. See the [Runtime module](docs/modules/runtime.md#presencetracker).
 
+Douyin discovery backoff: `claimed task failure → durable dy_tasks cooldown → producer before keyword claim / client / pending-claim gates`. Native search streams reach the page immediately while a bounded clone is parsed frame by frame. Valid partial items retain the failure; paths sharing the discovery client and task queue respect the cooldown across restarts and direct fallback.
+
 Desktop scripts: `packaged desktop/shared scripts → DesktopAssets (fixed dependency order, two content versions, precompressed gzip) → one defer request from /web`. Shared sources and original asset paths remain available to mobile and extension surfaces. No Node build, installation, or configuration changes are required. See the [Desktop Web module](docs/modules/desktop-web.md).
 
 Cover display: `UI → pooled API connection → image service (disk originals → bounded rendition cache) → UI`. An unavailable image service falls back to in-process handling.

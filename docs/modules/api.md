@@ -1,5 +1,15 @@
 # 后端 API
 
+## 抖音发现冷却与失败回传（issue #332）
+
+| 行为 | 状态 | 说明 |
+|---|---|---|
+| 新发现任务领取暂停 | ✅ | 共享 `dy_tasks` 冷却生效时，`GET /api/sources/dy/next-task` 不领取 pending search / hot / feed；没有其它合格任务时仍返回 204。原已领取 lease / staged 修复和显式 bootstrap 按原协议处理。 |
+| 有效 partial 后失败 | ✅ | 扩展先 POST partial 并等 2xx，再 POST failed；新采集的视频因此能与错误一起保留。直接在 failed body 放 videos 不代替 partial 协议。 |
+
+公开路径与响应字段未变；冷却时刻由 `DyTaskQueue.discovery_retry_at()` 读取，并在客户端日志显示。
+不能把已连接、来源 ready 或 204 当作本轮上游取数成功，也不能把冷却当作登录凭据失效。
+
 ## 扩展在线心跳跨进程共享（issue #332）
 
 | 接口 | 状态 | 契约 |

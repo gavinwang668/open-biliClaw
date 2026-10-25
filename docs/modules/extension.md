@@ -68,7 +68,7 @@ side panel 的推荐页支持后端 `jev_recurrent`、`agent_jev`、`agent_only`
 
 | 子模块 | 状态 | 说明 |
 |------|------|------|
-| 抖音热榜种子与等待预算 | ✅ | 有热词时复用原生搜索采集；仅无词兼容分支在未成功点击时使用 board seed、跳过首页 DOM，并按实际经过时间结束 route wait。已安装修复版取得真实热词候选；后续单词 API 超时仍保留 partial 和失败诊断。 |
+| 抖音热榜种子与等待预算 | ✅ | 有热词时复用原生搜索采集；仅无词兼容分支在未成功点击时使用 board seed、跳过首页 DOM，并按实际经过时间结束 route wait。流式解析修复后，本机真实双词任务返回 12 条并 completed；失败仍保留 partial 和诊断。 |
 | TikTok / Instagram 默认站点权限 | ✅ | Chrome、Firefox、Safari 清单默认声明 `*://*.tiktok.com/*` 与 `https://*.instagram.com/*`；保存 Instagram 设置不再请求/撤销站点权限。来源启用与账号登录仍独立控制；此项不提升各浏览器的来源功能验收结论。 |
 | Instagram 有界采集与竞争恢复 | ✅ | 非空 Likes 连续 3 次无新增返回 `progress_stalled` partial；限速等待后才启动 20 秒请求超时，bootstrap idle 根据间隔有界调整为 90–185 秒，12 分钟绝对期限不变。跨源锁竞争另建 30 秒 durable alarm，领取前仍须持锁与站点权限。 |
 | 聊一聊会话隔离与流结束校验 | ✅ | popup / 移动 Web 仅在 `done` 后确认流完成；迟到历史与消息按会话隔离，恢复沿用原 turn 的角色；popup 网络断连保持 agent 轮询，仅明确 503 降级旧聊天 |
@@ -543,6 +543,24 @@ search / creator 任务的 note 路由与被动采集共用 `NOTE_ANCHOR_SELECTO
 | bootstrap_profile 任务 | `src/content/xhs/task-executor.ts:executeBootstrapTaskInPage` | 既有路径不变,debug 里仍嵌 `xhs_bootstrap.steps[*].self_info` 兼容老后端 |
 
 后端 v0.3.57 的 `_extract_self_info_from_payload` 优先读顶层 `self_info`,fallback 到旧的 nested 位置,**新旧扩展+新旧后端的四种组合都不破**(老扩展配老后端不动;新扩展配老后端会 500——升级窗口期短暂)。这把"用户自己发的笔记进推荐池"问题(屎屎/自家165㎡大五房等)从 race condition 治成确定性过滤。
+
+### 抖音流式发现与有界执行（#332 续修）
+
+| 功能 | 状态 | 说明 |
+|---|---|---|
+| 原生流式响应不阻塞网页 | ✅ | `/general/search/stream/` 的原 `Response` 立即返回网页；只在 clone 上按完整 JSON 帧增量解析，支持跨 chunk 的 UTF-8、字符串转义与嵌套括号。观察副本最多 4 MiB / 60 秒，不等待 EOF、不取消网页原请求。 |
+| 多热词导航与剩余额度 | ✅ | 初次 ready 和词间不再重复加载首页；真实 document navigation 发送 resume-only 消息，同文档 execution key 去重。下一词只请求总额度剩余量。 |
+| 发现失败保持和停止 | ✅ | 已取得有效视频时不为填满 cap 再重放 API；搜索 UI / 路由失败不补 API。观察到 `验证码中间页` 即 `captcha_required`，明确限流优先于已有条数；新 partial 先取得后端 ACK，再 failed，不继续下一词。 |
+
+`DY_HOT_EXECUTE` 新增可选布尔 `resume_after_navigation`，沿 `runHot()` 透传给原生搜索 collector；
+新文档只采集当前结果，不再次提交热词。`isValidHotExecuteMessage()` 拒绝非布尔值。
+搜索 / 热榜共用带 source、tab、当前词与 generation 校验的导航观察器，恢复 MV3 任务时重新安装；
+结果一到达即使当前 generation 失效，先于 partial ACK 等待，过时注入回调不能重复提交当前词或推进下一词。
+调试结果新增 `requested_max_items`，并保留 `search_navigation_resumes`。
+
+主动搜索 API 兜底保持单一主端点，真实空、非零业务状态或 `hit_shark` 不再换接口试探。
+后页失败回传前页 items 与明确 error；429 不再被正向条数掩盖。流式观察失败仅影响副本，
+不向网页抛异常或修改其请求、响应和登录状态。旧无 word 的 seed-related 兼容入口保持。
 
 ### 抖音任务桥
 

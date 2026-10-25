@@ -24,6 +24,7 @@
 
 ## 🛠️ 我是开发者 / 贡献者
 
+- [#332 抖音多热词流式发现与失败退避验收](verification/2026-10-25-douyin-discovery-resilience.md) — 真实双词热榜 12 条、普通搜索 6 条、跨进程冷却、静音与官方资料边界；与原模型正向卡证据分开记录。
 - [项目规格说明书 (SPEC)](spec.md) — 完整的项目设计与规划
 - [架构设计](architecture.md) — 系统架构与模块关系
 - [多语言（i18n）](modules/i18n.md) — 简体 / 繁體 / English 的 locale 契约、UI 目录、模型输出语言与新增语言清单

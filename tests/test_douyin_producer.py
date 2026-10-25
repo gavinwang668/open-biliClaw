@@ -59,6 +59,74 @@ class _FakeCandidatePipeline:
         return {"evaluated": batch_size, "cached": 2, "rejected": 0}
 
 
+async def test_partial_supply_does_not_clear_the_failure_cooldown() -> None:
+    pipeline = _FakeCandidatePipeline()
+
+    async def discover(profile: Any, options: DouyinDiscoveryOptions) -> DouyinDiscoveryResult:
+        return DouyinDiscoveryResult(
+            items=[SimpleNamespace()],
+            cached=False,
+            source_counts={"dy-plugin-hot-related": 1},
+            source_outcomes={"hot": "failed"},
+        )
+
+    producer = DouyinDiscoveryProducer(
+        soul_engine=_FakeSoulEngine(),
+        discover=discover,
+        min_interval_minutes=0,
+        sources=("hot",),
+        candidate_pipeline=pipeline,
+        candidate_evaluation_owned_by_coordinator=True,
+    )
+    first = await producer.produce_if_due(limit=12)
+    assert first["enqueued"] == 1, "valid partial supply must still reach admission"
+    assert first["reason"] == "error"
+    assert producer._retry_not_before is not None
+    assert producer._retry_not_before > datetime.now(UTC) + timedelta(minutes=14)
+    assert (await producer.produce_if_due(limit=12))["reason"] == "throttled"
+
+
+async def test_restarted_producer_checks_shared_cooldown_before_claiming_keywords(
+    tmp_path: Path,
+) -> None:
+    from openbiliclaw.sources.dy_tasks import DyTaskQueue
+    from openbiliclaw.storage.database import Database
+
+    db = Database(tmp_path / "shared-cooldown.db")
+    db.initialize()
+    queue = DyTaskQueue(db)
+    task_id = queue.enqueue_with_id("hot", {"hot_items": [{"sentence_id": "one"}]})
+    assert queue.next_pending()["id"] == task_id
+    queue.fail(task_id, error="api_rate_limited")
+    calls = 0
+
+    async def discover(profile: Any, options: DouyinDiscoveryOptions) -> DouyinDiscoveryResult:
+        nonlocal calls
+        calls += 1
+        return DouyinDiscoveryResult(items=[], cached=False)
+
+    class UnclaimedKeywords:
+        def should_claim(self) -> bool:
+            return True
+
+        def claim(self, *args: Any, **kwargs: Any) -> list[Any]:
+            raise AssertionError("cooling discovery must not consume a keyword claim")
+
+    producer = DouyinDiscoveryProducer(
+        soul_engine=_FakeSoulEngine(),
+        discover=discover,
+        min_interval_minutes=0,
+        sources=("search",),
+        database=db,
+        keyword_fetch=UnclaimedKeywords(),
+    )
+    try:
+        assert (await producer.produce_if_due(limit=6))["reason"] == "throttled"
+        assert calls == 0
+    finally:
+        db.close()
+
+
 async def test_douyin_producer_invokes_discovery_with_cache_options() -> None:
     calls: list[tuple[dict[str, object], DouyinDiscoveryOptions]] = []
 

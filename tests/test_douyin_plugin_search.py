@@ -28,6 +28,7 @@ class _FallbackClient:
         self.keywords: list[str] = []
         self.hot_board_calls = 0
         self.feed_calls = 0
+        self.hot_terms_calls = 0
         self.hot_terms: list[dict[str, object]] = [
             {"word": "热点词", "sentence_id": "2495363", "hot_value": 12345}
         ]
@@ -37,6 +38,7 @@ class _FallbackClient:
         return [{"aweme_id": "fallback", "desc": "fallback result"}]
 
     async def get_hot_terms(self, *, limit: int = 30) -> list[dict[str, object]]:
+        self.hot_terms_calls += 1
         return self.hot_terms[:limit]
 
     async def get_hot_board(self, *, limit: int = 30) -> list[dict[str, object]]:
@@ -56,6 +58,34 @@ def database(tmp_path: Path) -> Database:
     db = Database(tmp_path / "openbiliclaw.db")
     db.initialize()
     return db
+
+
+@pytest.mark.parametrize("source", ["search", "hot", "feed"])
+async def test_claimed_failure_cools_every_discovery_path_without_direct_fallback(
+    database: Database,
+    source: str,
+) -> None:
+    queue = DyTaskQueue(database)
+    failed = queue.enqueue_with_id("hot", {"hot_items": [{"sentence_id": "one"}]})
+    assert queue.next_pending()["id"] == failed
+    queue.fail(failed, error="api_rate_limited")
+    direct = _FallbackClient()
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=direct,
+        wait_seconds=0,
+        allow_direct_fallback=True,
+    )
+    if source == "hot":
+        items = await client.get_hot_board(limit=12)
+    elif source == "feed":
+        items = await client.get_recommend_feed(limit=12)
+    else:
+        items = await client.search_aweme("next", limit=12)
+    assert items == []
+    assert database.conn.execute("SELECT COUNT(*) FROM dy_tasks").fetchone()[0] == 1
+    assert direct.keywords == []
+    assert direct.hot_terms_calls == direct.hot_board_calls == direct.feed_calls == 0
 
 
 @pytest.mark.parametrize("source", ["search", "hot", "feed"])

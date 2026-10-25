@@ -34,6 +34,10 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 
 ## 已实现功能
 
+| 功能 | 状态 | 说明 |
+|---|---|---|
+| 抖音 partial 失败与共享冷却 | ✅ | 有有效视频也保留 failed / timeout，不能清掉退避。`produce_if_due()` 在关键词领取前读取同一 `dy_tasks` 冷却，进程重启和 `min_interval_minutes=0` 都不会消耗新关键词后才发现暂停。 |
+
 多进程补池配置恢复：主 API 成功完成完整 runtime handoff 后发布进程内配置 generation；桌面入口与 `start` / `serve-api` 共用 supervisor，设置队列完全结束后在下一次 5 秒巡检停止旧子进程并重新构建 worker、discovery worker、推荐服务与图片服务。配置修好后不再让补池 evaluator 永久使用旧 provider。启动时重新领取 durable 候选，并复用已有失败候选复活策略；不降低评分或可推荐文案门槛。已知聊天设置的局部应用不重启后台。
 
 2026-10-21 本机真实请求验收已覆盖主 API + 四个子进程、B 站自动抓取、模型评分、推荐文案、本地 embedding、HTTP 推荐消费与再次自动补池，canonical available 为 `0 → 3 → 0 → 1`。原主备模型的批量请求另有 429/500 服务端阻塞，成功轮次切换了实际可用模型，详见 [条件与证据](../testing/2026-10-21-empty-pool-live-requests.md)。
@@ -572,6 +576,11 @@ API runtime 会把共享 `PresenceTracker` 和 `extension_disconnect_grace_secon
 search / hot / feed 每条分支都有结构化终态 `used / empty / timeout / failed / budget_exhausted`。search 按关键词分别结算：有候选才 `mark_used`，真实空结果 `mark_failed`，插件 timeout / failed 调 `requeue_transient()` 无损退回 pending 且不增加 attempts，预算耗尽的当前词与未执行词 rollback；前序已成功候选不会被整轮异常丢弃。统一关键词池为空时不再跳过整轮，search 可回退画像兴趣词，hot / feed 仍独立执行。大缺口固定包含 search，并在 hot / feed 间逐轮轮换，避免 feed 长期饥饿；小缺口仍优先 feed / hot。
 
 API daemon 构造 producer 时会注入共享 extension presence：扩展离线且超过 `extension_disconnect_grace_seconds` 后，`produce_if_due()` 在创建浏览器任务前直接返回 `extension_absent`，不会先入队再等待 180 秒；显式 CLI / smoke 未注入 presence，仍可用于人工诊断。每次真正尝试都会记录进程内 cadence：真实空结果遵循来源 `min_interval_minutes`，`timeout / failed` 使用 15 分钟基础设施退避，预算耗尽使用 60 分钟退避；有产出的轮次仍写共享 productive ledger。该分层同时避免离线 pending 堆积和在线故障时的分钟级重试风暴。
+
+抖音公开 producer 行为补充：`produce_if_due()` 的 `throttled` 也覆盖持久发现冷却，
+优先于关键词 claim；`_result_reason()` 先看失败 outcome，再看 items 数量。
+有效 partial 仍入候选池，但 `error / timeout` 不会被 productive 轮次清除。
+共享冷却见 [Discovery API](discovery.md#抖音发现冷却-api)；原成功 cadence、日预算和评分门槛不变。
 
 ### YoutubeDiscoveryProducer
 

@@ -741,6 +741,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 
 | 任务 | 状态 | 说明 |
 |------|------|------|
+| 抖音发现共享冷却 | ✅ | 已领取且最终 failed 的 search / hot / feed 从 `dy_tasks` 推导持久冷却；producer 在关键词 claim 前检查，client 在 hot-word / 取数和 direct fallback 前检查，队列暂停新的 pending discovery claim。有效 partial 保留，失败不被候选数量清除。 |
 | 显式初始化小批量评估 | ✅ | `drain_pending(flush=True)` 仅跳过聚合等待，保持批次上限、锁、claim、评分与准入；默认后台路径不变。 |
 
 | Jev 按需画像 | ✅ | 完整目录本地保留，逐候选投影与精确模型双上下文预算；源快照、策略及预算隔离缓存，mandatory 不足明确 missing |
@@ -1076,6 +1077,20 @@ drained = await pipeline.drain_pending(profile=profile, batch_size=45)
 - 引擎关心“这些结果如何合并成一个可消费的候选池”
 
 因此真正影响推荐体验稳定性的，往往不是单个策略够不够聪明，而是引擎层的并发、去重、压缩和补货逻辑是否可靠。
+
+### 抖音发现冷却 API
+
+`DyTaskQueue.discovery_retry_at(*, connection=None) -> datetime | None` 从最近 24 小时内最多 8 条
+已领取 discovery 终态推导冷却。成功终态结束失败序列；未领取任务和 bootstrap 不计入。
+基础失败为 15 分钟，明确 rate-limit / captcha / hit_shark / risk-control 信号为 30 分钟；
+连续失败指数增加、上限 6 小时。返回的是 UTC 时刻，过期自然恢复，不新建表、不回写或修改既有终态。
+这些是本地退避策略，不是抖音公布的安全访问频率。
+
+冷却期间 `enqueue_with_id(search|hot|feed, ...)` 抛 `DouyinDiscoveryCooldownError`，
+`next_pending()` 不领取新的 pending discovery；已领取任务和 staged 终态仍可按原 lease 修复，
+显式 bootstrap 不被这道发现门控屏蔽。`DouyinPluginSearchClient` 三个视频发现入口在出网前检查；
+包括 hot board 取词和显式 direct-cookie fallback，不能换进程或换 transport 继续自动请求。
+已有 partial 仍交给统一 evaluator，失败 outcome 保留；冷却本身不会消费新的正式关键词 claim。
 
 ### DouyinDiscoveryService
 

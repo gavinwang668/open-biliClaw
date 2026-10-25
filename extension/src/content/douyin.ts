@@ -328,6 +328,8 @@ interface HotExecuteMessage {
   seed_aweme_id?: string;
   max_items: number;
   debug_inject_status?: string;
+  /** Collect the result document without submitting the hot word again. */
+  resume_after_navigation?: boolean;
 }
 
 interface FeedExecuteMessage {
@@ -353,6 +355,7 @@ interface SearchResultPayload {
     search_navigation_ok?: boolean;
     search_submit_method?: string;
     navigation_resumed?: boolean;
+    requested_max_items?: number;
     passive_items_harvested?: number;
     passive_responses_observed?: number;
     early_buffer_items?: number;
@@ -831,6 +834,12 @@ export function classifyDouyinDiscoveryCompletion(input: {
   passiveResponsesObserved?: number;
   domItemsHarvested?: number;
 }): { status: "ok" | "empty" | "failed"; error?: string } {
+  const apiError = String(input.apiError ?? "").trim().toLowerCase();
+  // A real block must stop subsequent words even when an earlier page was
+  // useful. The dispatcher persists these partial videos before failing.
+  if (/\b429\b|rate[\s_-]*limit|too many requests|too frequent|hit_shark|请求频繁/.test(apiError)) {
+    return { status: "failed", error: "api_rate_limited" };
+  }
   if (input.itemCount > 0) return { status: "ok" };
 
   const injectStatus = String(input.injectStatus ?? "").trim().toLowerCase();
@@ -850,11 +859,7 @@ export function classifyDouyinDiscoveryCompletion(input: {
     return { status: "failed", error: "hot_ui_not_triggered" };
   }
 
-  const apiError = String(input.apiError ?? "").trim().toLowerCase();
   if (apiError) {
-    if (/\b429\b|rate[\s_-]*limit|too many requests|too frequent|hit_shark|请求频繁/.test(apiError)) {
-      return { status: "failed", error: "api_rate_limited" };
-    }
     if (/\btimeout\b|timed[\s_-]*out|\babort(?:ed|error)?\b/.test(apiError)) {
       return { status: "failed", error: "api_timeout" };
     }
@@ -1740,6 +1745,10 @@ const SEARCH_SCROLL_GROWTH_POLL_INTERVAL_MS = 250;
 const SEARCH_SCROLL_GROWTH_POLL_TIMEOUT_MS = 3_000;
 
 async function runSearch(msg: SearchExecuteMessage): Promise<SearchResultPayload> {
+  if (typeof document !== "undefined" && document.title.trim() === "验证码中间页") {
+    return { task_id: msg.task_id, keyword: msg.keyword, items: [], scope_count: 0,
+      status: "failed", error: "captcha_required" };
+  }
   const { extractDouyinSearchItemsFromDocument, pickSearchScrollTarget } =
     await loadDomExtractor();
   const maxItems = Math.max(1, Math.floor(msg.max_items));
@@ -1819,7 +1828,10 @@ async function runSearch(msg: SearchExecuteMessage): Promise<SearchResultPayload
     }
 
     let items = filterDiscoveryItemsForScope(allItems, "dy_search", maxItems);
-    if (items.length < maxItems) {
+    // A useful native result may legitimately be smaller than the requested
+    // cap. Do not replay page one through the API just to fill the cap, or
+    // attempt an extra request when the search UI/navigation did not succeed.
+    if (items.length === 0 && uiTriggered && searchNavigationOk) {
       try {
         const apiResult = await harvestSearchViaApiBridge(msg.keyword, maxItems);
         apiPagesFetched = apiResult.pages;
@@ -1858,6 +1870,7 @@ async function runSearch(msg: SearchExecuteMessage): Promise<SearchResultPayload
         search_navigation_ok: searchNavigationOk,
         search_submit_method: searchSubmitMethod,
         navigation_resumed: msg.resume_after_navigation === true,
+        requested_max_items: maxItems,
         passive_items_harvested: passiveCollector.passiveCount(),
         passive_responses_observed: passiveCollector.responseCount(),
         early_buffer_items: passiveCollector.earlyBufferCount(),
@@ -1885,6 +1898,7 @@ async function runSearch(msg: SearchExecuteMessage): Promise<SearchResultPayload
         search_navigation_ok: searchNavigationOk,
         search_submit_method: searchSubmitMethod,
         navigation_resumed: msg.resume_after_navigation === true,
+        requested_max_items: maxItems,
         passive_items_harvested: passiveCollector.passiveCount(),
         passive_responses_observed: passiveCollector.responseCount(),
         early_buffer_items: passiveCollector.earlyBufferCount(),
@@ -1906,6 +1920,10 @@ export async function runHot(
     related: (message: HotExecuteMessage) => Promise<HotResultPayload>;
   } = { search: runSearch, related: runHotRelated },
 ): Promise<HotResultPayload> {
+  if (typeof document !== "undefined" && document.title.trim() === "验证码中间页") {
+    return { task_id: msg.task_id, sentence_id: msg.sentence_id, word: msg.word,
+      items: [], scope_count: 0, status: "failed", error: "captcha_required" };
+  }
   const word = msg.word.trim();
   if (!word) return collectors.related(msg);
 
@@ -1916,6 +1934,7 @@ export async function runHot(
     keyword: word,
     max_items: msg.max_items,
     debug_inject_status: msg.debug_inject_status,
+    ...(msg.resume_after_navigation ? { resume_after_navigation: true } : {}),
   });
   const items = result.items.filter(item => item.scope === "dy_search").map(item => ({
     ...item,
@@ -2182,6 +2201,7 @@ export function isValidHotExecuteMessage(value: unknown): value is HotExecuteMes
   if (typeof v.task_id !== "string" || !v.task_id) return false;
   if (typeof v.sentence_id !== "string" || !v.sentence_id.trim()) return false;
   if (typeof v.max_items !== "number") return false;
+  if (v.resume_after_navigation !== undefined && typeof v.resume_after_navigation !== "boolean") return false;
   return true;
 }
 
@@ -2198,6 +2218,7 @@ export function isValidFeedExecuteMessage(value: unknown): value is FeedExecuteM
 // execution per task/keyword in a document; a genuine full navigation gets a
 // fresh JS world and therefore accepts the resume exactly once.
 const activeSearchExecutions = new Set<string>();
+const activeHotExecutions = new Set<string>();
 
 export function registerDyScopeExecutor(): void {
   if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.onMessage) return;
@@ -2254,13 +2275,15 @@ export function registerDyScopeExecutor(): void {
       if (!isValidHotExecuteMessage(data)) {
         return false;
       }
-
+      const executionKey = `${data.task_id}\u0000${data.sentence_id}`;
+      if (activeHotExecutions.has(executionKey)) return false;
+      activeHotExecutions.add(executionKey);
       void runHot(data).then((result) => {
-        chrome.runtime.sendMessage({ action: "DY_HOT_RESULT", data: result }).catch(() => {
+        return chrome.runtime.sendMessage({ action: "DY_HOT_RESULT", data: result }).catch(() => {
           // The dispatcher timeout is the retry/failure path if delivery
           // fails while the service worker is being recycled.
         });
-      });
+      }).finally(() => { activeHotExecutions.delete(executionKey); });
 
       return false;
     },
