@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 
@@ -54,6 +56,33 @@ def database(tmp_path: Path) -> Database:
     db = Database(tmp_path / "openbiliclaw.db")
     db.initialize()
     return db
+
+
+@pytest.mark.parametrize("source", ["search", "hot", "feed"])
+async def test_default_dispatcher_wakeup_uses_configured_backend_port(
+    database: Database, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    monkeypatch.setattr(
+        "openbiliclaw.config.load_config",
+        lambda: SimpleNamespace(api=SimpleNamespace(port=18420)),
+    )
+    urlopen = Mock()
+    monkeypatch.setattr(dy_plugin_search.request, "urlopen", urlopen)
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=_FallbackClient(),
+        wait_seconds=0,
+    )
+
+    if source == "search":
+        await client.search_aweme("测试关键词", limit=1)
+    elif source == "hot":
+        await client.get_hot_board(limit=1)
+    else:
+        await client.get_recommend_feed(limit=1)
+
+    urlopen.assert_called_once()
+    assert urlopen.call_args.args[0].full_url == "http://127.0.0.1:18420/api/sources/dy/kick"
 
 
 def test_plugin_search_item_to_aweme_maps_fields() -> None:

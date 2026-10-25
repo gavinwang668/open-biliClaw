@@ -485,9 +485,16 @@ class DouyinPluginSearchClient:
 
 
 def kick_douyin_task_dispatcher() -> None:
-    """Best-effort wake-up for the extension dispatcher."""
+    """Best-effort wake-up on the configured local API port."""
+    daemon_port = 8420
+    with suppress(Exception):
+        from openbiliclaw.config import load_config
+
+        configured_port = int(load_config().api.port)
+        if 1 <= configured_port <= 65535:
+            daemon_port = configured_port
     req = request.Request(
-        "http://127.0.0.1:8420/api/sources/dy/kick",
+        f"http://127.0.0.1:{daemon_port}/api/sources/dy/kick",
         method="POST",
         data=b"",
     )

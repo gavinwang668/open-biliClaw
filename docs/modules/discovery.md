@@ -1077,6 +1077,10 @@ drained = await pipeline.drain_pending(profile=profile, batch_size=45)
 
 ### DouyinDiscoveryService
 
+`DouyinPluginSearchClient` 的默认 dispatcher 唤醒会读取当前配置的 `api.port`，向该本地端口的
+`/api/sources/dy/kick` 发起 best-effort POST；搜索、热榜和推荐流共用此路径。未能读取有效端口时
+回退 8420，网络失败仍交给扩展的周期轮询恢复。自定义端口不再因固定访问 8420 耗尽任务等待窗口。
+
 ```python
 from openbiliclaw.discovery.douyin import (
     DouyinDiscoveryOptions,
