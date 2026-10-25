@@ -206,6 +206,9 @@ class DouyinPluginSearchClient:
             return []
 
         hot_terms = await self._load_hot_terms(limit=_HOT_SEED_POOL_LIMIT)
+        # Prioritize actionable seeds across the whole board before truncating
+        # the rotation window; sorting only the selected rows loses later seeds.
+        hot_terms = _normalize_hot_task_items(hot_terms)
         hot_terms = self._rotate_hot_terms(hot_terms, seed_count=_hot_seed_count(limit))
         plugin_items = await self._hot_via_plugin(hot_terms, limit=max(1, limit))
         if plugin_items:

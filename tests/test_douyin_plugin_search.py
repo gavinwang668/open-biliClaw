@@ -428,6 +428,41 @@ async def test_plugin_hot_preserves_seed_aweme_id_from_hot_terms(database: Datab
     await asyncio.gather(client.get_hot_board(limit=5), complete_task())
 
 
+async def test_plugin_hot_prioritizes_seeded_terms_before_selection_and_rotation(
+    database: Database,
+) -> None:
+    fallback = _FallbackClient()
+    fallback.hot_terms = [
+        {"sentence_id": "unseeded", "word": "仅有热词"},
+        *[
+            {"sentence_id": str(index), "word": "可展开热词", "group_id": f"seed-{index}"}
+            for index in range(1, 5)
+        ],
+    ]
+    queue = DyTaskQueue(database)
+    selected: list[list[str]] = []
+
+    def complete_task() -> None:
+        task = queue.next_pending()
+        assert task is not None
+        payload = json.loads(str(task["payload_json"]))
+        selected.append([item["sentence_id"] for item in payload["hot_items"]])
+        queue.merge_result(str(task["id"]), videos=[], scope_counts={"dy_hot": 0}, complete=True)
+
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=fallback,
+        wait_seconds=0.1,
+        kick=complete_task,
+    )
+
+    await client.get_hot_board(limit=12)
+    await client.get_hot_board(limit=12)
+
+    assert selected == [["1", "2"], ["3", "4"]]
+    assert fallback.hot_board_calls == 0
+
+
 @pytest.mark.asyncio
 async def test_plugin_search_client_does_not_fallback_to_direct_feed_on_empty_task_by_default(
     database: Database,

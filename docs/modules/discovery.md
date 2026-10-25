@@ -756,6 +756,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | evaluator learned scorer shadow 证据门 | ✅ | `[discovery].eval_scorer` 默认 `llm`；`shadow` 并跑 learned + 完整 LLM、由 LLM 决定 relevance 并积累完整隐私安全对照；人工通过 gate 后才可显式选 `learned`，且仅在 LLM 元数据完整、本批审计完整落库时由 learned 覆盖 relevance。当前两种校准模式都继续调用 LLM，不承诺降本。学习器不可用、异常、长度 / 数值 / 维度 / digest 非法或审计失败均 fail-open 到 LLM。只读 gate 要求 ≥100 完整对照、telemetry coverage=1、存在 admission、Spearman≥0.5、admission delta≤2%、admitted coverage≥90%，缺失指标一律失败，且从不自动改配置。 |
 | 5.6 发现引擎编排 | ✅ | 并发执行策略 + 高分去重 + 直接 discover 缓存收口；runtime 正常路径通过待评估池 admission 到 SQLite 推荐池 |
 | 抖音发现唤醒与 partial 保留 | ✅ | 默认 kick 读取 `api.port`；搜索 / 热榜 / feed 的已接收视频在后续失败或超时后继续正常评估，同时保留失败 outcome；不修改原评分门槛。 |
+| 抖音热榜抽样前种子优先 | ✅ | 先对整个热词池规范化、去重并优先带 `seed_aweme_id` 的条目，再按既有 6 小时轮换和 2 / 5 个种子窗口选取；避免无种子榜首挤掉后续可展开热词，仍保留无种子 UI 兜底。 |
 | 统一待评估候选池 | ✅ | B 站、XHS、抖音、YouTube、X、知乎、Reddit、Bangumi、Linux.do、V2EX、微博、GitHub 的原始候选先写入 `discovery_candidates(pending_eval)`；API runtime 先用 supply fill loop 按 `pending_eval + evaluating` 补足有效水位，入库前过滤历史候选和已缓存内容，再由唯一 `CandidateEvalCoordinator` 按 `[scheduler].eval_min_batch_size / eval_max_wait_seconds`（默认 15 / 90 秒）凑批，以最多 3×30 连续评估并串行 commit/admission；手动 CLI 固定 `1 / 0` 立即 drain。各路径共享 tokenized claim、统一阈值与 projected-inventory 规则。 |
 | 小红书自动任务领取门与风控背压 | ✅ | 自动 search / creator / bootstrap 在 API claim 时再次检查小红书来源开关与全局 scheduler，关闭后旧 pending 任务不会触发浏览器页面；search / creator 默认以 20 分钟为中心做 ±25% 稳定抖动并持久化下一次领取时间。搜索每日默认 20 次，producer 只把 pending + in-progress 搜索队列补到 5 条。扩展识别安全验证 / 操作频繁 / 429 后，后端按连续轮次打开 1/2/4…小时（24 小时封顶）平台冷却，停止 producer 与所有 XHS task claim，并把关联 planner 关键词无损退回 pending；同一冷却内重复报告不加轮次，冷却后的正常任务成功才重置。 |
 | M120 多事件循环并发控制修复 | ✅ | `DiscoveryConcurrencyController` 现在会按当前 event loop 重新绑定 semaphore，CLI `init` 的分阶段补货不会再在第二轮触发跨 loop `RuntimeError` |
@@ -1081,6 +1082,10 @@ drained = await pipeline.drain_pending(profile=profile, batch_size=45)
 `DouyinPluginSearchClient` 的默认 dispatcher 唤醒会读取当前配置的 `api.port`，向该本地端口的
 `/api/sources/dy/kick` 发起 best-effort POST；搜索、热榜和推荐流共用此路径。未能读取有效端口时
 回退 8420，网络失败仍交给扩展的周期轮询恢复。自定义端口不再因固定访问 8420 耗尽任务等待窗口。
+
+`DouyinPluginSearchClient.get_hot_board()` 在整个 hot board 池上先规范化、去重并优先带视频种子的热词，
+然后才执行近期热词轮换和种子数量截断。此前只在已截取的 2 / 5 行内排序，榜首缺种子时会挤掉后续
+可用种子、把任务送到不可点击的 UI 分支。6 小时复用规则、近期词不足时的回退和无种子 UI 支持不变。
 
 搜索、热榜、推荐流已接收的 partial 视频在后续 watchdog / 客户端等待超时时仍保留并进入正常评估，
 `source_outcomes` / `keyword_outcomes` 同时保留 `failed` 或 `timeout`，不会因取到部分内容改成 `used`。
