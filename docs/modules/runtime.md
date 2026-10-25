@@ -90,7 +90,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | 惊喜永久消费 | ✅ | `mark_delight_sent()` 只表示通知已送达并维护冷却，不置 `delight_seen`，因此已推送但未看过的候选仍可被 popup 重灌；`mark_delight_seen()` 供用户主动叉掉时委托 storage 写 canonical `seen_items` 并置 `delight_seen`，随后更新主动惊喜冷却。两种动作分开，避免“通知出现过”被误当成“用户看过”。 |
 | Durable 对话失败原子性 | ✅ | `/api/chat/turns` 只把显式无效/空回复持久化为 `status="failed", reply="", error=<安全分类文案>`；provider、限流、配置、超时、service 瞬态失败与 shutdown cancellation 都保持 `pending` 并在队头原位有界退避。真实回复以 `WHERE status='pending'` completion CAS 发布；重复 completion、迟到 failure 与重启重放不能覆盖首个可见终态。回复完成后的 11-kind learning/settlement 由独立 `DialogueSettlementQueue` 处理，不计入 SQLite reply backlog。 |
 | Durable event consumer 调度 | ✅ | app-owned `EventProcessingScheduler` 同时调度 generic 与 content-feedback owner；`FeedbackBatchScheduler` 仅是兼容 import/injection alias。所有 event ingress 只 commit+wake，5 秒 debounce 合并 burst；单 owner pass 先运行 `SoulEngine.process_profile_events_if_needed()`，再运行 `process_feedback_batch_if_needed()`。两者都通过 `checkpointed_enqueue_batch()` 把 buffer+cursor 原子发布到同一 `pipeline_state.json`，随后调用 `tick_if_buffered()`；只有独立周期画像维护调用 `tick()`。5 秒 periodic scan 与 startup recover 覆盖 commit 后丢 wake；处理中又有新 event 会补跑下一轮。热重载 pause+drain 旧 owner，重绑 resolver 后先 recover 再恢复周期扫描。`event_lane_depth` 只是 dirty wake 的 `0/1`，不是 SQLite backlog。 |
-| 浏览器 presence / 初始化 gate | ✅ | `background_llm_work_allowed()` 结合 `scheduler.enabled` 与 `pause_on_extension_disconnect` 控制 daemon-owned 后台 LLM / embedding 工作；首个完整画像尚未落盘或 guided init 活跃时也一律返回 false，防止 account-sync 在用户点击初始化前先导入、分析并重复写入同一批 bootstrap 历史。guided init 自身绕过该 gate。 |
+| 浏览器 presence / 初始化 gate | ✅ | API 通过 `data/runtime/extension_presence.json` 原子发布在线租约，full/discovery worker 共享在线判断；抖音、Instagram、B 站插件搜索与周期账号回拉复用该 tracker。`background_llm_work_allowed()` 继续结合 `scheduler.enabled` 与 `pause_on_extension_disconnect` 控制 daemon-owned 后台 LLM / embedding 工作；首个完整画像尚未落盘或 guided init 活跃时也返回 false。guided init 自身绕过该 gate。 |
 | Runtime event stream | ✅ | `/api/runtime-stream` 向扩展推送状态、Cookie sync 请求、配置重载、候选池快照和 presence 事件；background 连接时会请求小红书 / 知乎立即回传一次本地 Cookie 存在性的布尔心跳，X 启用时还会请求当前完整 Cookie，均不打开或请求平台页面。`RuntimeEventHub.publish()` 会返回是否至少有一个订阅者接收，供一次性事件判断是否真正投递。 |
 | WebSocket 运行时依赖 | ✅ | 默认安装显式携带 `websockets>=13`，PyInstaller spec 显式收集 `uvicorn.protocols.websockets.websockets_impl` 与 `websockets`，避免源码 / Docker / 桌面包只安装裸 `uvicorn` 时 `/api/runtime-stream` 缺协议实现。 |
 | Activity feed 状态摘要 | ✅ | `/api/activity-feed` 在线程中聚合认知更新、反馈、推荐池补货和 live summary，并通过单入口复用缓存，避免阻塞换批代理；未初始化且还没有推荐 / 可换池 / 补货产物时，普通 `/api/events` 不会新写入 pending signals，旧的 `pending_signal_events` 也不会抢占初始化提示。初始化后 pending 文案统一为“已记下 N 个新动作，下一轮补货会拿来参考”，表示 discovery refresh 水位，不表示画像待处理队列。 |
@@ -152,6 +152,12 @@ RuntimeContext 重建 RecommendationEngine 时透传视觉开关、帧数、两�
 后新 embedding provenance 会重新筛选待处理池。
 
 ## 公开 API
+
+### PresenceTracker
+
+`PresenceTracker(*, now=time.monotonic, shared_path=None, wall_now=time.time)` 保留原进程内计数、启动宽限和 `snapshot()` 语义；配置 `shared_path` 后，`is_present(grace_seconds)` 还能读取 API 的有效租约。`on_connect()` / `on_disconnect()` 立即原子发布本地计数，`heartbeat()` 仅在本地仍有连接时按 20 秒节流续约。跨进程时间戳使用 wall clock；未来时间、非有限值、非法计数、损坏或不可读的共享文件不提供在线证据。写失败记录 WARNING，不中断本地连接。正常及降级 `build_*_runtime_context()` 固定绑定启动数据目录，热重载保留同一 tracker；无新配置或依赖。
+
+在线状态链路：`API runtime-stream → PresenceTracker → 原子 extension_presence.json → full/discovery worker → 浏览器任务 producer`。活动 API 是单一写者，headless worker 为读者；租约不是账号登录或来源执行能力的证明。API 异常退出后最多保留 60 秒最后在线证据；正常断开使用调用方传入的宽限，共享文件缺失时仍保留原进程启动宽限。桌面、源码 CLI 和 Docker 复用该组合根，显式 CLI/OpenClaw 的纯进程内 tracker 保持原行为。验证与边界见 [issue #332 验收](../verification/2026-10-25-issue-332-shared-presence.md)。
 
 `proc.ChildProcessSupervisor(..., config_generation_provider=...)` 接受返回 `int | None` 的进程内版本读取器；`None` 表示设置队列尚未完成，暂缓配置驱动的重启。`proc.backend_config_generation(app)` 读取 API 成功 handoff 后递增的 `app.state.backend_config_generation`，并在 `config_apply_task` 仍运行时返回 `None`，合并排队修订与失败回滚期间不会拉起中间配置。旧 child 的 terminate / kill 均需确认退出后才能启动替代 claim owner；无法停止时保留旧指针并在下次巡检重试。`proc.backend_child_env(app, **overrides)` 把父进程锁定的 active data path 传给所有子进程，数据目录变更仍需完整应用重启。
 

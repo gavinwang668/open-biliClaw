@@ -1,5 +1,14 @@
 # 后端 API
 
+## 扩展在线心跳跨进程共享（issue #332）
+
+| 接口 | 状态 | 契约 |
+|---|---|---|
+| `WS /api/runtime-stream` | ✅ | 连接和断开立即发布共享 presence；服务端 reader 在空闲时每 20 秒续约，正常与降级 API 共用同一 reader。保持既有握手鉴权、事件格式和多客户端计数。 |
+| `GET /api/sources/dy/next-task` | ✅ | worker 可依据共享在线状态正常入队后，仍通过现有原子 claim 返回任务；无可领取任务继续返回 204。 |
+
+组合根将正常与降级 `PresenceTracker` 固定绑定 `data/runtime/extension_presence.json`。full/discovery worker 读取原子替换的文件，不依赖 API 内存中的 WebSocket 计数，也不会用自己的零连接覆盖在线状态。活动租约超过 60 秒失效；正常断开按已有 grace 配置处理。HTTP/WS 客户端、扩展资源、登录态和四个产品面的协议不变，无客户端升级要求。独立的 direct-cookie HTTP 403 仍由 `douyin direct request returned HTTP 403` 日志识别；共享 presence 只修复插件任务生产准入，不声称解决上游风控或所有 `empty_signals` 原因。
+
 ## 桌面首屏静态脚本（2026-10-23）
 
 | 接口 | 状态 | 契约 |

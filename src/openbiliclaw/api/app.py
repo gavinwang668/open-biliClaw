@@ -1,7 +1,7 @@
 """FastAPI app for the browser-extension backend."""
 
 # [INPUT]: 配置、MemoryManager、Database 与来源事件规范化器
-# [OUTPUT]: create_app() 及浏览器/桌面 Web 共用的 FastAPI 路由；惊喜队列读在线程池执行
+# [OUTPUT]: create_app() 及浏览器/桌面 Web 共用路由；向 worker 发布 runtime-stream 在线心跳
 # [POS]: API 组合根，负责请求边界与事件入口，不在此复制来源解析规则
 # [PROTOCOL]: 变更时更新此头部，然后检查 CLAUDE.md
 
@@ -249,6 +249,7 @@ from openbiliclaw.runtime.keyword_fetch import (
     requeue_keyword_from_xhs_rate_limit,
     source_keyword_id_from_xhs_task,
 )
+from openbiliclaw.runtime.presence import PRESENCE_HEARTBEAT_INTERVAL_SECONDS
 from openbiliclaw.saved_sync.extension_broker import (
     ExtensionNativeSaveResultIn as BrokerExtensionNativeSaveResultIn,
 )
@@ -505,7 +506,7 @@ _CONFIRMATION_GLOBAL_COOLDOWN_HOURS = 12
 # object-level ask budget and makes "以后再说" durable without becoming a
 # permanent dismissal. Recalibrate after the first production month.
 _CONFIRMATION_OBJECT_COOLDOWN_HOURS = 72
-_RUNTIME_STREAM_HEARTBEAT_SECONDS = 20.0
+_RUNTIME_STREAM_HEARTBEAT_SECONDS = PRESENCE_HEARTBEAT_INTERVAL_SECONDS
 _DIALOGUE_EXECUTION_DRAIN_TIMEOUT_SECONDS = 1500.0
 # Interactive agent-stream admission budget: a hot reload can hold the
 # dialogue lane paused for the full drain window above, which left SSE
@@ -9246,6 +9247,22 @@ def create_app(
             await websocket.close(code=4401)
             return
         await websocket.accept()
+
+        async def _receive_until_disconnect() -> None:
+            # Renew even for idle/degraded sockets and independently of event
+            # delivery. Workers never have a local WebSocket to renew for them.
+            while True:
+                try:
+                    message = await asyncio.wait_for(
+                        websocket.receive(), timeout=_RUNTIME_STREAM_HEARTBEAT_SECONDS
+                    )
+                except TimeoutError:
+                    ctx.presence.heartbeat()
+                    continue
+                if message.get("type") == "websocket.disconnect":
+                    raise WebSocketDisconnect
+                ctx.presence.heartbeat()
+
         if bool(getattr(ctx, "degraded", False)):
             connected = False
             try:
@@ -9258,10 +9275,7 @@ def create_app(
                         "issues": _degraded_issues_payload(),
                     }
                 )
-                while True:
-                    message = await websocket.receive()
-                    if message.get("type") == "websocket.disconnect":
-                        raise WebSocketDisconnect
+                await _receive_until_disconnect()
             except WebSocketDisconnect:
                 pass
             finally:
@@ -9323,12 +9337,6 @@ def create_app(
                     with suppress(Exception):
                         await websocket.close(code=4401)
                     return
-
-        async def _receive_until_disconnect() -> None:
-            while True:
-                message = await websocket.receive()
-                if message.get("type") == "websocket.disconnect":
-                    raise WebSocketDisconnect
 
         try:
             ctx.presence.on_connect()

@@ -11,7 +11,7 @@ only the agent loop and configuration, leaving active learning owners intact.
   - ``memory_manager`` — owns file-backed memory layers
   - ``event_hub`` — holds live WebSocket subscriber queues
   - ``extension_native_save_broker`` — owns durable extension save jobs
-  - ``presence`` — tracks shared extension runtime-stream presence
+  - ``presence`` — shares API runtime-stream presence with headless workers
 
 **Swappable components** (rebuilt on hot-reload):
   - ``llm_registry``, ``llm_service``, ``bilibili_client``, ``saved_sync_service``
@@ -2996,6 +2996,9 @@ def build_runtime_context(
         database=database,
         memory_manager=memory_manager,
         event_hub=event_hub,
+        presence=PresenceTracker(
+            shared_path=config.data_path / "runtime" / "extension_presence.json"
+        ),
     )
 
     # Build all swappable components via the same path used for hot-reload.
@@ -3074,6 +3077,9 @@ def build_degraded_runtime_context(
         database=database,
         memory_manager=memory_manager,
         event_hub=event_hub,
+        presence=PresenceTracker(
+            shared_path=config.data_path / "runtime" / "extension_presence.json"
+        ),
         config=config,
         auto_update_service=degraded_auto_update,
         degraded=True,

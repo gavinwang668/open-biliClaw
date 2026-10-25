@@ -9,6 +9,10 @@ packaged desktop/shared scripts → DesktopAssets (ordered manifest; 2 content v
                                → /web/assets/desktop-bundle.js?v=… → one defer request from /web
 shared sources / original asset paths → mobile / extension; no Node build or install/config changes
 
+runtime-stream clients → API PresenceTracker (connect/disconnect; 20s heartbeat)
+                      → atomic data/runtime/extension_presence.json (60s active lease)
+                      → full/discovery worker presence gate → browser task queues
+
 config save → safe API handoff → committed generation (wait for settings queue)
             → parent supervisor → stop old children → reload workers / recommendation / images
                                 └ retain parent's locked data path; durable candidates resume

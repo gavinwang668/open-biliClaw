@@ -647,6 +647,8 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 
 ## 🏛️ 架构概览
 
+扩展在线状态：`runtime-stream → API 原子在线心跳 → data/runtime/extension_presence.json → full/discovery worker → 浏览器任务队列`；空闲连接每 20 秒续约，活动租约 60 秒失效，正常断开保留原宽限。见 [Runtime 模块](docs/modules/runtime.md#presencetracker)。
+
 桌面静态脚本：`包内桌面/共享脚本 → DesktopAssets（固定依赖顺序、最近两个内容版本、预压缩 gzip）→ /web 一次 defer 请求`。共享源码与原资源入口继续供移动端、插件使用，无需 Node 构建，无安装或配置变化。见[桌面 Web 模块](docs/modules/desktop-web.md)。
 
 封面显示链路：`页面 → API 复用内部连接 → 图片服务（原图磁盘缓存 → 有界缩图缓存）→ 页面`。独立图片服务不可用时回退进程内处理。
