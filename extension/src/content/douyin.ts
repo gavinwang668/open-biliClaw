@@ -371,6 +371,7 @@ interface HotResultPayload {
   status: "ok" | "empty" | "failed";
   error?: string;
   debug?: {
+    hot_collection_method?: "hot_word_search";
     fetch_tap_install_status: "unknown" | "installed" | "skipped_no_sdk";
     api_pages_fetched: number;
     api_items_harvested: number;
@@ -1897,7 +1898,50 @@ async function runSearch(msg: SearchExecuteMessage): Promise<SearchResultPayload
   }
 }
 
-async function runHot(msg: HotExecuteMessage): Promise<HotResultPayload> {
+/** Execute a hot-board term through the available page collectors. */
+export async function runHot(
+  msg: HotExecuteMessage,
+  collectors: {
+    search: typeof runSearch;
+    related: (message: HotExecuteMessage) => Promise<HotResultPayload>;
+  } = { search: runSearch, related: runHotRelated },
+): Promise<HotResultPayload> {
+  const word = msg.word.trim();
+  if (!word) return collectors.related(msg);
+
+  // The site's hotspot picker opens a search for the board word. A board
+  // group_id is not proof that related/ will return videos about that word.
+  const result = await collectors.search({
+    task_id: msg.task_id,
+    keyword: word,
+    max_items: msg.max_items,
+    debug_inject_status: msg.debug_inject_status,
+  });
+  const items = result.items.filter(item => item.scope === "dy_search").map(item => ({
+    ...item,
+    scope: "dy_hot" as const,
+    sentence_id: msg.sentence_id,
+    hot_word: word,
+  }));
+  return {
+    task_id: msg.task_id,
+    sentence_id: msg.sentence_id,
+    word,
+    items,
+    scope_count: items.length,
+    status: result.status,
+    ...(result.error ? { error: result.error } : {}),
+    debug: {
+      fetch_tap_install_status: "unknown",
+      api_pages_fetched: 0,
+      api_items_harvested: 0,
+      ...result.debug,
+      hot_collection_method: "hot_word_search",
+    },
+  };
+}
+
+async function runHotRelated(msg: HotExecuteMessage): Promise<HotResultPayload> {
   const { extractDouyinSearchItemsFromDocument } = await loadDomExtractor();
   const maxItems = Math.max(1, Math.floor(msg.max_items));
   let apiPagesFetched = 0;

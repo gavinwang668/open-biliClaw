@@ -26,9 +26,52 @@ import {
   isValidSearchExecuteMessage,
   isValidScopeExecuteMessage,
   resolveHotSeedAwemeId,
+  runHot,
   shouldReplayEarlyDiscoveryItems,
   waitForCurrentVideoAwemeId,
 } from "../src/content/douyin.ts";
+
+for (const status of ["ok", "failed"] as const) {
+  test(`hot-board words use the native search collector and preserve ${status}`, async () => {
+    const calls: string[] = [];
+    const msg = { task_id: "hot-task", sentence_id: "hot-sentence", word: "真实热点词", seed_aweme_id: "board-seed", max_items: 12 };
+    const result = await runHot(msg, {
+      search: async (input) => {
+        calls.push("search");
+        assert.equal(input.keyword, msg.word);
+        assert.equal(input.task_id, msg.task_id);
+        assert.equal(input.max_items, 12);
+        return {
+          task_id: input.task_id, keyword: input.keyword, status,
+          items: status === "ok" ? [{ scope: "dy_search", aweme_id: "news-video", title: "热点对应新闻" }] : [],
+          scope_count: status === "ok" ? 1 : 0,
+          ...(status === "failed" ? { error: "api_rate_limited" } : {}),
+        };
+      },
+      related: async (input) => {
+        calls.push("related");
+        return { task_id: input.task_id, sentence_id: input.sentence_id, word: input.word, status: "ok", items: [{ scope: "dy_hot", aweme_id: "unrelated-game", title: "其他游戏" }], scope_count: 1 };
+      },
+    });
+    assert.deepEqual(calls, ["search"]);
+    assert.equal(result.status, status);
+    assert.equal(result.scope_count, status === "ok" ? 1 : 0);
+    if (status === "ok") {
+      assert.deepEqual(result.items.map(i => [i.aweme_id, i.scope, i.sentence_id, i.hot_word]), [["news-video", "dy_hot", msg.sentence_id, msg.word]]);
+    } else {
+      assert.equal(result.error, "api_rate_limited");
+      assert.deepEqual(result.items, []);
+    }
+  });
+}
+
+test("hot without a word retains the seed-related collector", async () => {
+  const result = await runHot({ task_id: "hot-task", sentence_id: "hot-sentence", word: "", seed_aweme_id: "seed", max_items: 3 }, {
+    search: async () => { throw new Error("wordless task must not search"); },
+    related: async msg => ({ task_id: msg.task_id, sentence_id: msg.sentence_id, word: msg.word, items: [], scope_count: 0, status: "empty" }),
+  });
+  assert.equal(result.status, "empty");
+});
 
 test("hot without UI navigation uses its board seed without waiting for a video route", async (t) => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "location");

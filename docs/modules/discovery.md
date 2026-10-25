@@ -1087,6 +1087,11 @@ drained = await pipeline.drain_pending(profile=profile, batch_size=45)
 然后才执行近期热词轮换和种子数量截断。此前只在已截取的 2 / 5 行内排序，榜首缺种子时会挤掉后续
 可用种子、把任务送到不可点击的 UI 分支。6 小时复用规则、近期词不足时的回退和无种子 UI 支持不变。
 
+修复版扩展对有 word 的榜单任务按热词执行原生搜索采集，映射为 `dy_hot` 并保留榜单归属，
+仅无 word 时使用 seed-related collector；旧策略标识 `dy-plugin-hot-related` 保持兼容。
+热榜词来自真实 hot board，不能把用户兴趣搜索或 unrelated 视频重新标记来冒充热榜。
+debug `hot_collection_method=hot_word_search` 与原搜索导航、采集计数共同记录实际路径。
+
 搜索、热榜、推荐流已接收的 partial 视频在后续 watchdog / 客户端等待超时时仍保留并进入正常评估，
 `source_outcomes` / `keyword_outcomes` 同时保留 `failed` 或 `timeout`，不会因取到部分内容改成 `used`。
 没有 partial 时继续返回空候选；取消仍传播，first-final-wins 和原有准入阈值不变。
