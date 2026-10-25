@@ -25,8 +25,45 @@ import {
   isValidFeedExecuteMessage,
   isValidSearchExecuteMessage,
   isValidScopeExecuteMessage,
+  resolveHotSeedAwemeId,
   shouldReplayEarlyDiscoveryItems,
+  waitForCurrentVideoAwemeId,
 } from "../src/content/douyin.ts";
+
+test("hot without UI navigation uses its board seed without waiting for a video route", async (t) => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "location");
+  Object.defineProperty(globalThis, "location", {
+    configurable: true,
+    value: { href: "https://www.douyin.com/video/9999999999999999999" },
+  });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, "location", previous);
+    else Reflect.deleteProperty(globalThis, "location");
+  });
+  assert.equal(await resolveHotSeedAwemeId(false, "7553058116880930083"), "7553058116880930083");
+  assert.equal(await resolveHotSeedAwemeId(false, ""), "");
+  assert.equal(await resolveHotSeedAwemeId(true, "7553058116880930083"), "9999999999999999999");
+});
+
+test("video route wait honors elapsed time when background timers are delayed", async (t) => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "location");
+  Object.defineProperty(globalThis, "location", {
+    configurable: true, value: { href: "https://www.douyin.com/jingxuan" },
+  });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, "location", previous);
+    else Reflect.deleteProperty(globalThis, "location");
+  });
+  let elapsed = 0;
+  t.mock.method(performance, "now", () => elapsed);
+  t.mock.method(globalThis, "setTimeout", (callback: () => void) => {
+    elapsed += 1_000;
+    queueMicrotask(callback);
+    return 0;
+  });
+  assert.equal(await waitForCurrentVideoAwemeId(2_000), "");
+  assert.ok(elapsed <= 3_000, `2s route wait used ${elapsed}ms with delayed timers`);
+});
 
 test("passive discovery buffer replays early items with dedupe, TTL, and a hard cap", () => {
   let now = 1_000;

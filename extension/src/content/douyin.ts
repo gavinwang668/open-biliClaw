@@ -735,13 +735,28 @@ function extractAwemeIdFromLocationHref(href: string): string {
   return match?.[1] ?? "";
 }
 
-async function waitForCurrentVideoAwemeId(timeoutMs: number = 8_000): Promise<string> {
-  for (let waited = 0; waited <= timeoutMs; waited += 200) {
+export async function waitForCurrentVideoAwemeId(timeoutMs: number = 8_000): Promise<string> {
+  const deadline = performance.now() + Math.max(0, timeoutMs);
+  while (true) {
     const awemeId = extractAwemeIdFromLocationHref(location.href);
     if (awemeId) return awemeId;
-    await sleep(200);
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) return "";
+    // Background-tab timers can fire late; count elapsed time rather than
+    // treating every wake as exactly 200ms of the route-wait budget.
+    await sleep(Math.min(200, remaining));
   }
-  return "";
+}
+
+export async function resolveHotSeedAwemeId(
+  uiTriggered: boolean,
+  fallbackSeedAwemeId: string,
+): Promise<string> {
+  const boardSeed = fallbackSeedAwemeId.trim();
+  // A failed hot click leaves us on the homepage, whose current video is not
+  // evidence for this hot term. The board's seed is already authoritative.
+  if (!uiTriggered) return boardSeed;
+  return (await waitForCurrentVideoAwemeId(2_000)) || boardSeed;
 }
 
 function dedupeSearchItems(items: DouyinSearchItem[], maxItems: number): DouyinSearchItem[] {
@@ -1899,13 +1914,12 @@ async function runHot(msg: HotExecuteMessage): Promise<HotResultPayload> {
     reinjectFetchTap();
     await sleep(POST_INSTALL_SETTLE_MS);
     uiTriggered = await triggerHotUi(msg.sentence_id, msg.word);
-    await sleep(2_000);
-    seedAwemeId = await waitForCurrentVideoAwemeId(2_000);
-    if (!seedAwemeId && fallbackSeedAwemeId) {
-      seedAwemeId = fallbackSeedAwemeId;
-    }
+    if (uiTriggered) await sleep(2_000);
+    seedAwemeId = await resolveHotSeedAwemeId(uiTriggered, fallbackSeedAwemeId);
 
-    for (let round = 0; round < 4 && allItems.length < maxItems; round += 1) {
+    // Only a confirmed hot click makes the rendered DOM relevant to this
+    // term. Otherwise go straight to related API with the board seed.
+    for (let round = 0; uiTriggered && round < 4 && allItems.length < maxItems; round += 1) {
       const domItems = extractDouyinSearchItemsFromDocument(
         document,
         location.origin,

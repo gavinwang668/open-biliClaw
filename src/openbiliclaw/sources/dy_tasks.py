@@ -665,17 +665,25 @@ class DyTaskQueue:
         error: str = "",
         debug: dict[str, Any] | None = None,
     ) -> bool:
-        """Mark an active task failed without overwriting a terminal result."""
-        result_payload: dict[str, Any] = {"error": error}
-        if debug is not None:
-            result_payload["debug"] = debug
+        """Fail an active task while retaining accepted partial content."""
+
+        def merge_failure(current: dict[str, Any]) -> dict[str, Any]:
+            result_payload = {**current, "error": error}
+            if debug is not None:
+                previous_debug = current.get("debug")
+                result_payload["debug"] = {
+                    **(previous_debug if isinstance(previous_debug, dict) else {}),
+                    **debug,
+                }
+            return result_payload
+
         from openbiliclaw.sources.task_result_protocol import mutate_unstaged_result
 
         mutated, _canonical = mutate_unstaged_result(
             self._db,
             table="dy_tasks",
             task_id=task_id,
-            mutate=lambda _current: result_payload,
+            mutate=merge_failure,
             terminal_status="failed",
         )
         return mutated

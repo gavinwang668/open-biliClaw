@@ -189,7 +189,6 @@ class DouyinPluginSearchClient:
 
         plugin_items = await self._search_via_plugin(keyword, limit=max(1, limit))
         if plugin_items:
-            self.last_search_outcome = "used"
             return plugin_items[:limit]
 
         if self._allow_direct_fallback:
@@ -210,7 +209,6 @@ class DouyinPluginSearchClient:
         hot_terms = self._rotate_hot_terms(hot_terms, seed_count=_hot_seed_count(limit))
         plugin_items = await self._hot_via_plugin(hot_terms, limit=max(1, limit))
         if plugin_items:
-            self.last_hot_outcome = "used"
             return plugin_items[:limit]
 
         if self._allow_direct_fallback:
@@ -238,7 +236,6 @@ class DouyinPluginSearchClient:
 
         plugin_items = await self._feed_via_plugin(limit=max(1, limit))
         if plugin_items:
-            self.last_feed_outcome = "used"
             return plugin_items[:limit]
 
         fallback = getattr(self._direct_client, "get_recommend_feed", None)
@@ -284,13 +281,10 @@ class DouyinPluginSearchClient:
             self._kick()
 
         result, outcome = await self._wait_for_task(queue, task_id)
-        if outcome != "used":
-            self.last_search_outcome = outcome
-            return []
         videos = [v for v in result.get("videos", []) if isinstance(v, dict)]
         awemes = [plugin_search_item_to_aweme(video) for video in videos]
         items = [item for item in awemes if item is not None]
-        self.last_search_outcome = "used" if items else "empty"
+        self.last_search_outcome = ("used" if items else "empty") if outcome == "used" else outcome
         return items
 
     async def _load_hot_terms(self, *, limit: int) -> list[dict[str, object]]:
@@ -375,13 +369,10 @@ class DouyinPluginSearchClient:
             self._kick()
 
         result, outcome = await self._wait_for_task(queue, task_id)
-        if outcome != "used":
-            self.last_hot_outcome = outcome
-            return []
         videos = [v for v in result.get("videos", []) if isinstance(v, dict)]
         awemes = [plugin_search_item_to_aweme(video) for video in videos]
         items = [item for item in awemes if item is not None]
-        self.last_hot_outcome = "used" if items else "empty"
+        self.last_hot_outcome = ("used" if items else "empty") if outcome == "used" else outcome
         return items
 
     async def _feed_via_plugin(self, *, limit: int) -> list[dict[str, object]]:
@@ -409,13 +400,10 @@ class DouyinPluginSearchClient:
             self._kick()
 
         result, outcome = await self._wait_for_task(queue, task_id)
-        if outcome != "used":
-            self.last_feed_outcome = outcome
-            return []
         videos = [v for v in result.get("videos", []) if isinstance(v, dict)]
         awemes = [plugin_search_item_to_aweme(video) for video in videos]
         items = [item for item in awemes if item is not None]
-        self.last_feed_outcome = "used" if items else "empty"
+        self.last_feed_outcome = ("used" if items else "empty") if outcome == "used" else outcome
         return items
 
     async def _wait_for_task(
@@ -424,6 +412,7 @@ class DouyinPluginSearchClient:
         task_id: str,
     ) -> tuple[dict[str, Any], DouyinTaskOutcome]:
         deadline = asyncio.get_running_loop().time() + self._wait_seconds
+        outcome: DouyinTaskOutcome = "used"
         try:
             while True:
                 task = queue.get(task_id)
@@ -436,7 +425,9 @@ class DouyinPluginSearchClient:
                         error="wait_timeout",
                         debug={"wait_seconds": self._wait_seconds},
                     ):
-                        return {}, "timeout"
+                        task = queue.get(task_id)
+                        outcome = "timeout"
+                        break
                     # A terminal callback may have won the race with the timeout
                     # transition. Re-read it instead of misreporting success as
                     # a timeout.
@@ -461,15 +452,17 @@ class DouyinPluginSearchClient:
                 )
             raise
 
-        if not task or task.get("status") != "completed":
+        if not task:
             return {}, "failed"
+        if task.get("status") != "completed" and outcome != "timeout":
+            outcome = "failed"
         try:
             result = json.loads(str(task.get("result_json") or "{}"))
         except json.JSONDecodeError:
             return {}, "failed"
         if not isinstance(result, dict):
             return {}, "failed"
-        return result, "used"
+        return result, outcome
 
     def _expire_stale_discovery_tasks(self, queue: DyTaskQueue) -> None:
         expire = getattr(queue, "expire_stale_pending", None)

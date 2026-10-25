@@ -1081,6 +1081,10 @@ drained = await pipeline.drain_pending(profile=profile, batch_size=45)
 `/api/sources/dy/kick` 发起 best-effort POST；搜索、热榜和推荐流共用此路径。未能读取有效端口时
 回退 8420，网络失败仍交给扩展的周期轮询恢复。自定义端口不再因固定访问 8420 耗尽任务等待窗口。
 
+搜索、热榜、推荐流已接收的 partial 视频在后续 watchdog / 客户端等待超时时仍保留并进入正常评估，
+`source_outcomes` / `keyword_outcomes` 同时保留 `failed` 或 `timeout`，不会因取到部分内容改成 `used`。
+没有 partial 时继续返回空候选；取消仍传播，first-final-wins 和原有准入阈值不变。
+
 ```python
 from openbiliclaw.discovery.douyin import (
     DouyinDiscoveryOptions,

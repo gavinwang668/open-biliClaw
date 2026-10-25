@@ -85,6 +85,51 @@ async def test_default_dispatcher_wakeup_uses_configured_backend_port(
     assert urlopen.call_args.args[0].full_url == "http://127.0.0.1:18420/api/sources/dy/kick"
 
 
+@pytest.mark.parametrize("source", ["search", "hot", "feed"])
+@pytest.mark.parametrize("failure", ["failed", "timeout"])
+async def test_plugin_discovery_retains_accepted_partial_items_on_failure(
+    database: Database, source: str, failure: str
+) -> None:
+    queue = DyTaskQueue(database)
+    task_ids: list[str] = []
+
+    def report_partial() -> None:
+        task = queue.next_pending()
+        assert task is not None
+        task_id = str(task["id"])
+        task_ids.append(task_id)
+        queue.merge_result(
+            task_id,
+            videos=[{"scope": f"dy_{source}", "aweme_id": "partial-1", "title": "已回传内容"}],
+            scope_counts={f"dy_{source}": 1},
+            complete=False,
+        )
+        if failure == "failed":
+            queue.fail(task_id, error="task_timeout")
+
+    client = DouyinPluginSearchClient(
+        database=database,
+        direct_client=_FallbackClient(),
+        wait_seconds=0.03,
+        poll_interval_seconds=0.005,
+        kick=report_partial,
+    )
+    if source == "search":
+        items = await client.search_aweme("测试", limit=5)
+    elif source == "hot":
+        items = await client.get_hot_board(limit=5)
+    else:
+        items = await client.get_recommend_feed(limit=5)
+
+    assert [item["aweme_id"] for item in items] == ["partial-1"]
+    assert getattr(client, f"last_{source}_outcome") == failure
+    task = queue.get(task_ids[0])
+    assert task is not None and task["status"] == "failed"
+    result = json.loads(task["result_json"])
+    assert result["videos"][0]["aweme_id"] == "partial-1"
+    assert result["error"] == ("task_timeout" if failure == "failed" else "wait_timeout")
+
+
 def test_plugin_search_item_to_aweme_maps_fields() -> None:
     aweme = plugin_search_item_to_aweme(
         {

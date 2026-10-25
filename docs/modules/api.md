@@ -364,6 +364,9 @@ task shape、mode/scope 和 cap 由后端冻结。Discover 只接受 `topic` / `
 
 ## B 站与抖音浏览器任务边界
 
+`DyTaskQueue.fail()` 在原子终态转换中保留已接收的 `videos`、scope counts 和 debug，并追加失败原因。
+客户端可以继续评估已接收的发现候选，但任务状态仍为 `failed`；迟到回调不能覆盖终态或 staged final。
+
 | 方法与路径 | 状态 | 契约 |
 |---|---|---|
 | `POST /api/sources/bili/task-result` | ✅ | B 站扩展搜索任务 payload 带 `discovery_lane="recent"` 时，结果仍以 `source_strategy="bili-extension-search"` 进入统一 evaluator，同时保存 `source_context="bili-extension-search:recent"` 和 raw lane provenance；该标记不改变相关性、阈值或 admission。 |
