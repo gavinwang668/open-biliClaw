@@ -6,6 +6,8 @@
 
 - 修复 #332：API 将 runtime-stream 在线心跳原子发布到共享数据目录，full/discovery worker 在启动宽限后仍能识别在线扩展，恢复被 `extension_absent` 阻断的抖音任务生产；同一修复覆盖其他复用 presence 的生产者和周期回拉。空闲与降级连接持续续约，断线宽限保留、API 崩溃租约会过期。补充真实 spawn 子进程 → SQLite 任务入队 → API 领取回归；无新配置、依赖或扩展版本要求。
 
+- 补充 #332 [真实环境验收](verification/2026-10-25-issue-332-shared-presence.md#第二阶段真实-chrome扩展和上游请求)：现有 Chrome 商店扩展 0.3.231 与独立 worker 在真实 90 秒宽限后恢复 feed 任务取数，正式 producer 入队 3 条；真实模型评估 5 条后全部低分拒绝。保留首轮 search/队列超时、自定义端口手动 kick、上游 429 与测试租约干扰的限制，没有宣称搜索、热榜或正向推荐出卡全部通过。
+
 - Keenable grounding 收敛为纯匿名免费模式：移除 `[discovery].keenable_api_key` 配置项与 `/v1/search`（`X-API-Key`）分支，`KeenableInspirationProvider` 只请求匿名端点 `POST https://api.keenable.ai/v1/search/public` 并带 `X-Keenable-Title: OpenBiliClaw`；key 原本只提升速率限制，免费额度已覆盖关键词灵感用量。旧配置里残留的 `keenable_api_key` 由配置诊断提示「已移除、值被忽略」，不静默丢弃。
 
 - 收敛 query inspiration 后端的默认链、别名表与 V2EX 外部召回白名单到 `discovery/inspiration_backends.py`，三个 grounding key（exa / you / serply）改由 `InspirationGroundingKeys` 打包传递；默认链、别名解析、未配置 key 时的 mcporter 回退与 V2EX 召回行为不变。
