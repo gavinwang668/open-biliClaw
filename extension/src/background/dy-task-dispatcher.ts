@@ -743,6 +743,23 @@ async function restorePersistedTaskState(record: PersistedDyTaskState): Promise<
     await failActiveTask("task_timeout");
     return;
   }
+  if (ownsTaskTab && taskTabId !== null) {
+    try {
+      await chrome.tabs.update(taskTabId, { muted: true });
+    } catch {
+      // Do not leave a recovered autoplay page audible while its terminal
+      // callback waits for the backend to reconnect.
+      try {
+        await chrome.tabs.remove(taskTabId);
+        taskTabId = null;
+        ownsTaskTab = false;
+      } catch {
+        // Terminal cleanup retries closing the same owned tab after ACK.
+      }
+      await failActiveTask("task_tab_mute_failed");
+      return;
+    }
+  }
   if (record.owns_task_tab && !tabAlive) {
     // The task tab is gone (user closed it or the browser discarded it);
     // nothing can deliver further results, so settle immediately instead
