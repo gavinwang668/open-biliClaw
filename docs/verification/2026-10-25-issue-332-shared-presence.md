@@ -1,11 +1,13 @@
 # Issue #332：跨进程扩展在线状态修复验收
 
-- 范围：`capability-increment`，修复已有浏览器任务的共享在线准入；不扩展平台取数、账号权限或 UI。
+- 第一阶段范围：`capability-increment`，修复已有浏览器任务的共享在线准入。后续按用户要求扩展到既有热榜 / 搜索正向出卡与任务静音验收；不新增来源或账号权限。
 - 基线：`be8714c2449ba43c4d193cbff4c285fdc16ecf8a`，与 0.3.231 的相关 presence / producer 实现一致。
 - 分支：`fix/issue-332-shared-presence`。
 - Worktree：`/Users/white/workspace/OpenBiliClaw/.worktrees/issue332-shared-presence`；主工作区既有 `outputs/`、`promo/` 未动。
 - Python：共享开发环境的 Python 3.12；每条命令显式设置 `PYTHONPATH="$PWD/src"`，已确认 `openbiliclaw.__file__` 指向该 worktree。
 - 第一阶段隔离：单测和进程集成的数据库、配置、在线状态均位于 pytest 临时目录；这一阶段未调用真实模型。随后按用户要求进行的真实环境验证见文末，两个阶段的证据分开记录。
+
+最新结果（第五阶段）：真实原生热词与兴趣搜索经原模型、原 0.60 门槛，准入热榜 6 条 / 搜索 3 条，正常文案与 serve 持久化 9 条；桌面 HTTP / DOM 同窗逐项核对 8 张卡（热榜 6、搜索 2）。`86dd00b2` 另修复自动任务页先加载后静音的竞态；热重载后的真实搜索 8.05 秒返回 6 条，目标站点 19 次 tab 状态记录均为后台且静音，任务页正常关闭。两次多热词任务仍保留后续 `api_timeout` 失败，本报告不作全来源 / 全批次通过的结论。详情和测试限制见文末。
 
 ## 根因与限定契约
 
@@ -210,6 +212,64 @@ partial 故障验证单独使用最新 `3e706907` API 与客户端。第一次�
 
 等待人工验证期间，临时 API 与诊断 worker 已退出，唯一热榜任务为终态；冗余 Cookie 导入文件和原始 API / worker 日志已删除。独立测试浏览器及当前验证页保留，0700 私有临时目录中的 profile、隔离数据与配置供回复后恢复，未写入仓库。原服务持续运行，最终健康检查仍为 200，原配置摘要未变。原商店版、用户 Chrome 页面和原工作区既有文件均未修改。
 
-仅保留脱敏验收 JSON、本地可审阅的扩展测试目录 / ZIP 与三张卡截图。主工作区仍只有开始前已有的 `outputs/`、`promo/` 未跟踪内容。修复与文档在独立分支，未合并、长期部署或发布；Chrome 安装记录仍只有商店包路径，没有本轮测试目录的加载证据。
+仅保留脱敏验收 JSON、本地可审阅的扩展测试目录 / ZIP 与三张卡截图。主工作区仍只有开始前已有的 `outputs/`、`promo/` 未跟踪内容。修复与文档在独立分支，未合并、长期部署或发布；用户原 Chrome 的安装记录仍只有商店包路径；独立 Chrome for Testing 已按本节记录加载测试目录，二者不混同。
 
 用户随后明确要求代为完成验证码。通过当前可见页面的正常拖动拼图流程尝试两次，第一次提交后图片更新，第二次提交后仍显示同一验证入口和拼图 iframe，没有观察到放行或源站正文。因此不记为验证成功；未继续反复重试，未调用或修改验证接口。独立测试浏览器的验证页继续保留，临时 API / worker 仍保持退出，热榜取数和正向出卡门槛未改变。
+
+## 第五阶段：人工验证后复测原生热词与正向推荐
+
+用户回复“好咯”后恢复同一个独立测试 profile。实际页面进入 `/jingxuan` 正文，短信验证框也已消失；这是用户完成源站验证后的结果，不是代理解题成功。原服务继续运行，隔离 API 恢复在 `52445`，来源联网验证为 `ready / logged_in=true`。模型路由和 discovery 配置经项目 loader 分别加载并比较 dataclass 快照，均与原配置一致；画像、偏好、覆盖三个 JSON 文件也仍与原文件相同。没有降低 0.60 阈值。
+
+### 实测发现的两个问题
+
+1. `97e3f949` 修复种子优先级执行过晚。真实榜单 30 词中 29 词带 seed，但旧客户端先截取两词、之后才排序，仍把唯一无 seed 的词放进任务，后续以 `hot_ui_not_triggered` 失败。公开客户端入口回归连续执行两轮，旧代码选中 `['1', 'unseeded'] / ['2', '3']`，修复后为 `['1', '2'] / ['3', '4']`。原轮换规则保持，最新 58 项 Python 相关回归、Ruff、MyPy 363 文件通过。修复后的真实 12 条上限任务于 17.617 秒完成，返回 11 条唯一视频；这仅证明取数与终态，没有据此接受内容语义。
+2. 对照发现这批 related 视频大量是相同游戏，热词却是新闻、体育。独立普通页面点击“台湾光复81周年”原生热点词，实际进入 `/root/search/<热词>`，请求 `/aweme/v1/web/general/search/stream/`，页面视频标题与热词相符。`41622bf3` 因此让有 word 的 hot-board 任务复用现有搜索 collector，映射为带 `sentence_id / hot_word` 的 `dy_hot`；只有无 word 时保留旧 related collector。不是用画像关键词冒充热榜。两条入口回归在修复前均选错 collector，修复后通过，并覆盖失败保持、无词兼容。116 项相关 Node 测试、TypeScript 声明编译、Chrome 构建及 22 项资源预检通过；全套 1837 项中 1835 通过，另两项仍是已在 main 复现的旧 confirmation badge / settings 列数断言。
+
+`dy-plugin-hot-related` 策略名为兼容保留，实际热词路径由 `hot_collection_method=hot_word_search`、导航确认和采集计数证明。新构建仍是测试版 `0.3.231`，加载目录不变，实际脚本 SHA-256 已变为 `e214aff9c09d06fad1008378dd982570f5e8cef6f5d62475d99c25ff4dc3f91e`；真实 reload 返回 delivered，新 worker 读取到这一摘要与原测试 endpoint。该次新 worker 事件返回时，旧对象的 close 回调标志尚为 false，未把它写成已观察到关闭；旧构建的第四阶段关闭 / 重连证据与这次实际新脚本执行分别记录。
+
+### 正式来源调用与隔离
+
+本阶段的 API 初次从 `3bb9a5a0` 启动，独立 seed-priority 取数进程从 `97e3f949` 导入；评估期间没有重建 runtime。第一轮评估结束且无 evaluating 行后才重建常驻 worker，新 worker 明确从 `41622bf3` 导入，与本轮扩展一致。API 没有重启冒充加载新 discovery client；变更的 client 在独立取数入口和新 worker 中实际执行，API task/result 实现与此前已验证版本相同。
+
+相关取数仍经过真实 `DouyinPluginSearchClient` → extension → 原生站内请求，没有 direct fallback、人工 claim、伪造回调或插入推荐行。主轮使用 `DouyinDiscoveryService`、原 producer 的 threshold stamping 和统一 pipeline enqueue；独立 hot 探针使用同一生产 normalizer 与 candidate-write / database API，没有构造新的 runtime 或重置在途 evaluating 租约。这些是有界诊断入口，不是完整无人值守 worker 调度循环。
+
+原生热点点击的独立普通页面观察产生了 33 条隔离库 events，未伪装为任务污染为零，也未删除这些记录。此后关闭观察页并记录正式任务基线：events=33、seen/profile ledger/saved memberships=0；之后原生 hot / search 任务仍保持同一计数。原账号数据、配置、画像和原服务均未写入。
+
+### 取数与评估结果
+
+新扩展的 12 条上限 hot 任务于 81.074 秒保留 10 条与真实新闻热词对应的视频；`hot_collection_method=hot_word_search`、`search_navigation_ok=true`。第二个热词没有取到内容，API bridge 等待超时，任务保持 `failed / api_timeout`，10 条仍正常入队。随后实际兴趣搜索 8.551 秒返回 6 条并 completed。独立 10 条上限 hot 任务又保留 8 条新视频，但后续热词同样超时，96.372 秒返回原失败 outcome；不能用成功部分掩盖两次完整任务失败，也不能仅凭 timeout 推断具体风控或验证码。
+
+旧 related 的首批 10 条经真实 SenseNova 全部低分拒绝。随后 19 条评估包括旧 related 追加 3 条、原生热词 10 条、搜索 6 条；真实 DeepSeek 完成，准入 9 条、拒绝 10 条。准入中原生热词 6 条，分数为 `0.73 / 0.62 / 0.62 / 0.85 / 0.66 / 0.76`，搜索 3 条为 `0.85 / 0.83 / 0.68`。其余 8 条原生热词经原 fallback 路由评估 1077.755 秒后全部低分拒绝；最终 37 条均完成评估，9 条 cached、28 条 rejected_low_score。正常 `drain_pending_expression_copy()` 生成 9 条文案（80–105 字），`serve()` 初次返回并持久化 5 条；随后真实桌面 HTTP 的正常补齐使推荐表共有 9 条，库存为 shown。没有手写推荐行或调用测试专用 admission。
+
+脱敏任务、配置保留与模型证据见 [native-hot-positive-evidence.json](assets/2026-10-25-issue-332/native-hot-positive-evidence.json)。原模型 fallback 的 429 保持原行为，未为加快测试更换 provider、model、timeout 或 embedding。
+
+
+### 实际卡片与任务静音续修
+
+真实 `GET /api/recommendations` 返回 200，桌面当前窗口为 8 条；真实 DOM 的 8 张卡逐项匹配 canonical ID、标题、模型文案和公开源链接。6 张来自原生热词 callback，2 张来自真实兴趣搜索；所有封面已加载，每张五个反馈按钮均存在且可用，没有点击反馈。另 1 条搜索推荐已正常落库，不在该 HTTP 窗口内；未更改窗口或排序来强行展示所有候选。实际截图仅本地保留在 `outputs/issue332-native-hot-search-cards-full.png`，其中有个性化文案，不提交仓库。
+
+用户报告 discovery 播放出声后审查了两个浏览器：当时没有仍在播放的任务页，无法回溯认定是哪张页面发声。代码已有 issue #163 静音助手，但旧顺序是 `create(target URL)` 后才 `update(muted=true)`，网站可在两步之间自动播放；旧实现还吞掉静音异常、继续执行。此前普通原生热榜探路页也未走任务页助手，现已关闭，不能把它当作任务静音证据。
+
+`86dd00b2` 改为 `about:blank → 等待静音确认 → 目标导航`，静音 / 导航失败关闭自建 tab 并向 dispatcher 抛错；不再有声降级。抖音恢复已持久化的自建任务页时也重新静音，静音失败先关页，再回报 `task_tab_mute_failed`，不等待后端 ACK 才消除声音。保留原 `active` 等创建选项，不操作普通用户页的声音设置。两项创建回归和两项恢复回归均先红后绿；其它来源既有 dispatcher 用例同步覆盖空白页、静音、导航的新顺序。
+
+重新构建后通过真实 `/api/extension/reload` 热重载，观察旧 worker 关闭和新 worker 启动；新 worker 自身读取的 service-worker SHA-256 为 `2717afe522724602c4176185512cc11b5ecaf3c543159317bcfb0fb8c23e70df`，content SHA-256 仍为 `e214aff9c09d06fad1008378dd982570f5e8cef6f5d62475d99c25ff4dc3f91e`，endpoint 仍为 `52445`。最新本地审阅包为 `outputs/issue332-extension-muted-review.zip`，SHA-256 `6f4f731f06477a7cbef8e61585920ba57e45163ab446d9bf822726b99ae7d023`；旧热词 ZIP 保留为历史产物。
+
+随后仅取数的诊断客户端运行真实搜索任务 `e74460ee-23ca-425d-98c2-f41eaa7e5f83`，8.05 秒取得 6 条并 completed；未将这次静音探针结果入业务候选池。第一次诊断脚本漏调 `Database.initialize()`，没有创建任务；修正脚本后才进行上述真请求，不把旧任务终态当作新测试成功。真实 Chrome API 监听共记录 24 次任务页事件：先创建 inactive 的空白页，再在空白页完成静音，随后目标站点的 19 次状态记录全部 `muted=true / active=false`；没有未静音的 audible 记录，最终收到 task tab removed，原前台推荐页保持前台。这证明浏览器静音策略和后台执行，并非对扬声器音频做声学测量。恢复路径通过回归验证，没有额外注入虚假持久化任务做真机演示。
+
+| Gate | 状态 | 最终证据 / 限制 |
+|---|---|---|
+| 用户源站验证 | PASS | 真实正文、验证框消失、来源 ready；用户完成验证 |
+| 修复版加载与热重载 | PASS | 独立 Chrome for Testing；路径、worker 身份、脚本摘要、旧 worker 关闭和重连 |
+| 原生热榜与搜索正向 admission | PASS | 原模型 / 画像 / 0.60 门槛，热榜 6 + 搜索 3 |
+| 模型文案、推荐落库、HTTP 与桌面 | PASS | 文案 9、推荐行 9；HTTP / DOM 同窗热榜 6 + 搜索 2，标题 / 文案 / 链接 / 封面逐项匹配 |
+| 后台静音 | PASS（本机 Chrome） | 新建真实搜索任务、全目标站点 tab 状态静音且 inactive，终态关页；恢复另有回归 |
+| 热榜 12 / 10 条完整多词任务 | FAIL | 分别保留 10 / 8 条有效 partial，后续词 `api_timeout`；没有抹去失败或伪装 completed |
+| 普通行为隔离 | PASS（正式任务增量） | 手动普通探路页的 33 events 保留；其后的正式任务与静音探针 events / seen / profile ledger / saved memberships 增量均为 0 |
+| 最新 Python 相关回归 | PASS | `test_dy_tasks.py`、`test_douyin_plugin_search.py`、`test_douyin_direct_strategy.py`：58 passed，5.98 s |
+| 最新扩展全套 / 构建 | PARTIAL | 1842 项中 1840 passed；余 2 项是 main 已存在的 confirmation badge / settings 列数断言。TypeScript、Chrome build、22 项资源预检通过 |
+| 其它浏览器、打包客户端、无人值守完整调度 | NOT_RUN | 不拿本机有界诊断入口扩展为全端上线验收 |
+
+本次请求的搜索 / 热榜正向卡与自动任务页静音已有真实证据；总体仍是 `incremental only`，两次多词热榜超时及其它端实机门槛保持可见。原配置中的模型、fallback、embedding、timeout 和评分门槛均未为测试调整。修复保留在独立分支，未合回 main，未替换用户 Chrome 的商店包或长期部署原服务。
+
+
+最终清理：7 个真实任务均为终态（completed 3、failed 4）；诊断 worker、隔离 API 和独立测试浏览器均已正常退出。临时目录中的配置 / Cookie / 用户登录态 profile / 画像副本 / SQLite / 原始响应日志，以及本轮 Playwright 原始记录均已删除；仅保留脱敏验收数据、可审阅扩展构建和本地卡片截图。清理后原 `18420` 健康检查 200，原配置摘要与三个画像 JSON 仍与基线相同，原商店包的 manifest / service-worker 摘要未变。主工作区仍仅有开始前的 `outputs/`、`promo/` 未跟踪目录。
