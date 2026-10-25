@@ -118,3 +118,64 @@ python -m mypy src/
 修复代码仍在独立分支；本轮恢复的是原先运行的服务，没有将测试版合入 main、长期部署、发布或关闭 issue。
 
 本轮只新增验收文档和脱敏 JSON，没有再改生产代码。提交前重新运行 `pytest tests/test_shared_presence.py -q --disable-warnings -p no:cacheprovider`：`18 passed, 32 warnings in 47.59s`；证据 JSON 可解析、最终计数断言与 `git diff --check` 通过。前述完整后端 / Ruff / MyPy 结果仍对应同一修复代码，未重复运行整仓长测试。
+
+## 第三阶段：搜索、热榜与正向推荐卡
+
+用户追加要求“搜索热榜正向推荐出卡，有问题就修复”。本阶段继续使用原 worktree、真实画像、真实凭据、原模型链及 Ollama embedding，准入门槛保持 0.60。范围仍是 `capability-increment`。画像、关键词、原始模型输出和凭据不进入仓库。
+
+### 新发现与修复
+
+- `695b1d15`：默认 `kick_douyin_task_dispatcher()` 固定访问 8420，与本机实际 18420 不符。搜索、热榜、feed 三个真实客户端入口的回归先出现 `expected 18420 / actual 8420`，修复后读取当前 `api.port`。主取数轮在入队同秒领取，后续故障探针也在秒级领取，没有手动 kick。
+- `3e706907`：`DyTaskQueue.fail()` 原来覆盖整个 partial payload，发现客户端又丢弃非 completed 结果。六个回归覆盖三类任务的后续失败 / 客户端超时；现在保留已接收视频供正常评估，仍返回原 `failed` / `timeout` 诊断，不把失败改成成功，取消和 first-final-wins 保持原约束。
+- 同一提交修复扩展热榜种子路径：未成功点击热榜时直接用 hot board 的 seed 调 related API，跳过首页的视频路由等待、DOM 采集及滚动。原 helper 会把首页当前视频误用成热榜种子；原 2 秒等待在延迟定时器回归中累计到 11 秒。现在保留种子归属并按 monotonic 实际经过时间结束等待。新增两条回归先红后绿；不增加权限、payload 或配置。
+
+初始 API 和常驻诊断 worker 从 `695b1d15` 对应源码启动，随后未在评估期间重建 runtime。独立公开取数探针也使用本 worktree。后续明确停下旧 worker、恢复原服务，再重启 `3e706907` 的隔离 API；新 API 的健康检查和推荐 HTTP 返回再次通过。扩展始终按实际安装记录归因：商店版仍为 0.3.231，后端重启没有部署新的 content script。
+
+### 真实链路与结果
+
+| Gate | 适用性 | 状态 | 实测证据 |
+|---|---|---|---|
+| 自定义端口自动唤醒 | required | PASS | 真实 18420 API、Chrome 商店扩展，search / hot 秒级 claim；没有测试注入 claim / task-result |
+| 搜索取数 | required | PASS | 两次真实搜索分别回传 9、10 条；禁用 direct fallback。关键词取自原画像，第二次选择具体兴趣，未改画像 |
+| 热榜小批次 | required | PASS | 3 条目标实际返回 3 条，约 166.8 s；related API 1 页、3 条，seed 与 hot board 对应；UI 点击失败、DOM 0，不能写成热榜 DOM 路由成功 |
+| 商店版热榜较大批次 | required | FAIL | 12 条目标两次均收到扩展 `task_timeout`，没有用小批次成功覆盖失败；这两次不是后端漏 kick |
+| 修复版热榜真机 | required | BLOCKED | 代码、类型检查、回归和 Chrome 构建完成；浏览器接口不支持扩展管理页，已提供本地测试构建并请求用户加载，尚无加载完成证据 |
+| 正常评估与 admission | required | PASS | 共 22 条真实候选：搜索 19、热榜 3；19 条低分拒绝、3 条搜索内容准入，分数 0.70 / 0.78 / 0.82 |
+| 热榜候选正向出卡 | required | FAIL | 本轮入队的 3 条热榜候选均被真实模型低分拒绝，尚无 hot → 正向卡证据；没有改分数或降阈值。需在新扩展的大批次取数复测后继续验收 |
+| 真实模型文案与推荐落库 | required | PASS | `recommendation.write_expression` 完成 3 条，文案长度 115 / 159 / 160；正常 `serve()` 持久化 3 条推荐，库存变 shown |
+| HTTP 推荐响应 | required | PASS | 真实 `GET /api/recommendations` 返回 200、3 个对应 content ID；重启到最新 API 后再次返回相同 3 条 |
+| 桌面实际渲染 | required | PASS | Codex 内置浏览器打开真实 `/web`，3 张卡逐一匹配 HTTP 的标题、文案和链接；3 张封面加载成功，每张 5 个反馈按钮。没有拦截或替换页面 API |
+| 普通行为隔离 | required | PASS | `events`、`seen_items`、`profile_update_ledger`、`saved_memberships` 都为 0；没有点击反馈或执行上游收藏 / 点赞 / 关注 |
+| 最新后端保留真实 partial | required | PASS | 临时观察层延迟真实最终回调；先收到 3 条 partial，180.85 s 后客户端返回 3 条及 `timeout`，任务为 `failed / wait_timeout`；迟到最终回调未覆盖失败，前后 3 个视频 ID 完全一致 |
+| 后端自动回归 | required | PASS | plugin / strategy / queue 57、API ingest 15、task completion protocol 24、presence 18、producer 25 项通过，共 139 项 |
+| 扩展相关回归 / 构建 | required | PASS | 113 项相关 Node 测试；Chrome build、TypeScript 声明编译、22 项 manifest / WAR asset preflight 通过 |
+| 扩展全套旧前端断言 | N/A：未改对应 UI | FAIL | 1832 passed、2 failed；pending confirmation wiring 与 settings 6 列断言在未改 main 上均独立复现，未修改旧断言 |
+| Ruff / MyPy | required | PASS | 全 `src/ tests/` Ruff；MyPy 363 文件；改动 Python 文件 format 与 diff check 通过 |
+
+真实模型沿原路由出现 429 并正常 fallback。有效 usage 记录包括 DeepSeek / SenseNova 的评估与 SenseNova 文案调用；所有分数来自真实返回。第一轮 9 条宽泛搜索结果和 3 条热榜内容均低分拒绝，第二轮 10 条具体兴趣搜索有 3 条准入；没有为了出卡调低门槛。首次评估还执行了原配置的 embedding shadow 预过滤，因此包含较长的首次向量化时间，不能仅按模型 HTTP 耗时描述总时延。
+
+取数由有界诊断入口触发：首轮使用生产 `DouyinDiscoveryService` → pipeline enqueue；独立热榜及具体兴趣搜索使用真实客户端、同一生产 normalizer / candidate storage API，再由同一常驻 worker 的统一 evaluator、文案及 `serve()` 处理。没有构造上游候选、伪造回调、注入推荐行或重写评分；也没有把这些调用描述成完整无人值守 full-worker 调度循环。
+
+partial 故障验证单独使用最新 `3e706907` API 与客户端。第一次只延迟真实 `ok` 回调 30 秒，任务仍在 107.47 秒正常完成，这轮不是超时证据。第二次由临时 ASGI 观察层把真实最终 body 延迟到接收端预算到期：源站请求、partial / final body、180 秒客户端等待与评分规则均未替换。超时前实际采样到 `in_progress` + 3 条视频，超时后为 `failed / wait_timeout` + 同样 3 条；客户端也返回 3 条且保留 `timeout`。未将这批故障探针内容重复入队评估或作为新的正向推荐。观察层随后删除，不能当作生产实现的一部分。
+
+自动回归曾与模型 / embedding 同时执行，两个 spawn 用例在进程冷启动 30 秒预算上失败。停止其它检查、模型空闲后串行重跑完整 `test_shared_presence.py`：18 passed，19.94 s。后端全仓长测试未在这些追加修复后重跑；前两阶段的 11969 passed 不能冒充最新代码的全仓结果。
+
+### 构建与证据交付
+
+本地测试目录：`outputs/issue332-extension-review/`，对应 `3e7069078c462d3887178b95c8e2cdfa4785011b`；版本标签仍为 0.3.231，标记为测试构建，没有发布商店更新。
+
+- ZIP SHA-256：`941e607753afddf076a4588e0782bb7ae6565c20cb3ced5456e1cd2d93b16ff6`。
+- content script SHA-256：`c56f51d768269efe5baa04995e8e8d845fcb9715c7a0904e63ab531b92791443`。
+- Chrome 商店包身份与前阶段一致；测试包不能仅凭相同版本号当作已安装。
+
+加载步骤已通过输入面板提供：临时停用商店版、加载该目录、将测试扩展后端地址设为 `http://127.0.0.1:18420`。未收到完成回执前，不执行依赖新扩展已安装的验收，不绕过浏览器接口限制。三张卡的截图保存在本机 `outputs/issue332-positive-cards.jpg`，包含个性化文案，不提交到公共仓库；脱敏任务、评分、HTTP 与逐卡 DOM 断言保存在 [search-hot-positive-evidence.json](assets/2026-10-25-issue-332/search-hot-positive-evidence.json)。
+
+判定：**搜索 → 真实模型评估 → 文案 → HTTP → 桌面三张卡已通过；热榜小批次通过。追加热榜修复已经实现、自动验证并构建，修复版较大批次的安装实机门槛仍未通过，因此本阶段是 `incremental only`，不能宣称搜索 / 热榜所有模式全绿。** 新扩展 popup、移动 Web、Firefox / Windows 安装真机不是本阶段桌面截图的证明；共享 DTO 与 UI 未改，也没有声称这些面已新增实机验收。
+
+### 第三阶段恢复与清理
+
+最后一次故障任务与迟到回调收尾后，Chrome inventory 确认没有 `openbiliclaw_dy_task` 页面，本轮创建的内置浏览器页面已关闭。所有 7 个隔离任务均为终态，22 条业务候选都已评估完毕。最终 API 在最新源码下仍返回相同 3 条推荐，四个普通行为 sink 均为 0。
+
+已通过未修改的 launch agent 恢复原服务：健康检查 200，画像 / embedding / 模型注册就绪；真实抖音 verify 请求返回 200，随后来源状态为 `ready / logged_in=true`。每次临时切换的恢复检查均确认原 `config.toml` SHA-256 一致。所有诊断 API、worker、guard 与取数探针均已退出，`/tmp/openbiliclaw-issue332-search-hot-20261025` 中的配置、凭据、画像副本、SQLite、原始响应、日志和故障观察脚本已删除。
+
+仅保留脱敏验收 JSON、本地可审阅的扩展测试目录 / ZIP 与三张卡截图。主工作区仍只有开始前已有的 `outputs/`、`promo/` 未跟踪内容。修复与文档在独立分支，未合并、长期部署或发布；Chrome 安装记录仍只有商店包路径，没有本轮测试目录的加载证据。

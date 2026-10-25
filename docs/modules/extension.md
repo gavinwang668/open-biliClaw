@@ -68,6 +68,7 @@ side panel 的推荐页支持后端 `jev_recurrent`、`agent_jev`、`agent_only`
 
 | 子模块 | 状态 | 说明 |
 |------|------|------|
+| 抖音热榜种子与等待预算 | ✅ | 未成功点击热榜时直接使用 hot board seed 调 related，不采集首页 DOM；route wait 按实际经过时间结束。回归与构建通过，修复版大批次的安装真机复测待完成。 |
 | TikTok / Instagram 默认站点权限 | ✅ | Chrome、Firefox、Safari 清单默认声明 `*://*.tiktok.com/*` 与 `https://*.instagram.com/*`；保存 Instagram 设置不再请求/撤销站点权限。来源启用与账号登录仍独立控制；此项不提升各浏览器的来源功能验收结论。 |
 | Instagram 有界采集与竞争恢复 | ✅ | 非空 Likes 连续 3 次无新增返回 `progress_stalled` partial；限速等待后才启动 20 秒请求超时，bootstrap idle 根据间隔有界调整为 90–185 秒，12 分钟绝对期限不变。跨源锁竞争另建 30 秒 durable alarm，领取前仍须持锁与站点权限。 |
 | 聊一聊会话隔离与流结束校验 | ✅ | popup / 移动 Web 仅在 `done` 后确认流完成；迟到历史与消息按会话隔离，恢复沿用原 turn 的角色；popup 网络断连保持 agent 轮询，仅明确 503 降级旧聊天 |

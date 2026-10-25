@@ -369,6 +369,7 @@ task shape、mode/scope 和 cap 由后端冻结。Discover 只接受 `topic` / `
 
 | 方法与路径 | 状态 | 契约 |
 |---|---|---|
+| `POST /api/sources/dy/task-result` | ✅ | 接收 partial 后的失败保留原视频与 scope counts；原子 failed / staged final 仍阻止迟到结果覆盖，不把 partial 的可用性冒充任务整体成功。 |
 | `POST /api/sources/bili/task-result` | ✅ | B 站扩展搜索任务 payload 带 `discovery_lane="recent"` 时，结果仍以 `source_strategy="bili-extension-search"` 进入统一 evaluator，同时保存 `source_context="bili-extension-search:recent"` 和 raw lane provenance；该标记不改变相关性、阈值或 admission。 |
 | `GET /api/sources/dy/next-task` | ✅ | 对 legacy discovery 的 `dy_tasks` 执行 durable source-wide single-flight：`BEGIN IMMEDIATE` 内若已有未超过 15 分钟的 `in_progress` lease，则返回 bodyless 204，不让另一个扩展 ID/Profile 领取第二条任务；过期或缺失 `claimed_at` 的 lease 可按 FIFO 重领。此门禁不涵盖先于 legacy queue 检查的 native-save job。 |
 | `GET /api/sources/tiktok/next-task` | ✅ | 对 `tiktok_tasks` 执行与抖音相同的 durable source-wide single-flight 领取（`BEGIN IMMEDIATE` + 15 分钟 stale lease 重领）；无任务返回 bodyless 204。scheduler 增量任务在来源或总开关关闭时先被标记 `failed`，不参与领取。 |
