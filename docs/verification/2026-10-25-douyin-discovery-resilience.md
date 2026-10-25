@@ -1,6 +1,6 @@
 # 抖音多热词流式发现与失败退避验收
 
-范围为 `capability-increment`：继续修复 #332 第五阶段留下的多词热榜超时，并研究如何减少多余请求和失败后的连续尝试。基线 `7d613d9a`，分支 `fix/issue-332-shared-presence`，实现与验证均在独立 worktree。复用既有抖音来源、任务协议、normalizer 和准入契约，没有新增来源或更换模型。第五阶段已验证的正向卡片证据仍见[原报告](2026-10-25-issue-332-shared-presence.md#第五阶段人工验证后复测原生热词与正向推荐)。
+范围为 `capability-increment`：继续修复 #332 第五阶段留下的多词热榜超时，并研究如何减少多余请求和失败后的连续尝试。基线 `7d613d9a`，生产源码提交 `b7d7fe77ea040005fae9c136384befcc1f93ec04`，分支 `fix/issue-332-shared-presence`，实现与验证均在独立 worktree。复用既有抖音来源、任务协议、normalizer 和准入契约，没有新增来源或更换模型。第五阶段已验证的正向卡片证据仍见[原报告](2026-10-25-issue-332-shared-presence.md#第五阶段人工验证后复测原生热词与正向推荐)。
 
 本报告当前结论为 `incremental only`：本机 Chrome 的来源修复已有真实证据，完整扩展测试仍有 main 上既存的两项失败。其它浏览器、完整无人值守调度及本轮重新评估 / 出卡没有借用来源取数结果计为通过。
 
@@ -76,7 +76,7 @@ B 热榜记录 24 次任务页事件，19 次源站状态均静音且 inactive�
 | 429 / hit_shark / 验证、有效 partial 后失败 | required | PASS（回归） | 保留有效 partial、等待 ACK、停下一词、单端点及已知验证页覆盖；本轮无主动封禁试验 |
 | MV3 导航恢复与晚回调失效 | required | PASS（回归） | resume-only、SPA 去重、旧注入不能在失败 ACK 期间重发 |
 | 普通行为隔离 / 候选身份 / 静音 | required | PASS | 普通行为各 sink 为 0；34 个 canonical 候选；实际 Chrome 任务页均静音 / inactive 并关闭 |
-| 后端非 integration 全量 / Ruff / MyPy / config-show | required | NOT_RUN | 相关 111 项和 MyPy 363 文件先已通过；后端全量分段继续执行 |
+| 后端非 integration 全量 / Ruff / MyPy / config-show | required | PASS（分段＋入口复核） | 12033 项选择中 11987 项最终通过、46 skipped；分段脚本造成的 2 次 spawn 失败及标准入口复核分别保留。Ruff / MyPy / config-show 通过 |
 | 可选桌面浏览器 integration 基线 | N/A（本修复未改桌面） | FAIL | 完整 pytest 遇到库存 expected 30 / actual 27；main 单独同样失败，25 秒左右，与本轮来源代码无依赖 |
 | 扩展回归与构建 | required | FAIL（既存两项） | 最终相关 131 项通过；全套 1857 项中 1855 通过、2 项失败；Chrome build / TypeScript / 22 项资源检查通过 |
 | 本轮模型评估、推荐文案与桌面卡片重测 | required（完整发现链路） | NOT_RUN | 当前来源修复不重复模型请求；既有第五阶段真实 9 条正向链路单独保留 |
@@ -91,6 +91,7 @@ python -m pytest -q tests/test_dy_tasks.py tests/test_douyin_plugin_search.py \
   tests/test_douyin_discovery_service.py tests/test_api_dy_ingest.py
 python -m pytest -q
 python -m pytest --collect-only -q -m 'not integration'
+python -m pytest -q tests/test_shared_presence.py
 ruff check src/ tests/
 mypy src/
 openbiliclaw config-show
@@ -105,6 +106,10 @@ npm run build
 
 包含可选浏览器测试的 `pytest -q` 在 1273.53 秒后确认旧库存断言失败，随后停止可选轮次，记录为 1 failed、3464 passed、2 skipped、退出码 2，不能写成整仓通过。失败用例在 main 上独立运行同样得到 expected 30 / actual 27（24.70 秒、退出码 1），与本轮无关的静态页面 / 用例相对 main 均无 diff。后端非 integration 选择共 12033 项；对照相同 collection 的完整 nodeid 清单，已通过的前缀为 3420 项，其余 8613 项在新进程继续，避免重复执行前缀。两段结果与选择摘要分别保留，跳过 / deselect 不作为真实账号或平台功能通过的证据。
 
+后半段首次结果为 8565 passed、2 failed、46 skipped、1198.01 秒、退出码 1。两条失败均为 `test_api_websocket_unblocks_spawned_worker_and_task_claim[False/True]` 在 30 秒内未收到子进程响应；临时分段脚本初版缺少 `if __name__ == "__main__"` 保护，spawn 导入入口时会重复进入 pytest。修正该测试入口后，采用标准 `python -m pytest -q tests/test_shared_presence.py` 串行复核全文件，18 passed、9.75 秒、退出码 0。没有修改产品代码、测试用例或 30 秒阈值。初次失败和退出码仍保留，不能把原后半段运行写成退出码 0。
+
+按精确 nodeid 去重后的最终后端结果为：前缀 3420 项加后半段首次通过 8565 项，再加标准入口复核通过的 2 项，共 11987 项通过；另有 46 项跳过，合计 12033。其它 16 项 shared-presence 复核不重复加到这个总数。没有声称一次不间断的完整 `pytest` 全绿，原可选桌面及扩展两项旧断言仍为失败。
+
 ## 官方资料与可采用策略
 
 1. 官方 OpenAPI 调用约定要求限流后不要立即重试、采用有界指数退避；各 API / 应用的实际配额应在对应控制台查看。[OpenAPI 接口调用约定](https://developer.open-douyin.com/docs/resource/zh-CN/local-life/develop/preparation/openapiinterfacecallconvention)、[官方 FAQ](https://open.douyin.com/platform/resource/docs/common-question/faq)。该文档属于生活服务 OpenAPI，**不能把其中的频率当作抖音消费网页的安全阈值**。本轮 15 / 30 分钟及 6 小时是工程选择，不是官方保证。
@@ -118,3 +123,5 @@ npm run build
 最终任务全部终态后，临时 API、诊断 worker 与独立浏览器均已退出；私有临时目录中的配置、Cookie、登录态 profile、画像副本、SQLite、原始响应与浏览器日志已删除。原 `18420` 健康检查仍为 200，原配置摘要、三个画像文件及原商店包 manifest / service worker 摘要不变。主工作区原有 `outputs/`、`promo/` 未跟踪目录未修改。
 
 只保留脱敏报告 / JSON、公共扩展构建和此前本地卡片截图；不提交配置、凭据、原始日志或个性化搜索词。最终测试目录为 `outputs/issue332-extension-review/`，新包为 `outputs/issue332-extension-resilience-review.zip`，最终源码提交由包内 `BUILD_INFO.json` 标识，文件 SHA-256 与真实运行摘要一致。旧 hot-word / muted ZIP 保留历史来源。修复没有合回 main、替换商店包、长期部署或发布；无版本 / 依赖 / 安装流程变化。
+
+新包 1,693,690 bytes、190 文件，SHA-256 为 `0f5605d225a9c330191c1b04c034ef4ccba16759b6cb06d365129eb90aed5559`。ZIP CRC、包内脚本摘要、BUILD_INFO 提交及 6 个生产文件的 committed blob 摘要均已核对。测试 endpoint 已退役，包内不含连接凭据或登录态。

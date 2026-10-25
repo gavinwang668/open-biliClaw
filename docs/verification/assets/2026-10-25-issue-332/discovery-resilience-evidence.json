@@ -873,7 +873,36 @@
       "remaining_count": 8613,
       "selection_sha256": "b5f17a16856c931a39e7158a46a31ef8650400936efa3174be99bbda61c57557",
       "remaining_sha256": "7270cd2768619605e58d708e9d986b05daf3e4d826f22f70fa664fe9c7872651",
-      "status": "suffix running"
+      "status": "PASS after standard-entrypoint spawn recheck",
+      "suffix_first_run": {
+        "passed": 8565,
+        "failed": 2,
+        "skipped": 46,
+        "seconds": 1198.01,
+        "exit_code": 1,
+        "failed_ids": [
+          "tests/test_shared_presence.py::test_api_websocket_unblocks_spawned_worker_and_task_claim[False]",
+          "tests/test_shared_presence.py::test_api_websocket_unblocks_spawned_worker_and_task_claim[True]"
+        ],
+        "error": "spawned producer did not respond within the existing 30-second timeout",
+        "harness_issue": "temporary partition runner initially lacked multiprocessing main guard; child import could re-enter pytest"
+      },
+      "standard_entrypoint_recheck": {
+        "command": "PYTHONPATH=\"$PWD/src\" python -m pytest -q tests/test_shared_presence.py",
+        "passed": 18,
+        "failed": 0,
+        "seconds": 9.75,
+        "exit_code": 0,
+        "product_code_changed": false,
+        "test_timeout_changed": false
+      },
+      "unique_final_results": {
+        "passed": 11987,
+        "skipped": 46,
+        "failed_after_recheck": 0,
+        "total": 12033
+      },
+      "not_a_single_uninterrupted_full_suite_pass": true
     }
   },
   "official_sources": [
@@ -906,13 +935,24 @@
     "in_progress_tasks": 0,
     "private_data_retained": false,
     "private_directory_removed": true,
-    "private_config_cookie_profile_database_and_raw_responses_removed": true
+    "private_config_cookie_profile_database_and_raw_responses_removed": true,
+    "original_service_health_rechecked_after_tests": 200,
+    "store_hashes_rechecked_after_tests": true
   },
   "delivery": {
     "merged": false,
     "store_extension_replaced": false,
     "production_service_updated": false,
-    "published": false
+    "published": false,
+    "source_commit": "b7d7fe77ea040005fae9c136384befcc1f93ec04",
+    "package": {
+      "path": "outputs/issue332-extension-resilience-review.zip",
+      "sha256": "0f5605d225a9c330191c1b04c034ef4ccba16759b6cb06d365129eb90aed5559",
+      "bytes": 1693690,
+      "files": 190,
+      "archive_verified": true,
+      "store_release": false
+    }
   },
   "tasks": [
     {
