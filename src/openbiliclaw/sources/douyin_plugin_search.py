@@ -329,11 +329,20 @@ class DouyinPluginSearchClient:
         self._prune_recent_hot_seeds()
         if seed_count <= 0:
             return []
+        # The runtime deliberately recreates this client on every round.
+        # Hydrate from enqueued choices so that lifecycle cannot reset the
+        # existing six-hour rotation policy (including across processes).
+        recent_ids = set(self._recent_hot_sentence_ids)
+        recent_ids.update(
+            DyTaskQueue(self._database).recent_hot_sentence_ids(
+                within_seconds=_HOT_SEED_REUSE_TTL_SECONDS
+            )
+        )
         fresh: list[dict[str, object]] = []
         recent: list[dict[str, object]] = []
         for term in hot_terms:
             sentence_id = _hot_term_sentence_id(term)
-            if sentence_id and sentence_id in self._recent_hot_sentence_ids:
+            if sentence_id and sentence_id in recent_ids:
                 recent.append(term)
             else:
                 fresh.append(term)

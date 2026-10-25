@@ -24,6 +24,7 @@
 
 ## 🛠️ 我是开发者 / 贡献者
 
+- [#332 原模型完整链路复测](verification/2026-10-26-issue-332-full-pipeline.md) — 正式 producer 真实取回并评估 42 条、准入 6 条，实际 HTTP / DOM 热榜 2 张 + 搜索 2 张；保留画像过滤，修复跨客户端热词轮换。
 - [#332 抖音多热词流式发现与失败退避验收](verification/2026-10-25-douyin-discovery-resilience.md) — 真实双词热榜 12 条、普通搜索 6 条、跨进程冷却、静音与官方资料边界；与原模型正向卡证据分开记录。
 - [项目规格说明书 (SPEC)](spec.md) — 完整的项目设计与规划
 - [架构设计](architecture.md) — 系统架构与模块关系

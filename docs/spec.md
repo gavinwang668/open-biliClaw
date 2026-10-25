@@ -300,6 +300,7 @@ Douyin confirmed discovery failures → dy_tasks-derived retry_at (15/30m expone
                                    → producer pre-keyword-claim / client / pending-task gates
 Douyin native search stream → original Response returned immediately to page
                             → bounded clone JSON frames → partial ACK / failed → dy_tasks
+dy_tasks hot choices (6h) → fresh runtime plugin client → prefer unselected board words
 
 config save → safe API handoff → committed generation (wait for settings queue)
             → parent supervisor → stop old children → reload workers / recommendation / images

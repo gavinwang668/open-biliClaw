@@ -742,6 +742,7 @@ discovery 不是“把整个找片过程都交给 LLM”。当前实现里，LLM
 | 任务 | 状态 | 说明 |
 |------|------|------|
 | 抖音发现共享冷却 | ✅ | 已领取且最终 failed 的 search / hot / feed 从 `dy_tasks` 推导持久冷却；producer 在关键词 claim 前检查，client 在 hot-word / 取数和 direct fallback 前检查，队列暂停新的 pending discovery claim。有效 partial 保留，失败不被候选数量清除。 |
+| 抖音热词跨轮次轮换 | ✅ | 客户端从 `dy_tasks.payload_json.hot_items` 读取最近 6 小时已入队选择；正式 producer 每轮重建 transport 和进程重启均不会丢失轮换记录。沿用新词优先、全部最近使用时仍补足数量的原策略。 |
 | 显式初始化小批量评估 | ✅ | `drain_pending(flush=True)` 仅跳过聚合等待，保持批次上限、锁、claim、评分与准入；默认后台路径不变。 |
 
 | Jev 按需画像 | ✅ | 完整目录本地保留，逐候选投影与精确模型双上下文预算；源快照、策略及预算隔离缓存，mandatory 不足明确 missing |
@@ -1091,6 +1092,13 @@ drained = await pipeline.drain_pending(profile=profile, batch_size=45)
 显式 bootstrap 不被这道发现门控屏蔽。`DouyinPluginSearchClient` 三个视频发现入口在出网前检查；
 包括 hot board 取词和显式 direct-cookie fallback，不能换进程或换 transport 继续自动请求。
 已有 partial 仍交给统一 evaluator，失败 outcome 保留；冷却本身不会消费新的正式关键词 claim。
+
+`DyTaskQueue.recent_hot_sentence_ids(*, within_seconds) -> tuple[str, ...]` 从既有 hot
+任务 payload 读取并去重 `sentence_id`，排除其它任务类型、过期 / 明显未来记录与畸形内容。
+已入队但尚未领取的选择也作为 reservation；不修改任务时间或终态，不新增表。
+`DouyinPluginSearchClient._rotate_hot_terms()` 将该记录与本实例的 monotonic 缓存合并，
+沿用原 6 小时 TTL。正式 factory 每轮新建客户端时因此仍能优先尚未选择的热词，
+避免同一榜单因对象生命周期而总是重复前两个词。该轮换窗口与发现失败冷却分别计算。
 
 ### DouyinDiscoveryService
 

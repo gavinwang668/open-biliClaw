@@ -1715,3 +1715,6 @@ TikTok 账号初始化等待默认 480 秒（`OPENBILICLAW_TIKTOK_BOOTSTRAP_WAIT
 这是本地保守退避，不是抖音官方承诺的安全阈值。共用 `DouyinPluginSearchClient` / `DyTaskQueue`
 的正式发现、inspiration 和 direct fallback 路径遵守同一冷却，新进程也会读取；
 正式 producer 在领取关键词之前暂停。显式 bootstrap / 验证与发现策略分开，独立 direct client 不是这道门控的网络防火墙。
+
+热词选择沿用既有 6 小时复用 TTL，现在从已入队 hot payload 恢复，客户端重建 / 进程重启
+也不会清空。它与失败冷却的 6 小时上限是两项独立规则，没有新增配置项或更改成功间隔。

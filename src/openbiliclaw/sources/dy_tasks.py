@@ -381,6 +381,45 @@ class DyTaskQueue:
         retry_at = latest + timedelta(minutes=min(360, floor_minutes * 2 ** (failures - 1)))
         return retry_at if retry_at > now else None
 
+    def recent_hot_sentence_ids(self, *, within_seconds: float) -> tuple[str, ...]:
+        """Read recent enqueued hot-word choices across transport lifetimes.
+
+        Pending choices count as reservations too. No task timestamps or
+        outcomes are rewritten; the existing hot payload is the durable record.
+        """
+        if within_seconds <= 0:
+            return ()
+        now = datetime.now(UTC)
+        rows = self._db.conn.execute(
+            """
+            SELECT payload_json FROM dy_tasks
+            WHERE type = 'hot' AND created_at >= ? AND created_at <= ?
+            ORDER BY rowid DESC
+            """,
+            (
+                (now - timedelta(seconds=within_seconds)).strftime("%Y-%m-%d %H:%M:%S"),
+                (now + timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S"),
+            ),
+        ).fetchall()
+        result: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"] or "{}"))
+            except (TypeError, ValueError):
+                continue
+            hot_items = payload.get("hot_items") if isinstance(payload, dict) else None
+            if not isinstance(hot_items, list):
+                continue
+            for item in hot_items:
+                if not isinstance(item, dict):
+                    continue
+                sentence_id = str(item.get("sentence_id", "") or "").strip()
+                if sentence_id and sentence_id not in seen:
+                    seen.add(sentence_id)
+                    result.append(sentence_id)
+        return tuple(result)
+
     def _ensure_table(self) -> None:
         self._db.conn.executescript("""
             CREATE TABLE IF NOT EXISTS dy_tasks (

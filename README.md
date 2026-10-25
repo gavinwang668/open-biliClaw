@@ -651,6 +651,8 @@ OpenClaw 收到 `interest.probe` 事件（或主动拉取 `next-probe`），发�
 
 抖音发现节流：`已领取任务失败 → dy_tasks 持久冷却 → producer 关键词领取前 / client / pending 领取门控`；原生搜索流立即交还网页，仅在有界副本上逐帧采集。有效 partial 与失败同时保留；共用发现客户端与任务队列的路径不能通过重启或 direct fallback 绕过冷却。
 
+抖音热词轮换：`dy_tasks 最近 6 小时的已入队选择 → 每轮新建的 plugin client → 优先未选热词`，避免正式入口因客户端重建而重复选择同一榜单前两词。
+
 桌面静态脚本：`包内桌面/共享脚本 → DesktopAssets（固定依赖顺序、最近两个内容版本、预压缩 gzip）→ /web 一次 defer 请求`。共享源码与原资源入口继续供移动端、插件使用，无需 Node 构建，无安装或配置变化。见[桌面 Web 模块](docs/modules/desktop-web.md)。
 
 封面显示链路：`页面 → API 复用内部连接 → 图片服务（原图磁盘缓存 → 有界缩图缓存）→ 页面`。独立图片服务不可用时回退进程内处理。

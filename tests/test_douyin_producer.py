@@ -912,3 +912,77 @@ async def test_build_douyin_producer_enables_direct_cookie_fallback(
         DouyinDiscoveryOptions(sources=("search",)),
     )
     assert captured.get("allow_direct_fallback") is True
+
+
+async def test_runtime_hot_rounds_rotate_across_recreated_plugin_clients(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The runtime creates a new transport client on each discovery call."""
+    import asyncio
+    import json
+
+    from openbiliclaw.config import Config
+    from openbiliclaw.sources.dy_tasks import DyTaskQueue
+
+    class DirectClient:
+        def __init__(self, *, cookie: str) -> None:
+            self.cookie = cookie
+
+        async def __aenter__(self) -> DirectClient:
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def get_hot_terms(self, *, limit: int) -> list[dict[str, object]]:
+            return [
+                {"sentence_id": str(i), "word": f"热点{i}", "aweme_id": str(100 + i)}
+                for i in range(1, 5)
+            ]
+
+    monkeypatch.setattr(
+        "openbiliclaw.sources.douyin_auth.resolve_douyin_cookie", lambda **_: "unit-cookie"
+    )
+    monkeypatch.setattr("openbiliclaw.sources.douyin_direct.DouyinDirectClient", DirectClient)
+    monkeypatch.setattr(
+        "openbiliclaw.sources.douyin_plugin_search.kick_douyin_task_dispatcher", lambda: None
+    )
+    db = _mk_db(tmp_path)
+    queue = DyTaskQueue(db)
+    config = Config(data_dir=str(tmp_path))
+    config.sources.douyin.enabled = True
+    producer = build_douyin_discovery_producer(
+        config=config, database=db, soul_engine=_FakeSoulEngine(), discovery_engine=None
+    )
+    assert producer is not None
+    selections: list[list[str]] = []
+
+    async def complete_two_tasks() -> None:
+        for round_index in range(2):
+            for _ in range(1000):
+                task = queue.next_pending()
+                if task:
+                    break
+                await asyncio.sleep(0.005)
+            else:
+                raise AssertionError("runtime did not enqueue the hot task")
+            payload = json.loads(task["payload_json"])
+            selections.append([item["sentence_id"] for item in payload["hot_items"]])
+            queue.merge_result(
+                str(task["id"]),
+                videos=[{"scope": "dy_hot", "aweme_id": str(1000 + round_index), "title": "热点"}],
+                scope_counts={"dy_hot": 1},
+                complete=True,
+            )
+
+    async def discover_twice() -> None:
+        for _ in range(2):
+            await producer.discover(
+                {},
+                DouyinDiscoveryOptions(
+                    sources=("hot",), limit=12, per_source_limit=12, cache=False, evaluate=False
+                ),
+            )
+
+    await asyncio.gather(discover_twice(), complete_two_tasks())
+    assert selections == [["1", "2"], ["3", "4"]]

@@ -26,6 +26,20 @@ def database(tmp_path: Path) -> Database:
     return db
 
 
+def test_recent_hot_choices_are_durable_scoped_and_expire(database: Database) -> None:
+    queue = DyTaskQueue(database)
+    payload = {"hot_items": [{"sentence_id": "one"}, {"sentence_id": "one"}, "malformed"]}
+    hot = queue.enqueue_with_id("hot", payload)
+    queue.enqueue_with_id("search", {"hot_items": [{"sentence_id": "not-hot"}]})
+    assert DyTaskQueue(database).recent_hot_sentence_ids(within_seconds=6 * 3600) == ("one",)
+    assert queue.recent_hot_sentence_ids(within_seconds=0) == ()
+    database.conn.execute(
+        "UPDATE dy_tasks SET created_at = datetime('now', '-7 hours') WHERE id = ?", (hot,)
+    )
+    database.conn.commit()
+    assert queue.recent_hot_sentence_ids(within_seconds=6 * 3600) == ()
+
+
 def test_discovery_failure_holds_queued_discovery_but_not_explicit_bootstrap(
     database: Database,
 ) -> None:

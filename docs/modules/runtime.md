@@ -37,6 +37,7 @@ gate 属于 `RuntimeContext` 的稳定部分：热重载构造成功后在同一
 | 功能 | 状态 | 说明 |
 |---|---|---|
 | 抖音 partial 失败与共享冷却 | ✅ | 有有效视频也保留 failed / timeout，不能清掉退避。`produce_if_due()` 在关键词领取前读取同一 `dy_tasks` 冷却，进程重启和 `min_interval_minutes=0` 都不会消耗新关键词后才发现暂停。 |
+| 抖音正式入口热词轮换 | ✅ | `build_douyin_discovery_producer()` 每轮仍安全重建 direct/plugin client，但新 client 会读取既有 hot 任务选择记录，6 小时轮换不再仅依赖单个 transport 对象。 |
 
 多进程补池配置恢复：主 API 成功完成完整 runtime handoff 后发布进程内配置 generation；桌面入口与 `start` / `serve-api` 共用 supervisor，设置队列完全结束后在下一次 5 秒巡检停止旧子进程并重新构建 worker、discovery worker、推荐服务与图片服务。配置修好后不再让补池 evaluator 永久使用旧 provider。启动时重新领取 durable 候选，并复用已有失败候选复活策略；不降低评分或可推荐文案门槛。已知聊天设置的局部应用不重启后台。
 
@@ -581,6 +582,10 @@ API daemon 构造 producer 时会注入共享 extension presence：扩展离线�
 优先于关键词 claim；`_result_reason()` 先看失败 outcome，再看 items 数量。
 有效 partial 仍入候选池，但 `error / timeout` 不会被 productive 轮次清除。
 共享冷却见 [Discovery API](discovery.md#抖音发现冷却-api)；原成功 cadence、日预算和评分门槛不变。
+
+热词轮换也读取同一数据库中的已入队选择，不能只在长寿命诊断客户端上验证。
+正式 factory 的两轮回归在修复前得到 `1/2 → 1/2`，修复后为 `1/2 → 3/4`；
+生产入口仍按原生命周期关闭 direct client，不保留跨轮次的旧 Cookie 对象。
 
 ### YoutubeDiscoveryProducer
 

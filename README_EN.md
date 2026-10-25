@@ -645,6 +645,8 @@ Extension presence: `runtime-stream → API atomic heartbeat → data/runtime/ex
 
 Douyin discovery backoff: `claimed task failure → durable dy_tasks cooldown → producer before keyword claim / client / pending-claim gates`. Native search streams reach the page immediately while a bounded clone is parsed frame by frame. Valid partial items retain the failure; paths sharing the discovery client and task queue respect the cooldown across restarts and direct fallback.
 
+Douyin hot-word rotation: `enqueued choices from dy_tasks over the last 6h → each newly created plugin client → prefer unselected board words`, preserving rotation when the runtime recreates its transport each round.
+
 Desktop scripts: `packaged desktop/shared scripts → DesktopAssets (fixed dependency order, two content versions, precompressed gzip) → one defer request from /web`. Shared sources and original asset paths remain available to mobile and extension surfaces. No Node build, installation, or configuration changes are required. See the [Desktop Web module](docs/modules/desktop-web.md).
 
 Cover display: `UI → pooled API connection → image service (disk originals → bounded rendition cache) → UI`. An unavailable image service falls back to in-process handling.
