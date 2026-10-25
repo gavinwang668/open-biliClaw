@@ -557,7 +557,7 @@ Douyin dispatcher 会先确认当前 worker 具备 `chrome.tabs.create`，再在
 
 扩展 mutex 只能覆盖同一 service worker。后端 `DyTaskQueue.next_pending()` 因此在 `BEGIN IMMEDIATE` 领取事务内额外检查全表未过期 `in_progress` lease：存在时返回 204，不把第二条任务交给另一个 unpacked 扩展 ID 或 Chrome profile；15 分钟过期 lease 仍按原协议优先重领并修复 staged result。
 
-本地 `npm run build` 只更新磁盘上的 bundle，不会替正在运行的 Chrome service worker 热换代码；真实账号复测前需要在 `chrome://extensions` 对 unpacked OpenBiliClaw 点一次“重新加载”，或在扩展 runtime-stream 已连接时调用本地开发端点 `POST /api/extension/reload`。后端 debug 若仍只出现 `Could not load file: 'dist/main/dy-fetch-tap.js'`，说明浏览器还在运行旧单路径 bundle，不能据此判断新 fallback 失败；新版本成功状态会携带实际命中的 `ok_file=<candidate>`。
+本地 `npm run build` 只更新磁盘上的 bundle，不会替正在运行的 Chrome service worker 热换代码；真实账号复测前需要在 `chrome://extensions` 对 unpacked OpenBiliClaw 点一次“重新加载”，或在扩展 runtime-stream 已连接时调用本地开发端点 `POST /api/extension/reload`。该端点重载浏览器当前注册的扩展目录，不会把 worktree 产物部署进商店包。Chrome 开发版须保持开发者模式开启：2026-10-25 在独立 Chrome for Testing 中实测，关闭时初次命令行加载可出现 worker，但 runtime reload 后浏览器会禁用该开发扩展；扩展页开启开发者模式后，同一端点返回 `delivered=true`，旧 worker 关闭、新 worker 出现并连接原测试 endpoint。不能仅用 HTTP 200 / delivered 判断更新成功，还应核对加载路径、实际脚本摘要及重连。后端 debug 若仍只出现 `Could not load file: 'dist/main/dy-fetch-tap.js'`，说明浏览器还在运行旧单路径 bundle，不能据此判断新 fallback 失败；新版本成功状态会携带实际命中的 `ok_file=<candidate>`。
 
 CLI 侧分两层使用这条链路：
 

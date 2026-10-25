@@ -121,6 +121,8 @@ python -m mypy src/
 
 ## 第三阶段：搜索、热榜与正向推荐卡
 
+> 本阶段的“修复版待加载”是当时的状态；后续自主加载与热重载证据见[第四阶段](#第四阶段自主加载修复版与后端热重载)。热榜取数和出卡仍按各阶段真实结果分别记录。
+
 用户追加要求“搜索热榜正向推荐出卡，有问题就修复”。本阶段继续使用原 worktree、真实画像、真实凭据、原模型链及 Ollama embedding，准入门槛保持 0.60。范围仍是 `capability-increment`。画像、关键词、原始模型输出和凭据不进入仓库。
 
 ### 新发现与修复
@@ -177,5 +179,35 @@ partial 故障验证单独使用最新 `3e706907` API 与客户端。第一次�
 最后一次故障任务与迟到回调收尾后，Chrome inventory 确认没有 `openbiliclaw_dy_task` 页面，本轮创建的内置浏览器页面已关闭。所有 7 个隔离任务均为终态，22 条业务候选都已评估完毕。最终 API 在最新源码下仍返回相同 3 条推荐，四个普通行为 sink 均为 0。
 
 已通过未修改的 launch agent 恢复原服务：健康检查 200，画像 / embedding / 模型注册就绪；真实抖音 verify 请求返回 200，随后来源状态为 `ready / logged_in=true`。每次临时切换的恢复检查均确认原 `config.toml` SHA-256 一致。所有诊断 API、worker、guard 与取数探针均已退出，`/tmp/openbiliclaw-issue332-search-hot-20261025` 中的配置、凭据、画像副本、SQLite、原始响应、日志和故障观察脚本已删除。
+
+## 第四阶段：自主加载修复版与后端热重载
+
+用户要求自行加载，也允许换浏览器，并指出现有插件支持热更新。本轮沿用原修复分支，后端 HEAD 为 `1f1d66cc`（相对 `3e706907` 仅新增文档）；没有修改生产代码或构建内容。Ego Browser 因 onboarding 未完成不可用，因此使用 Playwright CLI 和本机已有 Chrome for Testing 运行独立浏览器，不复用或修改用户 Chrome profile。原 `18420` 服务持续运行，隔离 API 使用 `52445`，插件实际 endpoint 与配置 `api.port` 一致；原模型链、画像和准入规则保留。
+
+### 安装产物与重载证据
+
+实际加载目录为 `outputs/issue332-extension-review/`，扩展 ID 为 `oegfehdndnlolhgmbbiibkilonegcndi`、manifest 版本为 `0.3.231`；独立 profile 的浏览器安装记录指向该 worktree 绝对路径，`location=4 / from_webstore=false`。通过该扩展自己的 service worker 读取 `chrome.runtime.getURL("dist/content/douyin.js")` 并计算 SHA-256，结果为 `c56f51d768269efe5baa04995e8e8d845fcb9715c7a0904e63ab531b92791443`，与第三阶段构建一致。没有替换商店安装目录，未发布新版本。
+
+现有 `POST /api/extension/reload` 广播会调用 `chrome.runtime.reload()`，能重读当前注册目录的代码；它不负责把新 worktree 代码部署进商店包。第一次调用确实关闭了旧 worker，但新 worker 在 20 秒内没有出现。独立测试浏览器的扩展页明确提示“开启开发者模式即可使用此扩展程序”，安装记录有 disable reason；这轮不能算成功重连。通过浏览器界面开启开发者模式后，重试同一真实 API，返回 `200 / ok=true / delivered=true`，观察到旧 worker 关闭、新 worker 出现，同一扩展 ID、版本和 `52445` endpoint 保留，并接受新的 background runtime-stream 连接。未修改浏览器的安全实现或用禁用安全检查的启动开关。
+
+### 热榜复测与来源访问边界
+
+| Gate | 适用性 | 状态 | 实测证据 |
+|---|---|---|---|
+| 修复版加载与实际脚本 | required | PASS | 浏览器安装路径、真实 service worker 身份及扩展资源 SHA-256 一致 |
+| 后端触发完整热重载 | required | PASS | 开发者模式开启后，`delivered=true`、旧 worker 退出、新 worker 启动及重连 |
+| 非默认端口真实领取 | required | PASS | `hot` 在 `2026-10-25 10:58:51 UTC` 入队并于同秒领取，无手工 claim / 回调 |
+| 新构建 12 条热榜取数 | required | FAIL | 2.312 秒返回 0，任务在 `10:58:53 UTC` 终结为 `failed / hot_ui_not_triggered`，诊断含 related API JSON 空响应错误；没有当作正常 empty |
+| 独立浏览器的真实源站访问 | required | BLOCKED | 随后同一 profile 导航至相同任务入口，页面标题为“验证码中间页”；已请求用户在该浏览器人工验证，没有自动解题或重试绕过 |
+| 新构建 hot 正向评估与出卡 | required | NOT_RUN | 新一轮没有候选，不能进入真实评估 / 文案 / 出卡，也不能拿第三阶段的搜索卡替代 |
+| 原服务与行为隔离 | required | PASS | 原服务健康检查 200、原配置 SHA-256 不变；隔离库候选、推荐及 events / seen / profile ledger / saved memberships 均为 0 |
+| 后端相关回归 | required | PASS | 再次运行 queue / plugin client / direct strategy：57 passed，退出码 0 |
+| 扩展相关回归 | required | PASS | 再次运行 content / dispatcher / fetch-tap 三个 Node 测试文件：113 passed、0 failed，退出码 0 |
+
+后台任务页由 dispatcher 在终态关闭，未取得该已关闭任务页的 DOM。后续人工观察页确实显示验证码，但把前一次 JSON 空响应归因于同一验证码仍是推断；不能把后端复制凭据的 `ready / logged_in=true` 当作这个新浏览器已通过源站验证。观察页保留任务 marker，未执行点赞、收藏、关注、账号初始化或其它上游写操作。
+
+脱敏证据见 [updated-extension-evidence.json](assets/2026-10-25-issue-332/updated-extension-evidence.json)。当前结论仍为 `incremental only`：**修复版自主加载和现有热重载能力已实测通过；热榜较大批次与正向卡依赖独立测试浏览器完成人工源站验证后继续。** 此前“必须由用户手工加载扩展”的安装障碍已经解除。
+
+等待人工验证期间，临时 API 与诊断 worker 已退出，唯一热榜任务为终态；冗余 Cookie 导入文件和原始 API / worker 日志已删除。独立测试浏览器及当前验证页保留，0700 私有临时目录中的 profile、隔离数据与配置供回复后恢复，未写入仓库。原服务持续运行，最终健康检查仍为 200，原配置摘要未变。原商店版、用户 Chrome 页面和原工作区既有文件均未修改。
 
 仅保留脱敏验收 JSON、本地可审阅的扩展测试目录 / ZIP 与三张卡截图。主工作区仍只有开始前已有的 `outputs/`、`promo/` 未跟踪内容。修复与文档在独立分支，未合并、长期部署或发布；Chrome 安装记录仍只有商店包路径，没有本轮测试目录的加载证据。
