@@ -20,6 +20,15 @@ China code mirror: [OpenBiliClaw on AtomGit](https://atomgit.com/whiteguo233/Ope
 
 </div>
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/siliconflow-logo-dark.png">
+    <img src="docs/images/siliconflow-logo.png" alt="Powered by SiliconFlow" width="260" height="36">
+  </picture>
+  <br>
+  <sub>Model compute support: thanks to <a href="https://www.siliconflow.cn">SiliconFlow</a> for free model credits and inference support · <a href="docs/partners.md">Partnership details</a></sub>
+</p>
+
 > ### 🆕 Big update: OpenBiliClaw now runs inside DeepSeek Harness
 >
 > New **DSH client plugin** — install OpenBiliClaw into [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness): a persistent fourth column (Recommendations / Library / Chat / Profile / Settings) in the DSH web GUI, plus 22 Agent Bridge tools so agents can read recommendations, answer probes, and close the learning loop — browse cross-platform personalized content while you work in DSH. → [`github.com/whiteguo233/dsh-openbiliclaw`](https://github.com/whiteguo233/dsh-openbiliclaw)

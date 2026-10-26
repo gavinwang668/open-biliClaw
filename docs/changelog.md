@@ -4,6 +4,8 @@
 
 ## v0.3.232：抖音发现修复与推荐体验改进（2026-10-26）
 
+- 与[硅基流动（SiliconFlow）](https://www.siliconflow.cn)达成技术合作：对方为项目提供免费模型额度与推理支持，用于画像整理等辅助任务和国内开源模型能力评估，后台任务不再占用用户自己的 API 预算。GitHub Pages 项目首页、文档站与中英文 README 同步展示「Powered by SiliconFlow」合作标识；合作不改变推荐逻辑与本地优先的数据边界，详见[技术合作伙伴](partners.md)。
+
 - 后端、桌面与扩展统一发布 `0.3.232`，同步版本文件、uv lock、项目首页及中英文 README。Chrome Web Store / Firefox AMO 使用本版本现有发布通道提审；桌面、扩展与 Docker 状态分别核验，结果见 [v0.3.232 发布记录](testing/2026-10-26-release-v0.3.232.md)。推荐导演仍默认关闭，Jev 中文质量待独立实测，本次发版不将实现或结构测试等同于模型质量认证。
 
 - `0.3.232` 发布完成：Latest 聚合页的七个扩展 / 桌面资产与组件页名称、大小、digest 全部一致；双 Docker 镜像均实际核验 amd64 / arm64。Chrome 已接收 `0.3.232 / PENDING_REVIEW`，Firefox 已接收 `listed / unreviewed`，不冒充新版本已过审；Gitee 源码及四个版本标签同步完成，AtomGit 缺少 Git 推送凭据的边界保留。

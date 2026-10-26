@@ -23,6 +23,15 @@
 
 </div>
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/siliconflow-logo-dark.png">
+    <img src="docs/images/siliconflow-logo.png" alt="Powered by SiliconFlow" width="260" height="36">
+  </picture>
+  <br>
+  <sub>模型算力支持：感谢 <a href="https://www.siliconflow.cn">硅基流动（SiliconFlow）</a> 提供免费模型额度与推理支持 · <a href="docs/partners.md">合作说明</a></sub>
+</p>
+
 > ### 🆕 重要更新：OpenBiliClaw 现在可以装进 DeepSeek Harness
 >
 > 新增 **DSH 客户端插件** —— 把 OpenBiliClaw 装进 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness)：DSH 界面常驻第四栏（推荐 / 内容库 / 对话 / 画像 / 设置），并注册 22 个 Agent Bridge 工具，让 DSH 里的 Agent 也能读推荐、答探测、闭环学习——边用 DSH 干活，边刷跨平台个性化内容。→ [`github.com/whiteguo233/dsh-openbiliclaw`](https://github.com/whiteguo233/dsh-openbiliclaw)
@@ -54,9 +63,6 @@
 </p>
 
 ## 快速开始
-
-MiniMax 配置预设默认使用 `MiniMax-M3.1-Flash`，并保留 `MiniMax-M3` 与已保存的自定义模型。
-推理设置与价格见 [MiniMax text models](docs/modules/llm.md#minimax-text-models)。
 
 普通用户只需四步；Firefox、Docker、脚本和手动部署等备用路径都在 [安装与部署详情](#安装与部署详情)。
 
