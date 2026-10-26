@@ -850,6 +850,10 @@ npm run build
 
 插件内部 release 通道：
 
+本次版本 `0.3.232` 包含 #332 的任务静音、热词原生搜索、流式响应采集及后端跨进程发现修复；配套后端同为 `0.3.232`。构建、签名和 Chrome Web Store / Firefox AMO 提审状态见 [发布记录](../testing/2026-10-26-release-v0.3.232.md)，上游商店审核完成前不视为已上架。
+
+发版时也同步了旧静态回归的启动数组名和设置六列假设：当前徽标请求参与两个有界次级 worker 的 `allSettled`，设置页保持四列 / 窄屏三列；产品脚本和 CSS 无新增修改。
+
 - 发布 tag：`extension-vX.Y.Z`
 - Release 资产：
   - Chrome / Edge / Brave / 其他 Chromium 浏览器：`openbiliclaw-extension-vX.Y.Z.zip`

@@ -6,6 +6,7 @@
 
 ## 👤 我是用户
 
+- [v0.3.232 发布记录](testing/2026-10-26-release-v0.3.232.md) — 抖音发现与后台静音、首屏体验、搜索灵感修复；仓库产物和浏览器商店状态分别记录。
 - [项目主页](index.html) — GitHub Pages 首页，桌面安装包 / 一句话安装、插件下载和产品卖点概览
 - [Instagram main 集成交付](testing/2026-10-06-instagram-delivery.md) — README / 首页、最新主线整合、测试与保留的真实验收限制
 - [DSH 客户端插件](https://github.com/whiteguo233/dsh-openbiliclaw) — 把 OpenBiliClaw 装进 DeepSeek Harness：DSH 界面常驻第四栏（推荐 / 内容库 / 对话 / 画像 / 设置）+ 22 个 Agent Bridge 工具，Agent 也能读推荐、答探测、闭环学习

@@ -224,12 +224,12 @@ After starting the backend, open `http://127.0.0.1:8420/web` (or just `http://12
 
 ## Recent Updates
 
-📌 Latest: **v0.3.231 (2026-10-22)**
+📌 Latest: **v0.3.232 (2026-10-26)**
 
-- **Instagram and TikTok are official**: no longer experimental; still opt-in in settings.
-- **A chattier Blue Fish**: notices are written in the fish persona, with a cuter default voice and working DMs.
-- **Ollama embeddings**: no longer require the chat SDK, so deployments stay lean.
-- Full changelog: [docs/changelog.md](docs/changelog.md).
+- **Reliable Douyin discovery**: fixes shared extension presence, native hot-word search and rotation; task pages are muted before loading, and failures retain results with backoff.
+- **Faster first screens and covers**: reduces startup blocking and duplicate requests; fixes QR login, configuration-save status, and chat and extension layouts.
+- **More reliable search inspiration**: adds optional free anonymous Keenable search and fixes Bing redirects and single-backend failure handling.
+- **More model options**: adds optional full Jev evaluation and updates MiniMax text presets to M3.1 Flash.
 
 Full changelog: [docs/changelog.md](docs/changelog.md).
 
